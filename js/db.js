@@ -38,8 +38,8 @@ export const db = {
   update: (path, patch) => guard(impl.update(path, clean(patch))),
   remove: (path) => guard(impl.remove(path)),
   list: (col, where) => guard(impl.list(col, where)),
-  watchDoc: (path, cb) => impl.watchDoc(path, cb, errorHandler),
-  watchList: (col, where, cb) => impl.watchList(col, where, cb, errorHandler),
+  watchDoc: (path, cb, onErr) => impl.watchDoc(path, cb, onErr || errorHandler),
+  watchList: (col, where, cb, onErr) => impl.watchList(col, where, cb, onErr || errorHandler),
   batch: (ops) => guard(impl.batch(ops.map((o) => ({ ...o, data: o.data && clean(o.data) })))),
 };
 

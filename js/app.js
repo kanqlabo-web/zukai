@@ -3,7 +3,7 @@ import { h, render } from './vdom.js';
 import { db, auth, initDB, mode, onDBError } from './db.js';
 import { S, rerender, setRenderers, toast, go } from './state.js';
 import { HomeView, AdminView, createSampleWork } from './views-home.js';
-import { WorkView, CastView } from './views-work.js';
+import { WorkView, CastView, PeopleView } from './views-work.js';
 import { DraftView, SelectionBar } from './views-draft.js';
 import { EditorView } from './editor.js';
 import { PrintView, loadPrint } from './print.js';
@@ -26,6 +26,7 @@ function parseRoute() {
   if (parts[0] === 'w' && parts[1]) {
     const w = parts[1];
     if (parts[2] === 'cast') return { name: 'cast', params: { w } };
+    if (parts[2] === 'people') return { name: 'people', params: { w } };
     if (parts[2] === 'd' && parts[3]) return { name: 'draft', params: { w, d: parts[3] } };
     if (parts[2] === 'print' && parts[3] && parts[4]) return { name: 'print', params: { w, kind: parts[3], id: parts[4] } };
     return { name: 'work', params: { w } };
@@ -47,22 +48,25 @@ function onRoute() {
   S.ui = { ...(S.ui.keep || {}) };
   if (S.phase !== 'ready') { rerender(); return; }
   const { w, d } = r.params;
-  if (r.name === 'home') watch('works', (cb) => db.watchList('works', null, cb));
+  if (r.name === 'home') watch('works', (cb) => db.watchList('works', ['participants', 'array-contains', S.user.email], cb));
+  if (r.name === 'people') watch('members', (cb) => db.watchList('members', null, cb));
   if (r.name === 'admin') {
     watch('members', (cb) => db.watchList('members', null, cb));
     watch('requests', (cb) => db.watchList('requests', null, cb));
     watch('groupSync', (cb) => db.watchDoc('meta/groupSync', cb));
   }
   if (w && r.name !== 'print') {
-    watch('work', (cb) => db.watchDoc(P.work(w), cb));
-    watch('episodes', (cb) => db.watchList(P.col(w, 'episodes'), null, cb));
-    watch('tracks', (cb) => db.watchList(P.col(w, 'tracks'), null, cb));
-    watch('drafts', (cb) => db.watchList(P.col(w, 'drafts'), null, cb));
+    // 参加していない作品は読めない（その場合は「見つかりません」と表示）
+    const denied = () => { S.d.work = null; rerender(); };
+    watch('work', (cb) => db.watchDoc(P.work(w), cb, denied));
+    watch('episodes', (cb) => db.watchList(P.col(w, 'episodes'), null, cb, denied));
+    watch('tracks', (cb) => db.watchList(P.col(w, 'tracks'), null, cb, denied));
+    watch('drafts', (cb) => db.watchList(P.col(w, 'drafts'), null, cb, denied));
   }
   if (r.name === 'draft') {
-    watch('blocks', (cb) => db.watchList(P.col(w, 'blocks'), ['draftId', d], cb));
-    watch('diagrams', (cb) => db.watchList(P.col(w, 'diagrams'), ['draftId', d], cb));
-    watch('images', (cb) => db.watchList(P.col(w, 'images'), ['draftId', d], cb));
+    watch('blocks', (cb) => db.watchList(P.col(w, 'blocks'), ['draftId', d], cb, () => { S.d.work = null; rerender(); }));
+    watch('diagrams', (cb) => db.watchList(P.col(w, 'diagrams'), ['draftId', d], cb, () => { S.d.work = null; rerender(); }));
+    watch('images', (cb) => db.watchList(P.col(w, 'images'), ['draftId', d], cb, () => { S.d.work = null; rerender(); }));
   }
   if (r.name === 'print') {
     loadPrint(r.params).then((data) => { S.d.print = data; rerender(); })
@@ -91,6 +95,7 @@ async function afterLogin(user) {
     const me = await db.get('members/' + user.email);
     if (me) {
       S.role = me.role || 'member';
+      if (user.name && me.name !== user.name) db.update('members/' + user.email, { name: user.name }).catch(() => {});
       S.phase = 'ready';
       memberUnsub = db.watchDoc('members/' + user.email, (m) => {
         if (!m) { S.phase = 'pending'; S.role = null; unsubAll(); }
@@ -157,6 +162,7 @@ function Header() {
     crumbs.push(h('a', { href: `#/w/${r.params.w}`, class: 'crumb' }, work.title || '無題の作品'));
   }
   if (r.name === 'cast') { crumbs.push(h('span', { class: 'crumb-sep' }, '/')); crumbs.push(h('span', { class: 'crumb' }, 'メンバー一覧')); }
+  if (r.name === 'people') { crumbs.push(h('span', { class: 'crumb-sep' }, '/')); crumbs.push(h('span', { class: 'crumb' }, '参加者')); }
   if (r.name === 'admin') { crumbs.push(h('span', { class: 'crumb-sep' }, '/')); crumbs.push(h('span', { class: 'crumb' }, 'アカウント管理')); }
   return h('header', { class: 'topbar' },
     h('nav', { class: 'crumbs' }, crumbs),
@@ -212,6 +218,7 @@ function PageView() {
   else if (r.name === 'admin') page = AdminView();
   else if (r.name === 'work') page = WorkView();
   else if (r.name === 'cast') page = CastView();
+  else if (r.name === 'people') page = PeopleView();
   else if (r.name === 'draft') page = DraftView();
   return [Header(), page, r.name === 'draft' ? SelectionBar() : null];
 }

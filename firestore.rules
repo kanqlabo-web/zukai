@@ -29,6 +29,9 @@ service cloud.firestore {
     match /members/{email} {
       allow read: if isMember() || (signedIn() && email == myEmail());
       allow write: if isAdmin();
+      // 本人は自分の名前だけ更新できる（参加者画面で名前を表示するため）
+      allow update: if signedIn() && email == myEmail()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name']);
       // まだ誰も登録されていないときだけ、最初の1人が自分を管理者にできる
       allow create: if signedIn() && email == myEmail()
         && !exists(setupPath()) && existsAfter(setupPath())
@@ -42,9 +45,37 @@ service cloud.firestore {
       allow delete: if isAdmin() || (signedIn() && email == myEmail());
     }
 
-    // 作品のデータはメンバーだけが読み書きできる
-    match /works/{path=**} {
-      allow read, write: if isMember();
+    // 作品：参加者（participants）だけが見られる・編集できる
+    // 参加者と「作品の管理者」（admins）を変えられるのは、作品の管理者だけ
+    function workPath(w) { return /databases/$(database)/documents/works/$(w); }
+    function inWork(w) {
+      return isMember() && exists(workPath(w)) && myEmail() in get(workPath(w)).data.participants;
+    }
+    // 作品と中身を一度に作るとき用（書き込み後の状態で判定）
+    function inWorkAfter(w) {
+      return isMember() && existsAfter(workPath(w)) && myEmail() in getAfter(workPath(w)).data.participants;
+    }
+    function validAccess(d) {
+      return d.participants is list && d.admins is list
+        && d.admins.size() > 0 && d.participants.hasAll(d.admins);
+    }
+
+    match /works/{w} {
+      allow read: if isMember() && myEmail() in resource.data.participants;
+      allow create: if isMember() && validAccess(request.resource.data)
+        && request.resource.data.admins.hasOnly([myEmail()])
+        && request.resource.data.participants.hasOnly([myEmail()]);
+      allow update: if isMember() && myEmail() in resource.data.participants
+        && validAccess(request.resource.data)
+        && (myEmail() in resource.data.admins
+            || (request.resource.data.participants == resource.data.participants
+                && request.resource.data.admins == resource.data.admins));
+      allow delete: if isMember() && myEmail() in resource.data.participants;
+
+      match /{sub=**} {
+        allow read: if inWork(w);
+        allow write: if inWork(w) || inWorkAfter(w);
+      }
     }
   }
 }

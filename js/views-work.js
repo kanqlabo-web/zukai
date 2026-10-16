@@ -7,6 +7,13 @@ import { confirmDeleteWork } from './views-home.js';
 import { ask, confirmBox } from './dialog.js';
 import { ensureCastIds, numberCast, rolesOf } from './cast.js';
 
+// 作品の管理者か（参加者の仕組みより前に作ったデモの作品は、全員を管理者として扱う）
+export function isWorkAdmin(work) {
+  if (!work) return false;
+  if (!Array.isArray(work.admins)) return true;
+  return work.admins.includes(S.user.email);
+}
+
 const byOrder = (a, b) => (a.order || 0) - (b.order || 0) || (a.createdAt || 0) - (b.createdAt || 0);
 
 export function latestDraft(drafts, trackId) {
@@ -52,6 +59,7 @@ export function WorkView() {
         oninput: (e) => saveLater(workPath, { title: e.target.value, updatedAt: Date.now() }),
       }),
       h('div', { class: 'actions' },
+        h('a', { class: 'btn', href: `#/w/${w}/people` }, `参加者（${(work.participants || []).length || '全員'}${(work.participants || []).length ? '人' : ''}）`),
         h('a', { class: 'btn', href: `#/w/${w}/cast` }, `メンバー一覧（${(work.cast || []).length}人）`),
         Menu([
           {
@@ -60,7 +68,7 @@ export function WorkView() {
               if (r) db.update(workPath, { prefix: r.v });
             },
           },
-          S.role === 'admin' ? { label: 'この作品を削除', danger: true, fn: () => confirmDeleteWork(w, work) } : null,
+          { label: 'この作品を削除', danger: true, fn: () => confirmDeleteWork(w, work) },
         ]))),
     h('p', { class: 'muted small' }, `PDFのタイトル例：${work.prefix ?? '【表現活動】'}2話図解_トラ1_第1稿`),
     eps.length === 0 ? h('div', { class: 'empty' }, h('p', null, 'まだ話がありません。'), h('p', { class: 'muted' }, '「＋ 話を追加」から始めましょう（例：1話、2話）。')) : null,
@@ -249,5 +257,84 @@ export function CastView() {
           },
         }, '一覧を置き換える'),
         h('button', { class: 'btn', onclick: () => { const add = parseCast(S.ui.castPaste); if (!add.length) return; editCast(w, [...cast, ...add]); S.ui.castPaste = ''; toast(`${add.length}人を追加しました`); } }, '後ろに追加'))),
+  );
+}
+
+// ---------- 参加者（作品ごと） ----------
+async function setAccess(w, work, participants, admins) {
+  participants = [...new Set(participants)];
+  admins = [...new Set(admins)].filter((e) => participants.includes(e));
+  if (!admins.length) { toast('作品の管理者が1人以上必要です', 'error'); return false; }
+  await db.update(P.work(w), { participants, admins, updatedAt: Date.now() });
+  return true;
+}
+
+export function PeopleView() {
+  const w = S.route.params.w;
+  const work = S.d.work;
+  if (work === undefined) return h('main', { class: 'page' }, h('p', { class: 'muted' }, '読み込み中…'));
+  if (work === null) return h('main', { class: 'page' }, h('p', null, 'この作品は見つからないか、参加していません。'), h('a', { href: '#/' }, '作品一覧へ'));
+  const me = S.user.email;
+  const amAdmin = isWorkAdmin(work);
+  const parts = work.participants || [];
+  const admins = work.admins || [];
+  const accounts = S.d.members || [];
+  const nameOf = (e) => { const m = accounts.find((x) => x.id === e); return m && m.name ? m.name : ''; };
+  const candidates = accounts.filter((m) => !parts.includes(m.id)).sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id, 'ja'));
+  const q = (S.ui.peopleQ || '').trim().toLowerCase();
+  const shown = candidates.filter((m) => !q || m.id.includes(q) || (m.name || '').toLowerCase().includes(q));
+  const picked = S.ui.peoplePick || {};
+  const pickedList = Object.keys(picked).filter((k) => picked[k]);
+  const list = parts.slice().sort((a, b) => (admins.includes(b) - admins.includes(a)) || (nameOf(a) || a).localeCompare(nameOf(b) || b, 'ja'));
+
+  return h('main', { class: 'page narrow' },
+    h('div', { class: 'page-head' }, h('h1', null, '参加者'),
+      h('div', { class: 'actions' }, h('a', { class: 'btn', href: `#/w/${w}` }, '作品に戻る'))),
+    h('p', { class: 'muted small' },
+      'この作品を見たり編集したりできるのは、ここにいる人だけです。参加していない人のホーム画面には、この作品は表示されません。',
+      amAdmin ? ' 参加者の追加・削除と、作品の管理者の指定は、作品の管理者だけができます。' : ' 参加者の追加・削除は、作品の管理者に頼んでください。'),
+    h('section', { class: 'panel' },
+      h('h2', null, `参加している人（${list.length}人）`),
+      h('ul', { class: 'mlist' }, list.map((e) => {
+        const isAdm = admins.includes(e);
+        return h('li', { key: e },
+          h('div', { class: 'grow' },
+            h('div', null, nameOf(e) || e, isAdm ? h('span', { class: 'badge' }, '作品の管理者') : null, e === me ? h('span', { class: 'muted small' }, '（あなた）') : null),
+            nameOf(e) ? h('div', { class: 'muted small' }, e) : null),
+          amAdmin ? h('select', {
+            value: isAdm ? 'admin' : 'editor', 'aria-label': '役割',
+            onchange: async (ev) => {
+              const toAdmin = ev.target.value === 'admin';
+              const next = toAdmin ? [...admins, e] : admins.filter((x) => x !== e);
+              if (!toAdmin && e === me && !(await confirmBox('自分を作品の管理者から外しますか？\nあとで戻すには、ほかの管理者に頼む必要があります。', { ok: '外す', danger: true }))) { rerender(); return; }
+              if (!(await setAccess(w, work, parts, next))) rerender();
+            },
+          }, h('option', { value: 'editor' }, '編集者'), h('option', { value: 'admin' }, '作品の管理者')) : null,
+          amAdmin ? h('button', {
+            class: 'btn small danger',
+            onclick: async () => {
+              const msg = e === me ? 'この作品から抜けますか？\n抜けると、この作品を見られなくなります。' : `${nameOf(e) || e} をこの作品の参加者から外しますか？`;
+              if (!(await confirmBox(msg, { ok: e === me ? '抜ける' : '外す', danger: true }))) return;
+              const ok = await setAccess(w, work, parts.filter((x) => x !== e), admins.filter((x) => x !== e));
+              if (ok && e === me) go('#/');
+            },
+          }, e === me ? '抜ける' : '外す') : null);
+      }))),
+    amAdmin ? h('section', { class: 'panel' },
+      h('h2', null, '参加者を追加'),
+      candidates.length ? [
+        h('input', { placeholder: '名前かメールアドレスで絞り込み', value: S.ui.peopleQ || '', oninput: (e) => { S.ui.peopleQ = e.target.value; rerender(); } }),
+        h('div', { class: 'pick-list' }, shown.map((m) => h('label', { key: m.id, class: 'check pick' },
+          h('input', { type: 'checkbox', checked: !!picked[m.id], onchange: (e) => { S.ui.peoplePick = { ...picked, [m.id]: e.target.checked }; rerender(); } }),
+          h('span', null, m.name || m.id, m.name ? h('small', { class: 'muted' }, '　' + m.id) : null)))),
+        h('div', { class: 'actions' },
+          h('button', { class: 'btn small', onclick: () => { const p = { ...picked }; shown.forEach((m) => { p[m.id] = true; }); S.ui.peoplePick = p; rerender(); } }, '表示中の全員を選ぶ'),
+          h('button', {
+            class: 'btn primary', disabled: !pickedList.length, onclick: async () => {
+              if (await setAccess(w, work, [...parts, ...pickedList], admins)) { toast(`${pickedList.length}人を追加しました`); S.ui.peoplePick = {}; rerender(); }
+            },
+          }, `選んだ${pickedList.length}人を追加`)),
+      ] : h('p', { class: 'muted small' }, 'ログインできる人は全員参加しています。'),
+      h('p', { class: 'muted small' }, 'ここに出てくるのは、アカウント管理（Googleグループの同期を含む）でログインできるようになっている人です。名前は、その人が一度ログインすると表示されます。')) : null,
   );
 }

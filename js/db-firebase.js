@@ -29,7 +29,8 @@ export async function init(cfg, del) {
 const ref = (p) => F.doc(fs, p);
 function q(col, where) {
   const c = F.collection(fs, col);
-  return where ? F.query(c, F.where(where[0], '==', where[1])) : c;
+  if (!where) return c;
+  return where.length === 3 ? F.query(c, F.where(where[0], where[1], where[2])) : F.query(c, F.where(where[0], '==', where[1]));
 }
 function conv(patch) {
   const o = {};

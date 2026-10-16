@@ -377,3 +377,6 @@ textarea { resize: vertical; line-height: 1.55; }
 .role-row .seg { flex-shrink: 0; }
 .role-name { flex: 1; }
 .tight-top { margin-top: 4px; }
+.pick-list { max-height: 50vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; margin: 8px 0; }
+.check.pick { margin: 0; padding: 6px 0; border-bottom: 1px solid #f0eff6; }
+.check.pick:last-child { border-bottom: 0; }

@@ -19,7 +19,7 @@ export function draftTitle(work, ep, track, draft) {
 
 export async function createWork(title, user) {
   const id = newId();
-  await db.set(P.work(id), { title, prefix: '【表現活動】', cast: [{ id: newId(8), tag: 'CD', name: '', roles: [] }], createdAt: now(), updatedAt: now(), createdBy: user.name });
+  await db.set(P.work(id), { title, prefix: '【表現活動】', admins: [user.email], participants: [user.email], cast: [{ id: newId(8), tag: 'CD', name: '', roles: [] }], createdAt: now(), updatedAt: now(), createdBy: user.name });
   return id;
 }
 
