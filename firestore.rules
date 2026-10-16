@@ -17,11 +17,6 @@ service cloud.firestore {
       allow write: if signedIn() && email == me();
     }
 
-    // Googleグループのメンバー一覧（同期スクリプトが書き込む）。そのグループのメンバーだけが読める
-    match /groups/{g} {
-      allow get: if signedIn() && me() in resource.data.members;
-    }
-
     // ---------- 作品の共有 ----------
     // participants：共有されている全員 / owners：オーナー / viewers：閲覧者（それ以外は編集者）
     function owners(d) { return d.get('owners', []); }

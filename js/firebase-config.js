@@ -1,4 +1,4 @@
-// ▼ Firebase の設定をここに貼り付けてください（README の手順 2 を参照）。
+// ▼ Firebase の設定（README の手順 2・3）。
 // apiKey が空のままだと「デモモード」で動き、データはこのブラウザの中だけに保存されます。
 export const firebaseConfig = {
   apiKey: "AIzaSyDFBoS_DMNN9EB7ohza1ijwHpDzFD93WBA",

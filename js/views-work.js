@@ -6,7 +6,8 @@ import { P, createEpisode, createTrack, copyDraft, deleteDraft, deleteTrack, del
 import { confirmDeleteWork } from './views-home.js';
 import { ask, confirmBox } from './dialog.js';
 import { ensureCastIds, numberCast, rolesOf } from './cast.js';
-import { myRole, canEdit, isOwner, ROLE_LABEL, rolesOfWork, saveRoles, joinUrl, profileName, groupMembers } from './access.js';
+import { myRole, canEdit, isOwner, ROLE_LABEL, rolesOfWork, saveRoles, joinUrl, profileName, openGroupWindow, waitGroups, cancelGroupWait } from './access.js';
+import { GROUP_LOOKUP_URL } from './settings.js';
 import { CastTable } from './sheet.js';
 import { newId } from './db.js';
 
@@ -273,20 +274,39 @@ function splitAddrs(text) {
 }
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i;
 
-async function addPeople(w, work) {
+// ボタンを押した直後にグループ確認のウィンドウを開く（ポップアップをブロックされないため）
+function addPeople(w, work) {
   const addrs = splitAddrs(S.ui.shareInput);
   if (!addrs.length) return;
+  const groups = addrs.filter((a) => a.endsWith('@googlegroups.com') && EMAIL_RE.test(a));
+  const pop = groups.length ? openGroupWindow(groups) : null;
+  addPeopleAsync(w, work, addrs, groups, pop);
+}
+
+async function addPeopleAsync(w, work, addrs, groups, pop) {
   const role = S.ui.shareRole || 'editor';
   const roles = rolesOfWork(work);
   const added = [];
   const errors = [];
+  let found = {};
+  if (groups.length) {
+    if (!GROUP_LOOKUP_URL) errors.push('Googleグループで追加する機能が、まだ設定されていません（README 手順6）。');
+    else if (!pop) errors.push('ポップアップがブロックされました。ブラウザでこのサイトのポップアップを許可して、もう一度「追加」を押してください。');
+    else {
+      S.ui.shareBusy = true;
+      rerender();
+      try { found = await waitGroups(pop); } catch (e) { errors.push(e.message || String(e)); }
+      S.ui.shareBusy = false;
+    }
+  }
   for (const a of addrs) {
     if (!EMAIL_RE.test(a)) { errors.push(`「${a}」はメールアドレスの形ではありません`); continue; }
-    if (a.endsWith('@googlegroups.com')) {
-      const members = await groupMembers(a);
-      if (!members) { errors.push(`${a} のメンバー一覧を読み込めませんでした（グループが同期されていないか、あなたがそのグループのメンバーではありません）`); continue; }
+    if (groups.includes(a)) {
+      const g = found[a];
+      if (!g) continue;
+      if (!g.ok) { errors.push(`${a} のメンバー一覧を読めませんでした。アドレスが正しいか、あなたがそのグループのメンバー一覧を見られるか確認してください。（${g.error}）`); continue; }
       let n = 0;
-      for (const m of members) if (!roles[m]) { roles[m] = role; n++; }
+      for (const m of g.members) if (!roles[m]) { roles[m] = role; n++; }
       added.push(`${a}（${n}人）`);
       continue;
     }
@@ -352,9 +372,11 @@ export function ShareView() {
         h('div', { class: 'share-add-row' },
           h('select', { value: S.ui.shareRole || 'editor', onchange: (e) => { S.ui.shareRole = e.target.value; } },
             h('option', { value: 'editor' }, '編集者'), h('option', { value: 'viewer' }, '閲覧者'), h('option', { value: 'owner' }, 'オーナー')),
-          h('button', { class: 'btn primary', onclick: () => addPeople(w, work) }, '追加'))),
+          S.ui.shareBusy ? h('button', { class: 'btn ghost', onclick: cancelGroupWait }, 'やめる') : null,
+          h('button', { class: 'btn primary', disabled: !!S.ui.shareBusy, onclick: () => addPeople(w, work) }, S.ui.shareBusy ? 'グループを確認中…' : '追加'))),
+      S.ui.shareBusy ? h('p', { class: 'small' }, '開いたウィンドウでグループを確認しています。初めてのときはGoogleの許可画面が出るので、自分のアカウントを選んで許可してください（「Googleで確認されていません」と出たら「詳細」→「〜に移動」）。') : null,
       S.ui.shareError ? h('div', { class: 'dlg-err pre' }, S.ui.shareError) : null,
-      h('p', { class: 'muted small' }, 'Googleグループのアドレスを入れると、そのグループのメンバー全員をまとめて追加します（あとからグループに入った人は自動では追加されません）。追加した人には自動で通知が届かないので、下の「リンクをコピー」で知らせてください。')) : null,
+      h('p', { class: 'muted small' }, 'Googleグループのアドレスを入れると、小さなウィンドウでグループを確認し、メンバー全員をまとめて追加します（初回だけGoogleの許可画面が出ます。あとからグループに入った人は自動では追加されません）。追加した人には自動で通知が届かないので、下の「リンクをコピー」で知らせてください。')) : null,
 
     h('section', { class: 'panel' },
       h('h2', null, `アクセスできるユーザー（${people.length}人）`),

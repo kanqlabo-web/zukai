@@ -9,7 +9,7 @@ import { EditorView } from './editor.js';
 import { PrintView, loadPrint } from './print.js';
 import { P } from './model.js';
 import { DialogView } from './dialog.js';
-import { saveMyProfile } from './access.js';
+import { saveMyProfile, handleGroupResult } from './access.js';
 
 const $app = document.getElementById('app');
 const $modal = document.getElementById('modal');
@@ -185,6 +185,8 @@ onDBError((e) => {
 });
 
 (async function start() {
+  // グループ確認のウィンドウから戻ってきたときは、結果を渡して閉じるだけ
+  if (handleGroupResult(location.hash)) return;
   rerender();
   try {
     await initDB();
