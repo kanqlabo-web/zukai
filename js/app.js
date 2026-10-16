@@ -179,6 +179,15 @@ function renderDialog() { render($dialog, DialogView()); }
 setRenderers([renderPage, renderModal, renderDialog, renderToasts]);
 window.addEventListener('zukai-error', (e) => toast(e.detail, 'error', 8000));
 
+// 「⋯」やアカウントのメニューは、ほかの所を押したらすぐ閉じる
+const POPS = 'details.kebab[open], details.usermenu[open]';
+document.addEventListener('pointerdown', (e) => {
+  for (const d of document.querySelectorAll(POPS)) if (!d.contains(e.target)) d.open = false;
+}, true);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') for (const d of document.querySelectorAll(POPS)) d.open = false;
+});
+
 onDBError((e) => {
   const msg = e && e.code === 'permission-denied' ? '権限がありません（この作品が共有されているか、編集者になっているか確認してください）' : (e.message || String(e));
   toast(msg, 'error', 6000);

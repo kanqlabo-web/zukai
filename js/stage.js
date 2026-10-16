@@ -7,7 +7,7 @@ export const H = 470;
 const INK = '#1a1a1a';
 const NUM = '#e60012';
 export const FILLS = { white: '#ffffff', gray: '#c8c8c8', black: '#1a1a1a' };
-export const LAYER = { blob: 0, ellipse: 0, rect: 0, arrow: 1, person: 2, text: 3 };
+export const LAYER = { blob: 0, ellipse: 0, rect: 0, line: 1, arrow: 1, person: 2, text: 3 };
 
 export function stageFrame() {
   const t = 5;
@@ -54,6 +54,62 @@ export function simplify(pts, minDist = 18) {
   return out;
 }
 
+// 開いた線（Catmull-Rom）の点を細かく取る
+function sampleOpen(pts, per = 8) {
+  const n = pts.length;
+  if (n < 3) return pts.map((p) => [p[0], p[1]]);
+  const P = (i) => pts[Math.max(0, Math.min(n - 1, i))];
+  const out = [];
+  for (let i = 0; i < n - 1; i++) {
+    const p0 = P(i - 1), p1 = P(i), p2 = P(i + 1), p3 = P(i + 2);
+    const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6];
+    const c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+    for (let k = 0; k < per; k++) out.push(bez(p1, c1, c2, p2, k / per));
+  }
+  out.push([pts[n - 1][0], pts[n - 1][1]]);
+  return out;
+}
+function bez(a, b, c, d, t) {
+  const u = 1 - t;
+  return [u * u * u * a[0] + 3 * u * u * t * b[0] + 3 * u * t * t * c[0] + t * t * t * d[0],
+    u * u * u * a[1] + 3 * u * u * t * b[1] + 3 * u * t * t * c[1] + t * t * t * d[1]];
+}
+// 線（直線・曲線・手書き線）の形を、細かい点の並びにする
+export function linePoints(s) {
+  const p = s.pts || [];
+  if (p.length < 2) return p.slice();
+  if (s.mode === 'curve' && p.length === 4) return Array.from({ length: 41 }, (_, i) => bez(p[0], p[1], p[2], p[3], i / 40));
+  if (s.mode === 'free') return sampleOpen(p);
+  return [p[0], p[p.length - 1]];
+}
+export function polyLength(pts) {
+  let L = 0;
+  for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  return L;
+}
+// 線の上の、始点から距離 d の位置と向き
+export function pointAt(pts, d) {
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (d <= l || i === pts.length - 1) {
+      const t = l ? Math.max(0, Math.min(1, d / l)) : 0;
+      return { x: a[0] + (b[0] - a[0]) * t, y: a[1] + (b[1] - a[1]) * t, ux: l ? (b[0] - a[0]) / l : 1, uy: l ? (b[1] - a[1]) / l : 0 };
+    }
+    d -= l;
+  }
+  const q = pts[0] || [0, 0];
+  return { x: q[0], y: q[1], ux: 1, uy: 0 };
+}
+function linePath(s) {
+  const p = s.pts || [];
+  if (p.length < 2) return '';
+  const f = (q) => `${q[0].toFixed(1)},${q[1].toFixed(1)}`;
+  if (s.mode === 'curve' && p.length === 4) return `M${f(p[0])}C${f(p[1])} ${f(p[2])} ${f(p[3])}`;
+  if (s.mode === 'free') return smoothPath(p, false);
+  return `M${f(p[0])}L${f(p[p.length - 1])}`;
+}
+
 function arrowHead(x1, y1, x2, y2, size) {
   const a = Math.atan2(y2 - y1, x2 - x1);
   const l = [x2 - size * Math.cos(a - 0.45), y2 - size * Math.sin(a - 0.45)];
@@ -79,8 +135,8 @@ function blockArrowPoints(s) {
 
 export function shapeCenter(s) {
   if (s.t === 'arrow') return [(s.x1 + s.x2) / 2, (s.y1 + s.y2) / 2];
-  if (s.t === 'blob') {
-    const p = s.pts || [];
+  if (s.t === 'blob' || s.t === 'line') {
+    const p = s.t === 'line' ? linePoints(s) : s.pts || [];
     if (!p.length) return [0, 0];
     return [p.reduce((a, q) => a + q[0], 0) / p.length, p.reduce((a, q) => a + q[1], 0) / p.length];
   }
@@ -90,7 +146,7 @@ export function shapeCenter(s) {
 export function moveShape(s, dx, dy) {
   const n = { ...s };
   if (s.t === 'arrow') { n.x1 += dx; n.y1 += dy; n.x2 += dx; n.y2 += dy; }
-  else if (s.t === 'blob') n.pts = s.pts.map((p) => [p[0] + dx, p[1] + dy]);
+  else if (s.t === 'blob' || s.t === 'line') n.pts = s.pts.map((p) => [p[0] + dx, p[1] + dy]);
   else { n.x += dx; n.y += dy; }
   return n;
 }
@@ -134,6 +190,13 @@ export function shapeNode(s, { selected = false, interactive = false, idx = null
     const fill = s.fill === 'light' ? '#ececec' : 'none';
     return h('g', { ...common },
       h('path', { d, fill, stroke: INK, 'stroke-width': sw, 'stroke-dasharray': dash, 'stroke-linejoin': 'round' }),
+      interactive ? h('path', { d, ...HIT }) : null,
+      selected ? h('path', { d, fill: 'none', class: 'sel-ring' }) : null);
+  }
+  if (s.t === 'line') {
+    const d = linePath(s);
+    return h('g', { ...common },
+      h('path', { d, fill: 'none', stroke: INK, 'stroke-width': sw, 'stroke-dasharray': dash, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }),
       interactive ? h('path', { d, ...HIT }) : null,
       selected ? h('path', { d, fill: 'none', class: 'sel-ring' }) : null);
   }
@@ -221,8 +284,9 @@ export function insideShape(s, x, y, margin = 0) {
   return false;
 }
 export function shapeBBox(s) {
-  if (s.t === 'blob') {
-    const xs = s.pts.map((q) => q[0]), ys = s.pts.map((q) => q[1]);
+  if (s.t === 'blob' || s.t === 'line' || s.t === 'arrow') {
+    const p = s.t === 'line' ? linePoints(s) : s.t === 'arrow' ? [[s.x1, s.y1], [s.x2, s.y2]] : s.pts;
+    const xs = p.map((q) => q[0]), ys = p.map((q) => q[1]);
     return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
   }
   if (s.t === 'ellipse' || s.t === 'rect') {
@@ -244,6 +308,10 @@ export function shapeArea(s) {
   return 0;
 }
 export const isRegion = (s) => s && (s.t === 'ellipse' || s.t === 'rect' || s.t === 'blob');
+// 人を入れられる図形（囲み・線）
+export const isFillable = (s) => isRegion(s) || (s && s.t === 'line');
+// 名前を付けられる図形
+export const canName = (s) => isFillable(s) || (s && s.t === 'arrow');
 
 // ---------- 役名・図形名の自動配置（重ならない場所を探す） ----------
 const ROLE_FS = 17;
@@ -280,7 +348,9 @@ export function layoutLabels(list, idx, roleVis = {}) {
     const persons = list.filter((s) => s.t === 'person').sort((a, b) => a.y - b.y || a.x - b.x);
     for (const s of persons) {
       const c = personCast(s, idx);
-      const text = c ? rolesOf(c).map((r, i) => (r.label && roleVisible(roleVis, c.id, i) ? r.label : '')).filter(Boolean).join('・') : '';
+      const parts = c ? rolesOf(c).map((r, i) => (r.label && roleVisible(roleVis, c.id, i) ? r.label : '')) : [];
+      if (s.label) parts.push(s.label);
+      const text = parts.filter(Boolean).join('・');
       if (!text) continue;
       const r = s.r || 20;
       const w = textW(text, ROLE_FS), hh = ROLE_FS * 1.1, g = 3;
@@ -306,6 +376,34 @@ export function layoutLabels(list, idx, roleVis = {}) {
         fill: '#111', 'font-family': LABEL_FONT, 'pointer-events': 'none', class: 'role-label',
       }, text));
     }
+  }
+  // 線・矢印の名前：線の真ん中の横の、空いている側に置く
+  for (const s of list.filter((x) => (x.t === 'line' || x.t === 'arrow') && x.name && x.showName !== false)) {
+    const text = s.name;
+    const w = textW(text, NAME_FS), hh = NAME_FS * 1.15;
+    const pts = s.t === 'line' ? linePoints(s) : [[s.x1, s.y1], [s.x2, s.y2]];
+    const L = polyLength(pts);
+    let best = null, bestScore = Infinity;
+    for (const f of [0.5, 0.35, 0.65, 0.2, 0.8]) {
+      const m = pointAt(pts, L * f);
+      const nx = -m.uy, ny = m.ux;
+      const off = (s.t === 'arrow' && s.style === 'block' ? (s.width || 46) : 8) + 6;
+      for (const sg of [-1, 1]) {
+        // 法線方向へ、文字の箱が線にかからない距離だけ離す
+        const ext = Math.abs(nx) * w / 2 + Math.abs(ny) * hh / 2;
+        const cx = m.x + sg * nx * (off + ext), cy = m.y + sg * ny * (off + ext);
+        const box = [cx - w / 2, cy - hh / 2, cx + w / 2, cy + hh / 2];
+        let score = Math.abs(f - 0.5) * 40 + (sg > 0 ? 1 : 0) + (bad(box) ? 1e6 : 0);
+        for (const o of obstacles) score += overlapArea(box, o);
+        for (const o of placed) score += overlapArea(box, o);
+        if (score < bestScore) { bestScore = score; best = box; }
+      }
+    }
+    placed.push(best);
+    out.push(h('text', {
+      key: 'nl' + s.id, x: (best[0] + best[2]) / 2, y: (best[1] + best[3]) / 2, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+      'font-size': NAME_FS, fill: '#222', 'font-family': LABEL_FONT, 'pointer-events': 'none', class: 'name-label',
+    }, text));
   }
   const regions = list.filter((s) => isRegion(s) && s.name && s.showName !== false);
   for (const s of regions) {

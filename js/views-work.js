@@ -212,15 +212,13 @@ export function CastView() {
     h('div', { class: 'page-head' }, h('h1', null, 'メンバー一覧'),
       h('div', { class: 'actions' }, h('a', { class: 'btn', href: `#/w/${w}` }, '作品に戻る'))),
     h('p', { class: 'muted small' },
-      '番号は上から順に自動で付きます。左のつまみ（⠿）をドラッグすると順番を入れ替えられ、すべてのトラックの舞台図の番号も一緒に変わります。1人が複数の役をするときは「＋ 兼役」で役を追加してください。CD係のように記号（CDなど）の人は、この一覧とPDFの表にだけ載り、舞台図には出ません。'),
+      '番号は上から順に自動で付きます。左のつまみ（⠿）をドラッグすると順番を入れ替えられ、すべてのトラックの舞台図の番号も一緒に変わります。1人が複数の役をするときは「＋ 兼役」で役を追加してください。CD係は、この一覧とPDFの表にだけ載り、舞台図には出ません。'),
     h('div', { class: 'cast-scroll' }, h('table', { class: 'cast-edit' + (dragging ? ' dragging' : '') },
       h('thead', null, h('tr', null, h('th', null, ''), h('th', null, '番号'), h('th', null, '名前'), h('th', null, '役 ／ 図解での表記'), h('th', null, ''))),
       h('tbody', null, cast.map((c, i) => h('tr', { key: c.id || 'c' + i, style: rowStyle(i), class: dragging && dragging.from === i ? 'drag-row' : null },
         h('td', { class: 'grip-cell' }, h('span', { class: 'grip', title: 'ドラッグで並べ替え', onpointerdown: (e) => startDrag(e, w, cast, i) }, '⠿')),
         h('td', { class: 'no' },
-          c.tag != null && c.tag !== ''
-            ? h('input', { value: c.tag, class: 'tag-in', 'aria-label': '記号', oninput: (e) => upd(i, 'tag', e.target.value), onblur: (e) => { if (!e.target.value.trim()) upd(i, 'tag', ''); } })
-            : h('span', { class: 'auto-no' }, numbered[i].no)),
+          h('span', { class: 'auto-no' + (c.tag ? ' tag-no' : '') }, numbered[i].no)),
         h('td', null, h('input', { value: c.name, oninput: (e) => upd(i, 'name', e.target.value), 'aria-label': '名前' })),
         h('td', { class: 'roles-cell' },
           (rolesOf(c).length ? rolesOf(c) : [{ name: '', label: '' }]).map((r, k) => h('div', { key: 'r' + k, class: 'role-line' },
@@ -229,12 +227,9 @@ export function CastView() {
             k > 0 ? h('button', { class: 'icon-btn', title: 'この兼役を削除', onclick: () => setRoles(i, (rs) => rs.filter((_, x) => x !== k)) }, '×') : h('span', { class: 'icon-sp' }))),
           h('button', { class: 'add-role', onclick: () => setRoles(i, (rs) => [...rs, { name: '', label: '' }]) }, '＋ 兼役')),
         h('td', { class: 'row-btns' },
-          h('details', { class: 'kebab' },
-            h('summary', { title: 'その他' }, '⋯'),
-            h('div', { class: 'menu' },
-              c.tag ? h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; upd(i, 'tag', ''); } }, '番号に戻す')
-                : h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; upd(i, 'tag', 'CD'); } }, '番号の代わりに記号を使う（CD係など。舞台図には出ません）'),
-              h('button', { class: 'linklike danger', onclick: async (e) => { e.target.closest('details').open = false; if (await confirmBox(`「${c.name || '名前なし'}」を一覧から削除しますか？\n舞台図に置いた丸は番号なしになります。`, { ok: '削除', danger: true })) editCast(w, cast.filter((_, j) => j !== i)); } }, '削除'))))))))),
+          h('button', { class: 'icon-btn trash', title: 'この人を削除', 'aria-label': 'この人を削除', onclick: async () => { if (await confirmBox(`「${c.name || '名前なし'}」を一覧から削除しますか？\n舞台図に置いた人は番号なしになります。`, { ok: '削除', danger: true })) editCast(w, cast.filter((_, j) => j !== i)); } },
+            h('svg', { viewBox: '0 0 24 24', width: 18, height: 18, 'aria-hidden': 'true' },
+              h('path', { d: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.8, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }))))))))),
     h('div', { class: 'actions' },
       h('button', { class: 'btn', onclick: () => {
         // 記号の人（CD係など）より前に追加する
@@ -246,7 +241,7 @@ export function CastView() {
       } }, '＋ 1人追加')),
     h('section', { class: 'panel' },
       h('h2', null, '図解での表記のルール'),
-      h('p', { class: 'muted small' }, '役名を舞台図に書くときの決まりをメモしておけます（舞台図の編集画面からも見られます）。上の表の「図解での表記」に入れた文字が、舞台図の丸の横に表示されます。'),
+      h('p', { class: 'muted small' }, '役名を舞台図に書くときの決まりをメモしておけます（舞台図の編集画面からも見られます）。上の表の「図解での表記」に入れた文字が、舞台図の人の横に表示されます。'),
       h('textarea', {
         rows: 4, value: work.labelRules || '', placeholder: '例：役名は〇の中ではなく横に書く。フォントはArial 9。ルーシィ→ルー、エドマンド→エド…',
         oninput: (e) => saveLater(P.work(w), { labelRules: e.target.value, updatedAt: Date.now() }),
@@ -259,7 +254,7 @@ export function CastView() {
         h('button', {
           class: 'btn primary', onclick: async () => {
             const add = parseCast(S.ui.castPaste); if (!add.length) return;
-            if (cast.length && !(await confirmBox('今の一覧を貼り付けた内容で置き換えますか？\n舞台図に置いた丸は番号なしになります。', { ok: '置き換える', danger: true }))) return;
+            if (cast.length && !(await confirmBox('今の一覧を貼り付けた内容で置き換えますか？\n舞台図に置いた人は番号なしになります。', { ok: '置き換える', danger: true }))) return;
             const staff = add.some((c) => c.tag) ? [] : cast.filter((c) => c.tag);
             editCast(w, [...add, ...staff]); S.ui.castPaste = ''; toast(`${add.length}人を読み込みました`);
           },
