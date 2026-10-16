@@ -1,80 +1,98 @@
 rules_version = '2';
-// 舞台図解メーカー用のセキュリティルール。
-// Firebase コンソール → Firestore Database → ルール に、この内容をすべて貼り付けて「公開」してください。
+// 舞台図解メーカー用のセキュリティルール（Googleドライブと同じ共有の考え方）
+// Firebase コンソール → Firestore → ルール に、この内容をすべて貼り付けて「公開」してください。
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Googleアカウントでログインしていれば、だれでも使える
     function signedIn() {
       return request.auth != null && request.auth.token.email != null
         && request.auth.token.email_verified == true;
     }
-    function myEmail() { return request.auth.token.email.lower(); }
-    function memberPath() { return /databases/$(database)/documents/members/$(myEmail()); }
-    function isMember() { return signedIn() && exists(memberPath()); }
-    function isAdmin() { return isMember() && get(memberPath()).data.role == 'admin'; }
-    function setupPath() { return /databases/$(database)/documents/meta/setup; }
+    function me() { return request.auth.token.email.lower(); }
 
-    // 初期設定済みかどうかの印（最初の管理者が登録したときに作られる）
-    match /meta/setup {
-      allow read: if signedIn();
-      allow create: if signedIn() && existsAfter(memberPath());
+    // プロフィール（共有画面に名前を出すため）。メールアドレスを知っている人だけが1件ずつ読める
+    match /profiles/{email} {
+      allow get: if signedIn();
+      allow write: if signedIn() && email == me();
     }
 
-    // Googleグループ同期の記録（同期スクリプトが書き込み、画面で表示する）
-    match /meta/groupSync {
-      allow read: if isMember();
+    // Googleグループのメンバー一覧（同期スクリプトが書き込む）。そのグループのメンバーだけが読める
+    match /groups/{g} {
+      allow get: if signedIn() && me() in resource.data.members;
     }
 
-    // ログインできる人（ドキュメント名＝メールアドレス）
-    match /members/{email} {
-      allow read: if isMember() || (signedIn() && email == myEmail());
-      allow write: if isAdmin();
-      // 本人は自分の名前だけ更新できる（参加者画面で名前を表示するため）
-      allow update: if signedIn() && email == myEmail()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name']);
-      // まだ誰も登録されていないときだけ、最初の1人が自分を管理者にできる
-      allow create: if signedIn() && email == myEmail()
-        && !exists(setupPath()) && existsAfter(setupPath())
-        && request.resource.data.role == 'admin';
+    // ---------- 作品の共有 ----------
+    // participants：共有されている全員 / owners：オーナー / viewers：閲覧者（それ以外は編集者）
+    function owners(d) { return d.get('owners', []); }
+    function viewers(d) { return d.get('viewers', []); }
+    function validShare(d) {
+      return d.participants is list && owners(d) is list && viewers(d) is list
+        && owners(d).size() > 0
+        && d.participants.toSet().hasAll(owners(d).toSet())
+        && d.participants.toSet().hasAll(viewers(d).toSet())
+        && !owners(d).toSet().hasAny(viewers(d).toSet());
     }
+    function changedKeys() { return request.resource.data.diff(resource.data).affectedKeys(); }
+    function shareKeys() { return ['participants', 'owners', 'viewers', 'linkRole', 'linkKey', 'lastJoin']; }
 
-    // 参加リクエスト（本人が作成し、管理者が確認）
-    match /requests/{email} {
-      allow read: if isAdmin() || (signedIn() && email == myEmail());
-      allow create, update: if signedIn() && email == myEmail();
-      allow delete: if isAdmin() || (signedIn() && email == myEmail());
-    }
-
-    // 作品：参加者（participants）だけが見られる・編集できる
-    // 参加者と「作品の管理者」（admins）を変えられるのは、作品の管理者だけ
     function workPath(w) { return /databases/$(database)/documents/works/$(w); }
     function inWork(w) {
-      return isMember() && exists(workPath(w)) && myEmail() in get(workPath(w)).data.participants;
+      return signedIn() && exists(workPath(w)) && me() in get(workPath(w)).data.participants;
+    }
+    function canWrite(w) {
+      return inWork(w) && !(me() in viewers(get(workPath(w)).data));
     }
     // 作品と中身を一度に作るとき用（書き込み後の状態で判定）
-    function inWorkAfter(w) {
-      return isMember() && existsAfter(workPath(w)) && myEmail() in getAfter(workPath(w)).data.participants;
-    }
-    function validAccess(d) {
-      return d.participants is list && d.admins is list
-        && d.admins.size() > 0 && d.participants.hasAll(d.admins);
+    function canWriteAfter(w) {
+      return signedIn() && existsAfter(workPath(w))
+        && me() in getAfter(workPath(w)).data.participants
+        && !(me() in viewers(getAfter(workPath(w)).data));
     }
 
     match /works/{w} {
-      allow read: if isMember() && myEmail() in resource.data.participants;
-      allow create: if isMember() && validAccess(request.resource.data)
-        && request.resource.data.admins.hasOnly([myEmail()])
-        && request.resource.data.participants.hasOnly([myEmail()]);
-      allow update: if isMember() && myEmail() in resource.data.participants
-        && validAccess(request.resource.data)
-        && (myEmail() in resource.data.admins
-            || (request.resource.data.participants == resource.data.participants
-                && request.resource.data.admins == resource.data.admins));
-      allow delete: if isMember() && myEmail() in resource.data.participants;
+      allow read: if signedIn() && me() in resource.data.participants;
 
+      // 作った人がオーナー
+      allow create: if signedIn() && validShare(request.resource.data)
+        && request.resource.data.participants == [me()]
+        && owners(request.resource.data) == [me()];
+
+      // オーナー：共有設定を含めて何でも変えられる
+      allow update: if signedIn() && me() in owners(resource.data)
+        && validShare(request.resource.data);
+
+      // 編集者：共有設定以外を変えられる
+      allow update: if signedIn() && me() in resource.data.participants
+        && !(me() in viewers(resource.data))
+        && !changedKeys().hasAny(shareKeys());
+
+      // リンクを知っている人が参加する（リンクの合言葉が必要）
+      allow update: if signedIn() && !(me() in resource.data.participants)
+        && resource.data.get('linkRole', 'off') in ['viewer', 'editor']
+        && request.resource.data.lastJoin.by == me()
+        && request.resource.data.lastJoin.key == resource.data.linkKey
+        && changedKeys().hasOnly(['participants', 'viewers', 'lastJoin'])
+        && request.resource.data.participants.toSet() == resource.data.participants.toSet().union([me()].toSet())
+        && ((resource.data.linkRole == 'editor'
+              && viewers(request.resource.data).toSet() == viewers(resource.data).toSet())
+          || (resource.data.linkRole == 'viewer'
+              && viewers(request.resource.data).toSet() == viewers(resource.data).toSet().union([me()].toSet())));
+
+      // オーナー以外は、自分で共有から抜けられる
+      allow update: if signedIn() && me() in resource.data.participants
+        && !(me() in owners(resource.data))
+        && changedKeys().hasOnly(['participants', 'viewers'])
+        && request.resource.data.participants.toSet() == resource.data.participants.toSet().difference([me()].toSet())
+        && viewers(request.resource.data).toSet() == viewers(resource.data).toSet().difference([me()].toSet());
+
+      // 作品の削除はオーナーだけ
+      allow delete: if signedIn() && me() in owners(resource.data);
+
+      // 作品の中身：共有されている人は読める。閲覧者以外は書ける
       match /{sub=**} {
         allow read: if inWork(w);
-        allow write: if inWork(w) || inWorkAfter(w);
+        allow write: if canWrite(w) || canWriteAfter(w);
       }
     }
   }

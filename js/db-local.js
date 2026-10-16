@@ -98,6 +98,16 @@ function fire(l) {
   l.last = s;
   l.cb(v);
 }
+export async function joinWork(w, key, email) {
+  const d = data['works/' + w];
+  if (!d || !d.linkRole || d.linkRole === 'off' || d.linkKey !== key) { const e = new Error('permission-denied'); e.code = 'permission-denied'; throw e; }
+  d.participants = [...new Set([...(d.participants || []), email])];
+  if (d.linkRole === 'viewer') d.viewers = [...new Set([...(d.viewers || []), email])];
+  d.lastJoin = { by: email, key, at: Date.now() };
+  persist();
+  return d.linkRole;
+}
+
 export function watchDoc(path, cb) {
   const l = { type: 'doc', path, cb };
   listeners.add(l);

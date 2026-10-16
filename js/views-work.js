@@ -6,13 +6,9 @@ import { P, createEpisode, createTrack, copyDraft, deleteDraft, deleteTrack, del
 import { confirmDeleteWork } from './views-home.js';
 import { ask, confirmBox } from './dialog.js';
 import { ensureCastIds, numberCast, rolesOf } from './cast.js';
-
-// 作品の管理者か（参加者の仕組みより前に作ったデモの作品は、全員を管理者として扱う）
-export function isWorkAdmin(work) {
-  if (!work) return false;
-  if (!Array.isArray(work.admins)) return true;
-  return work.admins.includes(S.user.email);
-}
+import { myRole, canEdit, isOwner, ROLE_LABEL, rolesOfWork, saveRoles, joinUrl, profileName, groupMembers } from './access.js';
+import { CastTable } from './sheet.js';
+import { newId } from './db.js';
 
 const byOrder = (a, b) => (a.order || 0) - (b.order || 0) || (a.createdAt || 0) - (b.createdAt || 0);
 
@@ -46,8 +42,10 @@ export function WorkView() {
   const w = S.route.params.w;
   const work = S.d.work;
   if (work === undefined) return h('main', { class: 'page' }, h('p', { class: 'muted' }, '読み込み中…'));
-  if (work === null) return h('main', { class: 'page' }, h('p', null, 'この作品は見つかりませんでした。'), h('a', { href: '#/' }, '作品一覧へ'));
+  if (work === null) return h('main', { class: 'page' }, h('p', null, 'この作品は見つからないか、あなたに共有されていません。'), h('a', { href: '#/' }, '作品一覧へ'));
   const eps = (S.d.episodes || []).slice().sort(byOrder);
+  const edit = canEdit(work);
+  const owner = isOwner(work);
   const tracks = S.d.tracks || [];
   const drafts = S.d.drafts || [];
   const workPath = P.work(w);
@@ -55,23 +53,25 @@ export function WorkView() {
   return h('main', { class: 'page' },
     h('div', { class: 'page-head' },
       h('input', {
-        class: 'title-input', value: work.title, 'aria-label': '作品名',
+        class: 'title-input', value: work.title, 'aria-label': '作品名', readonly: !edit,
         oninput: (e) => saveLater(workPath, { title: e.target.value, updatedAt: Date.now() }),
       }),
       h('div', { class: 'actions' },
-        h('a', { class: 'btn', href: `#/w/${w}/people` }, `参加者（${(work.participants || []).length || '全員'}${(work.participants || []).length ? '人' : ''}）`),
+        h('span', { class: 'badge role-' + myRole(work) }, ROLE_LABEL[myRole(work)]),
+        h('a', { class: 'btn primary share-btn', href: `#/w/${w}/people` }, '共有'),
         h('a', { class: 'btn', href: `#/w/${w}/cast` }, `メンバー一覧（${(work.cast || []).length}人）`),
-        Menu([
+        edit ? Menu([
           {
             label: 'タイトルの頭につける文字を変える', fn: async () => {
               const r = await ask({ title: 'タイトルの頭につける文字', ok: '保存', fields: [{ key: 'v', label: '例：【表現活動】（空欄にもできます）', value: work.prefix ?? '【表現活動】' }] });
               if (r) db.update(workPath, { prefix: r.v });
             },
           },
-          { label: 'この作品を削除', danger: true, fn: () => confirmDeleteWork(w, work) },
-        ]))),
+          owner ? { label: 'この作品を削除', danger: true, fn: () => confirmDeleteWork(w, work) } : null,
+        ]) : null)),
+    !edit ? h('div', { class: 'note' }, 'この作品は閲覧のみで共有されています。見ることとPDFの書き出しができます。') : null,
     h('p', { class: 'muted small' }, `PDFのタイトル例：${work.prefix ?? '【表現活動】'}2話図解_トラ1_第1稿`),
-    eps.length === 0 ? h('div', { class: 'empty' }, h('p', null, 'まだ話がありません。'), h('p', { class: 'muted' }, '「＋ 話を追加」から始めましょう（例：1話、2話）。')) : null,
+    eps.length === 0 ? h('div', { class: 'empty' }, h('p', null, 'まだ話がありません。'), edit ? h('p', { class: 'muted' }, '「＋ 話を追加」から始めましょう（例：1話、2話）。') : null) : null,
     eps.map((ep, i) => {
       const ts = tracks.filter((t) => t.episodeId === ep.id).sort(byOrder);
       return h('section', { key: ep.id, class: 'episode' },
@@ -79,13 +79,13 @@ export function WorkView() {
           h('h2', null, ep.title),
           h('div', { class: 'actions' },
             ts.length ? h('a', { class: 'btn small', href: `#/w/${w}/print/e/${ep.id}` }, 'この話をPDFに') : null,
-            h('button', {
+            edit ? h('button', {
               class: 'btn small primary', onclick: async () => {
                 const t = await askName('トラックを追加', 'トラックの名前', `トラック${ts.length + 1}`, '追加');
                 if (t) await createTrack(w, ep.id, t, ts.length + 1, S.user);
               },
-            }, '＋ トラックを追加'),
-            Menu([
+            }, '＋ トラックを追加') : null,
+            !edit ? null : Menu([
               { label: '名前を変える', fn: async () => { const t = await askName('話の名前を変える', '話の名前', ep.title); if (t) db.update(P.doc(w, 'episodes', ep.id), { title: t }); } },
               i > 0 ? { label: '上へ移動', fn: () => swapOrder(w, 'episodes', eps, i, -1) } : null,
               i < eps.length - 1 ? { label: '下へ移動', fn: () => swapOrder(w, 'episodes', eps, i, 1) } : null,
@@ -96,7 +96,7 @@ export function WorkView() {
           const ds = drafts.filter((d) => d.trackId === t.id).sort((a, b) => (b.no || 0) - (a.no || 0));
           const latest = ds[0];
           return h('li', { key: t.id, class: 'track' },
-            h('a', { class: 'track-main', href: latest ? `#/w/${w}/d/${latest.id}` : '#' },
+            h('a', { class: 'track-main', href: latest ? (edit ? `#/w/${w}/d/${latest.id}` : `#/w/${w}/print/d/${latest.id}`) : '#' },
               h('div', { class: 'track-title' }, t.title, latest ? h('span', { class: 'badge' }, `第${latest.no}稿`) : null),
               h('div', { class: 'muted small' },
                 latest && latest.zukaikko ? `図解っ子：${latest.zukaikko} ・ ` : '',
@@ -104,10 +104,10 @@ export function WorkView() {
             h('div', { class: 'track-actions' },
               ds.length > 1 ? h('select', {
                 class: 'small', 'aria-label': '稿を選ぶ', value: '',
-                onchange: (e) => { if (e.target.value) go(`#/w/${w}/d/${e.target.value}`); },
+                onchange: (e) => { if (e.target.value) go(edit ? `#/w/${w}/d/${e.target.value}` : `#/w/${w}/print/d/${e.target.value}`); },
               }, h('option', { value: '' }, '稿を選ぶ'), ds.map((d) => h('option', { value: d.id }, `第${d.no}稿`))) : null,
               latest ? h('a', { class: 'btn small', href: `#/w/${w}/print/d/${latest.id}` }, 'PDF') : null,
-              Menu([
+              !edit ? null : Menu([
                 latest ? { label: '新しい稿を作る（最新の稿を複製）', fn: async () => { const nd = await copyDraft(w, latest.id, S.user); toast('新しい稿を作りました'); go(`#/w/${w}/d/${nd}`); } } : null,
                 { label: '名前を変える', fn: async () => { const n = await askName('トラックの名前を変える', 'トラックの名前', t.title); if (n) db.update(P.doc(w, 'tracks', t.id), { title: n }); } },
                 k > 0 ? { label: '上へ移動', fn: () => swapOrder(w, 'tracks', ts, k, -1) } : null,
@@ -117,13 +117,13 @@ export function WorkView() {
               ])));
         })));
     }),
-    h('div', { class: 'actions pad-top' },
+    edit ? h('div', { class: 'actions pad-top' },
       h('button', {
         class: 'btn primary', onclick: async () => {
           const t = await askName('話を追加', '話の名前', `${eps.length + 1}話`, '追加');
           if (t) await createEpisode(w, t, eps.length + 1);
         },
-      }, '＋ 話を追加')),
+      }, '＋ 話を追加')) : null,
   );
 }
 
@@ -186,6 +186,13 @@ export function CastView() {
   const w = S.route.params.w;
   const work = S.d.work;
   if (!work) return h('main', { class: 'page' }, h('p', { class: 'muted' }, '読み込み中…'));
+  if (!canEdit(work)) {
+    return h('main', { class: 'page narrow' },
+      h('div', { class: 'page-head' }, h('h1', null, 'メンバー一覧'), h('div', { class: 'actions' }, h('a', { class: 'btn', href: `#/w/${w}` }, '作品に戻る'))),
+      h('p', { class: 'muted small' }, '閲覧のみで共有されているため、変更はできません。'),
+      CastTable(work.cast),
+      work.labelRules ? h('section', { class: 'panel' }, h('h2', null, '図解での表記のルール'), h('div', { class: 'rules-body' }, work.labelRules)) : null);
+  }
   let cast = S.ui.cast || work.cast || [];
   const fixed = ensureCastIds(cast);
   if (fixed.changed) { cast = fixed.cast; queueMicrotask(() => editCast(w, cast)); }
@@ -260,81 +267,142 @@ export function CastView() {
   );
 }
 
-// ---------- 参加者（作品ごと） ----------
-async function setAccess(w, work, participants, admins) {
-  participants = [...new Set(participants)];
-  admins = [...new Set(admins)].filter((e) => participants.includes(e));
-  if (!admins.length) { toast('作品の管理者が1人以上必要です', 'error'); return false; }
-  await db.update(P.work(w), { participants, admins, updatedAt: Date.now() });
-  return true;
+// ---------- 共有（Googleドライブと同じ形） ----------
+function splitAddrs(text) {
+  return [...new Set(String(text || '').split(/[\s,、，;；]+/).map((x) => x.trim().toLowerCase()).filter(Boolean))];
+}
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i;
+
+async function addPeople(w, work) {
+  const addrs = splitAddrs(S.ui.shareInput);
+  if (!addrs.length) return;
+  const role = S.ui.shareRole || 'editor';
+  const roles = rolesOfWork(work);
+  const added = [];
+  const errors = [];
+  for (const a of addrs) {
+    if (!EMAIL_RE.test(a)) { errors.push(`「${a}」はメールアドレスの形ではありません`); continue; }
+    if (a.endsWith('@googlegroups.com')) {
+      const members = await groupMembers(a);
+      if (!members) { errors.push(`${a} のメンバー一覧を読み込めませんでした（グループが同期されていないか、あなたがそのグループのメンバーではありません）`); continue; }
+      let n = 0;
+      for (const m of members) if (!roles[m]) { roles[m] = role; n++; }
+      added.push(`${a}（${n}人）`);
+      continue;
+    }
+    if (!roles[a]) { roles[a] = role; added.push(a); }
+  }
+  if (added.length) {
+    try {
+      await saveRoles(w, roles);
+      toast(`${added.join('、')} を${ROLE_LABEL[role]}として追加しました`, 'info', 5000);
+      S.ui.shareInput = '';
+    } catch (e) { errors.push(e.message || String(e)); }
+  }
+  S.ui.shareError = errors.join('\n');
+  rerender();
 }
 
-export function PeopleView() {
+async function changeRole(w, work, email, role) {
+  const roles = rolesOfWork(work);
+  if (role === 'remove') delete roles[email]; else roles[email] = role;
+  try { await saveRoles(w, roles); } catch (e) { toast(e.message, 'error'); rerender(); }
+}
+
+async function leaveWork(w, work) {
+  if (!(await confirmBox('この作品の共有から抜けますか？\n抜けると、この作品を見られなくなります。', { ok: '抜ける', danger: true }))) return;
+  const me = S.user.email;
+  await db.update(P.work(w), {
+    participants: (work.participants || []).filter((e) => e !== me),
+    viewers: (work.viewers || []).filter((e) => e !== me),
+  });
+  go('#/');
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); toast('リンクをコピーしました'); } catch (e) {
+    await ask({ title: 'リンク', message: 'コピーできなかったので、下の文字を選んでコピーしてください。', fields: [{ key: 'v', label: 'リンク', value: text }], cancel: false, ok: '閉じる' });
+  }
+}
+
+export function ShareView() {
   const w = S.route.params.w;
   const work = S.d.work;
   if (work === undefined) return h('main', { class: 'page' }, h('p', { class: 'muted' }, '読み込み中…'));
-  if (work === null) return h('main', { class: 'page' }, h('p', null, 'この作品は見つからないか、参加していません。'), h('a', { href: '#/' }, '作品一覧へ'));
+  if (work === null) return h('main', { class: 'page' }, h('p', null, 'この作品は見つからないか、あなたに共有されていません。'), h('a', { href: '#/' }, '作品一覧へ'));
   const me = S.user.email;
-  const amAdmin = isWorkAdmin(work);
-  const parts = work.participants || [];
-  const admins = work.admins || [];
-  const accounts = S.d.members || [];
-  const nameOf = (e) => { const m = accounts.find((x) => x.id === e); return m && m.name ? m.name : ''; };
-  const candidates = accounts.filter((m) => !parts.includes(m.id)).sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id, 'ja'));
-  const q = (S.ui.peopleQ || '').trim().toLowerCase();
-  const shown = candidates.filter((m) => !q || m.id.includes(q) || (m.name || '').toLowerCase().includes(q));
-  const picked = S.ui.peoplePick || {};
-  const pickedList = Object.keys(picked).filter((k) => picked[k]);
-  const list = parts.slice().sort((a, b) => (admins.includes(b) - admins.includes(a)) || (nameOf(a) || a).localeCompare(nameOf(b) || b, 'ja'));
+  const owner = isOwner(work);
+  const roles = rolesOfWork(work);
+  const order = { owner: 0, editor: 1, viewer: 2 };
+  const people = Object.keys(roles).sort((a, b) => (order[roles[a]] - order[roles[b]]) || a.localeCompare(b));
+  const link = work.linkRole || 'off';
+  const nameOf = (e) => (e === me ? S.user.name : profileName(e, rerender));
 
   return h('main', { class: 'page narrow' },
-    h('div', { class: 'page-head' }, h('h1', null, '参加者'),
+    h('div', { class: 'page-head' }, h('h1', null, `「${work.title || '無題の作品'}」を共有`),
       h('div', { class: 'actions' }, h('a', { class: 'btn', href: `#/w/${w}` }, '作品に戻る'))),
-    h('p', { class: 'muted small' },
-      'この作品を見たり編集したりできるのは、ここにいる人だけです。参加していない人のホーム画面には、この作品は表示されません。',
-      amAdmin ? ' 参加者の追加・削除と、作品の管理者の指定は、作品の管理者だけができます。' : ' 参加者の追加・削除は、作品の管理者に頼んでください。'),
+
+    owner ? h('section', { class: 'panel' },
+      h('h2', null, 'ユーザーやグループを追加'),
+      h('div', { class: 'share-add' },
+        h('textarea', {
+          rows: 2, value: S.ui.shareInput || '', placeholder: 'メールアドレス、または 〇〇@googlegroups.com（複数は改行や「,」で区切る）',
+          oninput: (e) => { S.ui.shareInput = e.target.value; if (S.ui.shareError) { S.ui.shareError = ''; rerender(); } },
+        }),
+        h('div', { class: 'share-add-row' },
+          h('select', { value: S.ui.shareRole || 'editor', onchange: (e) => { S.ui.shareRole = e.target.value; } },
+            h('option', { value: 'editor' }, '編集者'), h('option', { value: 'viewer' }, '閲覧者'), h('option', { value: 'owner' }, 'オーナー')),
+          h('button', { class: 'btn primary', onclick: () => addPeople(w, work) }, '追加'))),
+      S.ui.shareError ? h('div', { class: 'dlg-err pre' }, S.ui.shareError) : null,
+      h('p', { class: 'muted small' }, 'Googleグループのアドレスを入れると、そのグループのメンバー全員をまとめて追加します（あとからグループに入った人は自動では追加されません）。追加した人には自動で通知が届かないので、下の「リンクをコピー」で知らせてください。')) : null,
+
     h('section', { class: 'panel' },
-      h('h2', null, `参加している人（${list.length}人）`),
-      h('ul', { class: 'mlist' }, list.map((e) => {
-        const isAdm = admins.includes(e);
-        return h('li', { key: e },
-          h('div', { class: 'grow' },
-            h('div', null, nameOf(e) || e, isAdm ? h('span', { class: 'badge' }, '作品の管理者') : null, e === me ? h('span', { class: 'muted small' }, '（あなた）') : null),
-            nameOf(e) ? h('div', { class: 'muted small' }, e) : null),
-          amAdmin ? h('select', {
-            value: isAdm ? 'admin' : 'editor', 'aria-label': '役割',
-            onchange: async (ev) => {
-              const toAdmin = ev.target.value === 'admin';
-              const next = toAdmin ? [...admins, e] : admins.filter((x) => x !== e);
-              if (!toAdmin && e === me && !(await confirmBox('自分を作品の管理者から外しますか？\nあとで戻すには、ほかの管理者に頼む必要があります。', { ok: '外す', danger: true }))) { rerender(); return; }
-              if (!(await setAccess(w, work, parts, next))) rerender();
-            },
-          }, h('option', { value: 'editor' }, '編集者'), h('option', { value: 'admin' }, '作品の管理者')) : null,
-          amAdmin ? h('button', {
-            class: 'btn small danger',
-            onclick: async () => {
-              const msg = e === me ? 'この作品から抜けますか？\n抜けると、この作品を見られなくなります。' : `${nameOf(e) || e} をこの作品の参加者から外しますか？`;
-              if (!(await confirmBox(msg, { ok: e === me ? '抜ける' : '外す', danger: true }))) return;
-              const ok = await setAccess(w, work, parts.filter((x) => x !== e), admins.filter((x) => x !== e));
-              if (ok && e === me) go('#/');
-            },
-          }, e === me ? '抜ける' : '外す') : null);
-      }))),
-    amAdmin ? h('section', { class: 'panel' },
-      h('h2', null, '参加者を追加'),
-      candidates.length ? [
-        h('input', { placeholder: '名前かメールアドレスで絞り込み', value: S.ui.peopleQ || '', oninput: (e) => { S.ui.peopleQ = e.target.value; rerender(); } }),
-        h('div', { class: 'pick-list' }, shown.map((m) => h('label', { key: m.id, class: 'check pick' },
-          h('input', { type: 'checkbox', checked: !!picked[m.id], onchange: (e) => { S.ui.peoplePick = { ...picked, [m.id]: e.target.checked }; rerender(); } }),
-          h('span', null, m.name || m.id, m.name ? h('small', { class: 'muted' }, '　' + m.id) : null)))),
-        h('div', { class: 'actions' },
-          h('button', { class: 'btn small', onclick: () => { const p = { ...picked }; shown.forEach((m) => { p[m.id] = true; }); S.ui.peoplePick = p; rerender(); } }, '表示中の全員を選ぶ'),
-          h('button', {
-            class: 'btn primary', disabled: !pickedList.length, onclick: async () => {
-              if (await setAccess(w, work, [...parts, ...pickedList], admins)) { toast(`${pickedList.length}人を追加しました`); S.ui.peoplePick = {}; rerender(); }
-            },
-          }, `選んだ${pickedList.length}人を追加`)),
-      ] : h('p', { class: 'muted small' }, 'ログインできる人は全員参加しています。'),
-      h('p', { class: 'muted small' }, 'ここに出てくるのは、アカウント管理（Googleグループの同期を含む）でログインできるようになっている人です。名前は、その人が一度ログインすると表示されます。')) : null,
+      h('h2', null, `アクセスできるユーザー（${people.length}人）`),
+      h('ul', { class: 'mlist' }, people.map((e) => h('li', { key: e },
+        h('div', { class: 'grow' },
+          h('div', null, nameOf(e) || e, e === me ? h('span', { class: 'muted small' }, '（あなた）') : null),
+          nameOf(e) ? h('div', { class: 'muted small' }, e) : null),
+        owner ? h('select', {
+          value: roles[e], 'aria-label': '権限',
+          onchange: async (ev) => {
+            const v = ev.target.value;
+            if (e === me && v !== 'owner' && !(await confirmBox(v === 'remove' ? '自分をこの作品から外しますか？\n外すと、この作品を見られなくなります。' : '自分をオーナーから外しますか？\nあとで戻すには、ほかのオーナーに頼む必要があります。', { ok: 'はい', danger: true }))) { rerender(); return; }
+            await changeRole(w, work, e, v);
+            if (e === me && v === 'remove') go('#/');
+          },
+        }, h('option', { value: 'owner' }, 'オーナー'), h('option', { value: 'editor' }, '編集者'), h('option', { value: 'viewer' }, '閲覧者'), h('option', { value: 'remove' }, 'アクセス権を削除'))
+          : h('span', { class: 'badge role-' + roles[e] }, ROLE_LABEL[roles[e]])))),
+      !owner ? h('div', { class: 'actions' },
+        h('span', { class: 'muted small grow' }, '共有の設定を変えられるのはオーナーだけです。'),
+        h('button', { class: 'btn small danger', onclick: () => leaveWork(w, work) }, '共有から抜ける')) : null),
+
+    h('section', { class: 'panel' },
+      h('h2', null, '一般的なアクセス'),
+      h('div', { class: 'link-row' },
+        h('span', { class: 'link-ico' + (link === 'off' ? '' : ' on') }, link === 'off' ? '🔒' : '🔗'),
+        h('div', { class: 'grow' },
+          owner ? h('select', {
+            value: link === 'off' ? 'off' : 'link',
+            onchange: (e) => db.update(P.work(w), { linkRole: e.target.value === 'off' ? 'off' : 'viewer', updatedAt: Date.now() }),
+          }, h('option', { value: 'off' }, '制限付き'), h('option', { value: 'link' }, 'リンクを知っている全員')) : h('b', null, link === 'off' ? '制限付き' : 'リンクを知っている全員'),
+          h('div', { class: 'muted small' }, link === 'off'
+            ? '追加されたユーザーだけが開けます。'
+            : 'このリンクを開いてGoogleでログインした人は、だれでもこの作品に参加できます。')),
+        link !== 'off' ? (owner ? h('select', {
+          value: link, 'aria-label': 'リンクの権限',
+          onchange: (e) => db.update(P.work(w), { linkRole: e.target.value, updatedAt: Date.now() }),
+        }, h('option', { value: 'viewer' }, '閲覧者'), h('option', { value: 'editor' }, '編集者')) : h('span', { class: 'badge' }, ROLE_LABEL[link])) : null),
+      h('div', { class: 'actions' },
+        h('button', { class: 'btn', onclick: () => copyText(joinUrl(w, work)) }, '🔗 リンクをコピー'),
+        owner && link !== 'off' ? h('button', {
+          class: 'btn small ghost', onclick: async () => {
+            if (!(await confirmBox('今のリンクを無効にして、新しいリンクを作りますか？\nすでに参加している人はそのまま使えます。', { ok: '作り直す' }))) return;
+            await db.update(P.work(w), { linkKey: newId(20), updatedAt: Date.now() });
+            toast('新しいリンクを作りました');
+          },
+        }, 'リンクを作り直す') : null),
+      h('p', { class: 'muted small' }, link === 'off'
+        ? 'リンクをコピーして送っても、上の一覧にいない人は開けません。'
+        : 'リンクから参加した人は、上の「アクセスできるユーザー」に追加されます。')),
   );
 }

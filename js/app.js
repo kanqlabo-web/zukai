@@ -2,13 +2,14 @@
 import { h, render } from './vdom.js';
 import { db, auth, initDB, mode, onDBError } from './db.js';
 import { S, rerender, setRenderers, toast, go } from './state.js';
-import { HomeView, AdminView, createSampleWork } from './views-home.js';
-import { WorkView, CastView, PeopleView } from './views-work.js';
+import { HomeView, createSampleWork } from './views-home.js';
+import { WorkView, CastView, ShareView } from './views-work.js';
 import { DraftView, SelectionBar } from './views-draft.js';
 import { EditorView } from './editor.js';
 import { PrintView, loadPrint } from './print.js';
 import { P } from './model.js';
 import { DialogView } from './dialog.js';
+import { saveMyProfile } from './access.js';
 
 const $app = document.getElementById('app');
 const $modal = document.getElementById('modal');
@@ -17,12 +18,11 @@ const $dialog = document.getElementById('dialog');
 
 let subs = [];
 function unsubAll() { for (const u of subs) { try { u(); } catch (e) { /* noop */ } } subs = []; }
-let memberUnsub = null;
 
 // ---------- ルーティング ----------
 function parseRoute() {
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
-  if (parts[0] === 'admin') return { name: 'admin', params: {} };
+  if (parts[0] === 'join' && parts[1] && parts[2]) return { name: 'join', params: { w: parts[1], key: parts[2] } };
   if (parts[0] === 'w' && parts[1]) {
     const w = parts[1];
     if (parts[2] === 'cast') return { name: 'cast', params: { w } };
@@ -49,12 +49,7 @@ function onRoute() {
   if (S.phase !== 'ready') { rerender(); return; }
   const { w, d } = r.params;
   if (r.name === 'home') watch('works', (cb) => db.watchList('works', ['participants', 'array-contains', S.user.email], cb));
-  if (r.name === 'people') watch('members', (cb) => db.watchList('members', null, cb));
-  if (r.name === 'admin') {
-    watch('members', (cb) => db.watchList('members', null, cb));
-    watch('requests', (cb) => db.watchList('requests', null, cb));
-    watch('groupSync', (cb) => db.watchDoc('meta/groupSync', cb));
-  }
+  if (r.name === 'join') { joinByLink(r.params); return; }
   if (w && r.name !== 'print') {
     // 参加していない作品は読めない（その場合は「見つかりません」と表示）
     const denied = () => { S.d.work = null; rerender(); };
@@ -77,70 +72,31 @@ function onRoute() {
 }
 window.addEventListener('hashchange', onRoute);
 
-// ---------- ログインとメンバー確認 ----------
-async function afterLogin(user) {
-  if (memberUnsub) { memberUnsub(); memberUnsub = null; }
-  S.user = user;
-  if (!user) { S.phase = 'login'; S.role = null; unsubAll(); rerender(); return; }
-  try {
-    if (mode === 'local') {
-      const me = await db.get('members/' + user.email);
-      if (!me) {
-        await db.batch([
-          { op: 'set', path: 'members/' + user.email, data: { role: 'admin', name: user.name, addedAt: Date.now(), addedBy: user.email } },
-          { op: 'set', path: 'meta/setup', data: { at: Date.now(), by: user.email } },
-        ]);
-      }
-    }
-    const me = await db.get('members/' + user.email);
-    if (me) {
-      S.role = me.role || 'member';
-      if (user.name && me.name !== user.name) db.update('members/' + user.email, { name: user.name }).catch(() => {});
-      S.phase = 'ready';
-      memberUnsub = db.watchDoc('members/' + user.email, (m) => {
-        if (!m) { S.phase = 'pending'; S.role = null; unsubAll(); }
-        else if (m.role !== S.role) S.role = m.role;
-        rerender();
-      });
-      S.route = {};
-      onRoute();
-      return;
-    }
-    const setup = await db.get('meta/setup');
-    S.phase = setup ? 'pending' : 'setup';
-    if (S.phase === 'pending') {
-      const req = await db.get('requests/' + user.email).catch(() => null);
-      S.ui.requested = !!req;
-    }
-  } catch (e) {
-    S.phase = 'error';
-    S.ui.error = e.message || String(e);
-  }
+// ---------- リンクから参加 ----------
+async function joinByLink({ w, key }) {
+  S.ui.joining = true;
   rerender();
-}
-
-async function becomeFirstAdmin() {
-  const u = S.user;
+  const already = await db.getQuiet(P.work(w));
+  if (already) { location.replace(`#/w/${w}`); return; }
   try {
-    await db.batch([
-      { op: 'set', path: 'members/' + u.email, data: { role: 'admin', name: u.name, addedAt: Date.now(), addedBy: u.email } },
-      { op: 'set', path: 'meta/setup', data: { at: Date.now(), by: u.email } },
-    ]);
-    await afterLogin(u);
+    await db.joinWork(w, key, S.user.email);
+    toast('作品に参加しました');
+    location.replace(`#/w/${w}`);
   } catch (e) {
-    toast('登録できませんでした。Firestore のルールが正しく設定されているか確認してください。', 'error', 8000);
-  }
-}
-
-async function sendRequest() {
-  const u = S.user;
-  try {
-    await db.set('requests/' + u.email, { email: u.email, name: u.name, at: Date.now() });
-    S.ui.requested = true;
+    S.ui.joining = false;
+    S.ui.joinError = 'このリンクでは参加できませんでした。リンクが無効になっているか、共有が「制限付き」に変わった可能性があります。共有した人に確認してください。';
     rerender();
-  } catch (e) {
-    toast('リクエストを送れませんでした: ' + e.message, 'error');
   }
+}
+
+// ---------- ログイン ----------
+async function afterLogin(user) {
+  S.user = user;
+  if (!user) { S.phase = 'login'; unsubAll(); rerender(); return; }
+  S.phase = 'ready';
+  saveMyProfile(user);
+  S.route = {};
+  onRoute();
 }
 
 async function doSignIn() {
@@ -162,8 +118,7 @@ function Header() {
     crumbs.push(h('a', { href: `#/w/${r.params.w}`, class: 'crumb' }, work.title || '無題の作品'));
   }
   if (r.name === 'cast') { crumbs.push(h('span', { class: 'crumb-sep' }, '/')); crumbs.push(h('span', { class: 'crumb' }, 'メンバー一覧')); }
-  if (r.name === 'people') { crumbs.push(h('span', { class: 'crumb-sep' }, '/')); crumbs.push(h('span', { class: 'crumb' }, '参加者')); }
-  if (r.name === 'admin') { crumbs.push(h('span', { class: 'crumb-sep' }, '/')); crumbs.push(h('span', { class: 'crumb' }, 'アカウント管理')); }
+  if (r.name === 'people') { crumbs.push(h('span', { class: 'crumb-sep' }, '/')); crumbs.push(h('span', { class: 'crumb' }, '共有')); }
   return h('header', { class: 'topbar' },
     h('nav', { class: 'crumbs' }, crumbs),
     h('div', { class: 'top-right' },
@@ -173,7 +128,6 @@ function Header() {
         h('summary', null, S.user.photo ? h('img', { src: S.user.photo, alt: '', class: 'avatar' }) : h('span', { class: 'avatar ph' }, (S.user.name || '?').slice(0, 1))),
         h('div', { class: 'menu' },
           h('div', { class: 'menu-who' }, S.user.name, h('small', null, S.user.email)),
-          S.role === 'admin' ? h('a', { href: '#/admin', onclick: (e) => e.target.closest('details').open = false }, 'アカウント管理') : null,
           mode !== 'local' ? h('button', { class: 'linklike', onclick: () => auth.signOut() }, 'ログアウト') : null,
         )) : null,
     ));
@@ -194,31 +148,20 @@ function PageView() {
   ]);
   if (S.phase === 'login') return Gate('舞台図解メーカー', [
     h('p', null, '台本・タイミング・舞台図をみんなで作って、PDFに書き出すツールです。'),
+    location.hash.startsWith('#/join/') ? h('p', { class: 'ok-note' }, '共有された作品に参加するには、Googleでログインしてください。') : null,
     h('button', { class: 'btn primary big', onclick: doSignIn }, 'Googleでログイン'),
   ]);
-  if (S.phase === 'setup') return Gate('はじめの設定', [
-    h('p', null, 'まだ管理者がいません。このアカウントを最初の管理者として登録します。'),
-    h('p', { class: 'muted' }, S.user.email),
-    h('button', { class: 'btn primary big', onclick: becomeFirstAdmin }, 'このアカウントを管理者にする'),
-    h('button', { class: 'btn ghost', onclick: () => auth.signOut() }, '別のアカウントでログイン'),
-  ]);
-  if (S.phase === 'pending') return Gate('参加の許可が必要です', [
-    h('p', null, 'このアカウントはまだ編集できる人として登録されていません。'),
-    h('p', { class: 'muted small' }, '団体のGoogleグループに入っている場合は、1時間以内に自動で使えるようになります。しばらくしてから再読み込みしてください。'),
-    h('p', { class: 'muted' }, S.user.email),
-    S.ui.requested
-      ? h('p', { class: 'ok-note' }, '参加リクエストを送りました。管理者が許可すると使えるようになります。')
-      : h('button', { class: 'btn primary big', onclick: sendRequest }, '管理者に参加をリクエスト'),
-    h('button', { class: 'btn ghost', onclick: () => auth.signOut() }, '別のアカウントでログイン'),
+  if (S.route.name === 'join') return Gate(S.ui.joinError ? '参加できませんでした' : '作品に参加しています…', [
+    S.ui.joinError ? h('p', null, S.ui.joinError) : h('p', { class: 'muted' }, 'しばらくお待ちください。'),
+    S.ui.joinError ? h('a', { class: 'btn primary big', href: '#/' }, 'ホームへ') : null,
   ]);
   const r = S.route;
   if (r.name === 'print') return PrintView();
   let page;
   if (r.name === 'home') page = HomeView();
-  else if (r.name === 'admin') page = AdminView();
   else if (r.name === 'work') page = WorkView();
   else if (r.name === 'cast') page = CastView();
-  else if (r.name === 'people') page = PeopleView();
+  else if (r.name === 'people') page = ShareView();
   else if (r.name === 'draft') page = DraftView();
   return [Header(), page, r.name === 'draft' ? SelectionBar() : null];
 }
@@ -237,7 +180,7 @@ setRenderers([renderPage, renderModal, renderDialog, renderToasts]);
 window.addEventListener('zukai-error', (e) => toast(e.detail, 'error', 8000));
 
 onDBError((e) => {
-  const msg = e && e.code === 'permission-denied' ? '権限がありません（アカウント管理で許可されているか確認してください）' : (e.message || String(e));
+  const msg = e && e.code === 'permission-denied' ? '権限がありません（この作品が共有されているか、編集者になっているか確認してください）' : (e.message || String(e));
   toast(msg, 'error', 6000);
 });
 

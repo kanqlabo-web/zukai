@@ -34,6 +34,8 @@ function guard(p) { return p.catch((e) => { errorHandler(e); throw e; }); }
 
 export const db = {
   get: (path) => guard(impl.get(path)),
+  getQuiet: (path) => impl.get(path).catch(() => null),
+  joinWork: (w, key, email) => impl.joinWork(w, key, email),
   set: (path, data) => guard(impl.set(path, clean(data))),
   update: (path, patch) => guard(impl.update(path, clean(patch))),
   remove: (path) => guard(impl.remove(path)),

@@ -8,6 +8,7 @@ import { StageSVG } from './stage.js';
 import { CastTable, Legend, ScriptLines, DotText } from './sheet.js';
 import { openEditor } from './editor.js';
 import { confirmBox } from './dialog.js';
+import { canEdit } from './access.js';
 import { castIndex } from './cast.js';
 import { resolveAnchor } from './script.js';
 
@@ -426,6 +427,8 @@ export function DraftView() {
   const { w, d, draft, track, ep, work, drafts } = ctx();
   if (!S.d.drafts || work === undefined) return h('main', { class: 'page' }, h('p', { class: 'muted' }, '読み込み中…'));
   if (!draft) return h('main', { class: 'page' }, h('p', null, 'この稿は見つかりませんでした（削除された可能性があります）。'), h('a', { href: `#/w/${w}` }, '作品ページへ'));
+  // 閲覧者は、PDF用の表示で見る
+  if (work && !canEdit(work)) { queueMicrotask(() => location.replace(`#/w/${w}/print/d/${d}`)); return h('main', { class: 'page' }, h('p', { class: 'muted' }, '閲覧用の表示に切り替えています…')); }
   const blocks = S.d.blocks || [];
   const text = draft.script || '';
   const rows = buildRows(text, blocks, draft.spkFix);

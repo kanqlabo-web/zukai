@@ -1,8 +1,9 @@
-// 作品一覧とアカウント管理
+// 作品一覧
 import { h } from './vdom.js';
 import { db, mode } from './db.js';
 import { S, rerender, toast, fmtTime, go } from './state.js';
-import { createWork, deleteWork, extractEmails } from './model.js';
+import { createWork, deleteWork } from './model.js';
+import { myRole, ROLE_LABEL } from './access.js';
 import { buildSample } from './sample.js';
 import { ask, confirmBox } from './dialog.js';
 
@@ -39,89 +40,17 @@ export function HomeView() {
         h('button', { class: 'linkbtn', onclick: createSampleWork }, '見本の作品を作る'))),
     mode === 'local' ? h('div', { class: 'note' },
       h('b', null, 'デモモードで動いています。'),
-      ' データはこのブラウザの中だけに保存され、他の人とは共有されません。Firebase を設定すると、みんなで同時に編集できるようになります。') : null,
+      ' データはこのブラウザの中だけに保存され、他の人とは共有されません。Firebase を設定すると、作品を共有してみんなで同時に編集できるようになります。') : null,
     h('h2', { class: 'section-h' }, '作品一覧'),
     S.d.works == null ? h('p', { class: 'muted' }, '読み込み中…')
-      : works.length === 0 ? h('div', { class: 'empty' }, h('p', null, 'まだ作品がありません。'), h('p', { class: 'muted' }, '上の欄に作品名を入れて「新しい作品」を押してください。'))
+      : works.length === 0 ? h('div', { class: 'empty' }, h('p', null, 'まだ作品がありません。'), h('p', { class: 'muted' }, '上の欄に作品名を入れて「新しい作品」を押してください。ほかの人から共有された作品も、ここに表示されます。'))
         : h('div', { class: 'card-grid' }, works.map((w) => h('a', { key: w.id, class: 'work-card', href: `#/w/${w.id}` },
           h('div', { class: 'work-title' }, w.title || '無題の作品'),
-          h('div', { class: 'muted small' }, `メンバー ${(w.cast || []).length}人 ・ 更新 ${fmtTime(w.updatedAt)}`)))),
-  );
-}
-
-// ---------- アカウント管理（ログインできる人） ----------
-async function addEmails(text, role, prune) {
-  const emails = extractEmails(text);
-  if (!emails.length) { toast('メールアドレスが見つかりませんでした', 'error'); return; }
-  const members = S.d.members || [];
-  const existing = new Set(members.map((m) => m.id));
-  const ops = [];
-  for (const e of emails) {
-    if (!existing.has(e)) ops.push({ op: 'set', path: 'members/' + e, data: { role, name: '', addedAt: Date.now(), addedBy: S.user.email } });
-  }
-  let removed = 0;
-  if (prune) {
-    const keep = new Set(emails);
-    for (const m of members) {
-      if (m.role !== 'admin' && !keep.has(m.id)) { ops.push({ op: 'remove', path: 'members/' + m.id }); removed++; }
-    }
-  }
-  for (const r of S.d.requests || []) if (emails.includes(r.id)) ops.push({ op: 'remove', path: 'requests/' + r.id });
-  if (!ops.length) { toast('新しく追加する人はいませんでした'); return; }
-  await db.batch(ops);
-  toast(`${ops.length - removed}人を追加${removed ? `、${removed}人を削除` : ''}しました`);
-  S.ui.bulk = '';
-  rerender();
-}
-
-export function AdminView() {
-  if (S.role !== 'admin') return h('main', { class: 'page' }, h('p', null, 'この画面は管理者だけが使えます。'));
-  const members = (S.d.members || []).slice().sort((a, b) => (a.role === b.role ? a.id.localeCompare(b.id) : a.role === 'admin' ? -1 : 1));
-  const reqs = S.d.requests || [];
-  const admins = members.filter((m) => m.role === 'admin').length;
-  const gs = S.d.groupSync;
-  return h('main', { class: 'page narrow' },
-    h('div', { class: 'page-head' }, h('h1', null, 'アカウント管理')),
-    h('section', { class: 'panel' },
-      h('h2', null, 'Googleグループとの自動同期'),
-      gs ? h('div', null,
-        h('p', null, h('b', null, gs.group), ` のメンバー ${gs.count}人を、1時間ごとに自動で反映しています。`),
-        h('p', { class: 'muted small' }, `最終同期 ${fmtTime(gs.at)}（追加 ${gs.added || 0}人・削除 ${gs.removed || 0}人）。グループから抜けた人は、次の同期でログインできなくなります。管理者と、下で手動追加した人は変わりません。`))
-        : h('p', { class: 'muted small' }, 'まだ設定されていません。README.md の「手順6」で同期スクリプトを設定すると、Googleグループのメンバーが自動でログインできるようになります。設定するまでは、下の欄に手動で貼り付けて追加してください。')),
-    reqs.length ? h('section', { class: 'panel' },
-      h('h2', null, `参加リクエスト（${reqs.length}）`),
-      h('ul', { class: 'mlist' }, reqs.map((r) => h('li', { key: r.id },
-        h('div', { class: 'grow' }, h('b', null, r.name || ''), ' ', h('span', { class: 'muted' }, r.id), h('div', { class: 'muted small' }, fmtTime(r.at))),
-        h('button', {
-          class: 'btn primary small', onclick: () => db.batch([
-            { op: 'set', path: 'members/' + r.id, data: { role: 'member', name: r.name || '', addedAt: Date.now(), addedBy: S.user.email } },
-            { op: 'remove', path: 'requests/' + r.id },
-          ]),
-        }, '許可'),
-        h('button', { class: 'btn small', onclick: () => db.remove('requests/' + r.id) }, '却下'))))) : null,
-    h('section', { class: 'panel' },
-      h('h2', null, gs ? '手動でまとめて追加（グループ外の人など）' : 'メールアドレスをまとめて追加'),
-      h('p', { class: 'muted small' },
-        'groups.google.com でグループを開き、「メンバー」画面からメンバー一覧をエクスポート（CSV）するか、メールアドレスをコピーして下に貼り付けてください。メールアドレス以外の文字が混ざっていても大丈夫です。'),
-      h('textarea', { rows: 6, placeholder: 'taro@gmail.com\nhanako@gmail.com …', value: S.ui.bulk || '', oninput: (e) => { S.ui.bulk = e.target.value; } }),
-      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!S.ui.prune, onchange: (e) => { S.ui.prune = e.target.checked; rerender(); } }),
-        ' 貼り付けた一覧にいない人を削除する（グループと同じ状態にそろえる。管理者は削除されません）'),
-      h('div', { class: 'actions' },
-        h('button', { class: 'btn primary', onclick: () => addEmails(S.ui.bulk, 'member', S.ui.prune) }, '編集できる人として追加'),
-        h('button', { class: 'btn', onclick: () => addEmails(S.ui.bulk, 'admin', false) }, '管理者として追加')),
-    ),
-    h('section', { class: 'panel' },
-      h('h2', null, `ログインできる人（${members.length}人）`),
-      h('ul', { class: 'mlist' }, members.map((m) => h('li', { key: m.id },
-        h('div', { class: 'grow' }, h('span', null, m.id), m.source === 'group' ? h('span', { class: 'badge', title: 'Googleグループから自動で追加' }, 'グループ') : null, m.name ? h('span', { class: 'muted small' }, '　' + m.name) : null),
-        h('select', {
-          value: m.role || 'member', disabled: m.id === S.user.email && admins <= 1,
-          onchange: (e) => db.update('members/' + m.id, { role: e.target.value }),
-        }, h('option', { value: 'member' }, '編集者'), h('option', { value: 'admin' }, '管理者')),
-        h('button', {
-          class: 'btn small danger', disabled: m.id === S.user.email,
-          onclick: async () => { if (await confirmBox(`${m.id} がログインできないようにしますか？`, { ok: '削除', danger: true })) db.remove('members/' + m.id); },
-        }, '削除'))))),
+          h('div', { class: 'work-meta' },
+            h('span', { class: 'badge role-' + myRole(w) }, ROLE_LABEL[myRole(w)] || ''),
+            (w.participants || []).length > 1 ? h('span', { class: 'muted small' }, `${w.participants.length}人で共有`) : null,
+            w.linkRole && w.linkRole !== 'off' ? h('span', { class: 'muted small' }, 'リンク共有') : null),
+          h('div', { class: 'muted small' }, `更新 ${fmtTime(w.updatedAt)}`)))),
   );
 }
 

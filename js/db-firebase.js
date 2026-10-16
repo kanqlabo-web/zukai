@@ -60,6 +60,20 @@ export async function batch(ops) {
     await b.commit();
   }
 }
+// リンク共有で作品に参加する（編集者として試し、だめなら閲覧者として）
+export async function joinWork(w, key, email) {
+  const r = ref(`works/${w}`);
+  const lastJoin = { by: email, key, at: Date.now() };
+  try {
+    await F.updateDoc(r, { participants: F.arrayUnion(email), lastJoin });
+    return 'editor';
+  } catch (e) {
+    if (e.code !== 'permission-denied') throw e;
+  }
+  await F.updateDoc(r, { participants: F.arrayUnion(email), viewers: F.arrayUnion(email), lastJoin });
+  return 'viewer';
+}
+
 export function watchDoc(path, cb, onErr) {
   return F.onSnapshot(ref(path), (s) => cb(s.exists() ? s.data() : null), onErr);
 }

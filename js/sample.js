@@ -244,7 +244,7 @@ export async function buildSample(user) {
   });
   const ops = [];
   const set = (path, data) => ops.push({ op: 'set', path, data });
-  set(P.work(w), { title: 'ナルニア国物語（見本）', prefix: '【表現活動】', admins: [user.email], participants: [user.email], cast, labelRules: '役名は〇の中ではなく、〇の横に書く（Arial 9）。\n大きな〇で表した場合は、〇の中に「木」「草」などと書く。\n〇は塗りつぶしなし。', createdAt: now, updatedAt: now, createdBy: user.name });
+  set(P.work(w), { title: 'ナルニア国物語（見本）', prefix: '【表現活動】', participants: [user.email], owners: [user.email], viewers: [], linkRole: 'off', linkKey: newId(20), cast, labelRules: '役名は〇の中ではなく、〇の横に書く（Arial 9）。\n大きな〇で表した場合は、〇の中に「木」「草」などと書く。\n〇は塗りつぶしなし。', createdAt: now, updatedAt: now, createdBy: user.name });
   const ep = newId();
   set(P.doc(w, 'episodes', ep), { title: '2話', order: 1, createdAt: now });
 
