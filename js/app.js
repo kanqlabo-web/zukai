@@ -51,6 +51,7 @@ function onRoute() {
   if (r.name === 'admin') {
     watch('members', (cb) => db.watchList('members', null, cb));
     watch('requests', (cb) => db.watchList('requests', null, cb));
+    watch('groupSync', (cb) => db.watchDoc('meta/groupSync', cb));
   }
   if (w && r.name !== 'print') {
     watch('work', (cb) => db.watchDoc(P.work(w), cb));
@@ -197,6 +198,7 @@ function PageView() {
   ]);
   if (S.phase === 'pending') return Gate('参加の許可が必要です', [
     h('p', null, 'このアカウントはまだ編集できる人として登録されていません。'),
+    h('p', { class: 'muted small' }, '団体のGoogleグループに入っている場合は、1時間以内に自動で使えるようになります。しばらくしてから再読み込みしてください。'),
     h('p', { class: 'muted' }, S.user.email),
     S.ui.requested
       ? h('p', { class: 'ok-note' }, '参加リクエストを送りました。管理者が許可すると使えるようになります。')

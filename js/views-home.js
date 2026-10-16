@@ -79,8 +79,15 @@ export function AdminView() {
   const members = (S.d.members || []).slice().sort((a, b) => (a.role === b.role ? a.id.localeCompare(b.id) : a.role === 'admin' ? -1 : 1));
   const reqs = S.d.requests || [];
   const admins = members.filter((m) => m.role === 'admin').length;
+  const gs = S.d.groupSync;
   return h('main', { class: 'page narrow' },
     h('div', { class: 'page-head' }, h('h1', null, 'アカウント管理')),
+    h('section', { class: 'panel' },
+      h('h2', null, 'Googleグループとの自動同期'),
+      gs ? h('div', null,
+        h('p', null, h('b', null, gs.group), ` のメンバー ${gs.count}人を、1時間ごとに自動で反映しています。`),
+        h('p', { class: 'muted small' }, `最終同期 ${fmtTime(gs.at)}（追加 ${gs.added || 0}人・削除 ${gs.removed || 0}人）。グループから抜けた人は、次の同期でログインできなくなります。管理者と、下で手動追加した人は変わりません。`))
+        : h('p', { class: 'muted small' }, 'まだ設定されていません。README.md の「手順6」で同期スクリプトを設定すると、Googleグループのメンバーが自動でログインできるようになります。設定するまでは、下の欄に手動で貼り付けて追加してください。')),
     reqs.length ? h('section', { class: 'panel' },
       h('h2', null, `参加リクエスト（${reqs.length}）`),
       h('ul', { class: 'mlist' }, reqs.map((r) => h('li', { key: r.id },
@@ -93,7 +100,7 @@ export function AdminView() {
         }, '許可'),
         h('button', { class: 'btn small', onclick: () => db.remove('requests/' + r.id) }, '却下'))))) : null,
     h('section', { class: 'panel' },
-      h('h2', null, 'Googleグループのメンバーをまとめて追加'),
+      h('h2', null, gs ? '手動でまとめて追加（グループ外の人など）' : 'メールアドレスをまとめて追加'),
       h('p', { class: 'muted small' },
         'groups.google.com でグループを開き、「メンバー」画面からメンバー一覧をエクスポート（CSV）するか、メールアドレスをコピーして下に貼り付けてください。メールアドレス以外の文字が混ざっていても大丈夫です。'),
       h('textarea', { rows: 6, placeholder: 'taro@gmail.com\nhanako@gmail.com …', value: S.ui.bulk || '', oninput: (e) => { S.ui.bulk = e.target.value; } }),
@@ -106,7 +113,7 @@ export function AdminView() {
     h('section', { class: 'panel' },
       h('h2', null, `ログインできる人（${members.length}人）`),
       h('ul', { class: 'mlist' }, members.map((m) => h('li', { key: m.id },
-        h('div', { class: 'grow' }, h('span', null, m.id), m.name ? h('span', { class: 'muted small' }, '　' + m.name) : null),
+        h('div', { class: 'grow' }, h('span', null, m.id), m.source === 'group' ? h('span', { class: 'badge', title: 'Googleグループから自動で追加' }, 'グループ') : null, m.name ? h('span', { class: 'muted small' }, '　' + m.name) : null),
         h('select', {
           value: m.role || 'member', disabled: m.id === S.user.email && admins <= 1,
           onchange: (e) => db.update('members/' + m.id, { role: e.target.value }),

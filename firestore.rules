@@ -20,7 +20,12 @@ service cloud.firestore {
       allow create: if signedIn() && existsAfter(memberPath());
     }
 
-    // 編集を許可されたメンバー（ドキュメント名＝メールアドレス）
+    // Googleグループ同期の記録（同期スクリプトが書き込み、画面で表示する）
+    match /meta/groupSync {
+      allow read: if isMember();
+    }
+
+    // ログインできる人（ドキュメント名＝メールアドレス）
     match /members/{email} {
       allow read: if isMember() || (signedIn() && email == myEmail());
       allow write: if isAdmin();
