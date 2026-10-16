@@ -1,0 +1,64 @@
+/* PDF（印刷）用の図解シート */
+.cast-table { width: 100%; border-collapse: collapse; table-layout: fixed; border: 2px solid #000; background: #fff; font-size: 12px; }
+.cast-table td { border: 1px solid #000; padding: 3px 5px; height: 2.2em; vertical-align: top; }
+.cast-table .cno { display: inline-block; min-width: 2.2em; }
+.cast-table .cname { display: inline; }
+
+.print-bar {
+  position: sticky; top: 0; z-index: 10; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  padding: 10px max(14px, env(safe-area-inset-left)); background: #fff; border-bottom: 1px solid var(--line, #ddd);
+}
+.print-root { padding: 24px 12px 80px; display: flex; flex-direction: column; align-items: center; gap: 24px; }
+
+.sheet {
+  width: 186mm; max-width: 100%; border-collapse: collapse; table-layout: fixed; background: #fff;
+  font-family: Arial, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Noto Sans CJK JP", "Yu Gothic", Meiryo, sans-serif;
+  color: #000; box-shadow: 0 0 0 12mm #fff, 0 6px 30px 12mm rgba(30, 25, 60, .12);
+}
+.sheet col.c-script { width: 36.5%; }
+.sheet col.c-notes { width: 63.5%; }
+.sheet-title { text-align: left; font-weight: 400; font-size: 10.5pt; padding: 0 0 4mm; }
+.sheet .info > td { padding: 0 0 2mm; border: 0; }
+.info-line { font-size: 10.5pt; line-height: 1.3; }
+.sheet .cast-table { font-size: 9.2pt; margin: 1mm 0 3mm; }
+.sheet .cast-table td { height: 7mm; padding: 1.2mm 1.5mm; }
+.sheet .cast-table .cno { min-width: 2.6em; padding-left: 1mm; }
+.sheet .legend { font-size: 9.5pt; padding: 0 2mm; gap: 3mm; }
+.p-row > td { vertical-align: top; }
+.p-script { border: 2.5px solid #000; padding: 2mm 2.4mm; font-size: 9pt; line-height: 1.42; }
+.p-notes { border: 1px solid #444; padding: 2mm 2.4mm; font-size: 9.6pt; line-height: 1.4; color: #333; }
+.p-script .sline { padding: 0; cursor: default; break-inside: avoid; }
+.p-script .sline.indent { padding-left: 3.5mm; }
+.p-script .sline.blank { min-height: 1.42em; }
+.p-script .spk { color: #bdbdbd; }
+.p-script .hl { background: #c4c4c4; font-weight: 700; }
+.p-block { margin-bottom: 4mm; }
+.p-block:last-child { margin-bottom: 0; }
+.cue { font-weight: 400; margin: 0 0 .4mm; }
+.cue mark { background: #c4c4c4; color: #000; font-weight: 700; padding: 0 .3mm; }
+.nline { break-inside: avoid; }
+.nline.blank { min-height: 1.4em; }
+.p-fig { margin: 2mm 0; break-inside: avoid; }
+.p-fig figcaption { font-size: 9.6pt; margin-bottom: .6mm; }
+.p-stage { display: block; width: 100%; height: auto; }
+.p-photo img { display: block; max-width: 100%; }
+.p-photo.size-s img { width: 40%; }
+.p-photo.size-m img { width: 68%; }
+.p-photo.size-l img { width: 100%; }
+
+@media screen and (max-width: 760px) {
+  .print-root { padding: 12px 6px 60px; }
+  .sheet { box-shadow: none; }
+}
+
+@page { size: A4 portrait; margin: 13mm 12mm 14mm; }
+@media print {
+  body { background: #fff !important; }
+  .no-print, .topbar, #toasts, #modal, .selbar { display: none !important; }
+  .print-root { padding: 0; display: block; }
+  .sheet { width: 100%; box-shadow: none; }
+  .sheet.newpage { break-before: page; page-break-before: always; }
+  .sheet thead { display: table-header-group; }
+  .p-row { break-inside: auto; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

@@ -1,0 +1,45 @@
+rules_version = '2';
+// 舞台図解メーカー用のセキュリティルール。
+// Firebase コンソール → Firestore Database → ルール に、この内容をすべて貼り付けて「公開」してください。
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null && request.auth.token.email != null
+        && request.auth.token.email_verified == true;
+    }
+    function myEmail() { return request.auth.token.email.lower(); }
+    function memberPath() { return /databases/$(database)/documents/members/$(myEmail()); }
+    function isMember() { return signedIn() && exists(memberPath()); }
+    function isAdmin() { return isMember() && get(memberPath()).data.role == 'admin'; }
+    function setupPath() { return /databases/$(database)/documents/meta/setup; }
+
+    // 初期設定済みかどうかの印（最初の管理者が登録したときに作られる）
+    match /meta/setup {
+      allow read: if signedIn();
+      allow create: if signedIn() && existsAfter(memberPath());
+    }
+
+    // 編集を許可されたメンバー（ドキュメント名＝メールアドレス）
+    match /members/{email} {
+      allow read: if isMember() || (signedIn() && email == myEmail());
+      allow write: if isAdmin();
+      // まだ誰も登録されていないときだけ、最初の1人が自分を管理者にできる
+      allow create: if signedIn() && email == myEmail()
+        && !exists(setupPath()) && existsAfter(setupPath())
+        && request.resource.data.role == 'admin';
+    }
+
+    // 参加リクエスト（本人が作成し、管理者が確認）
+    match /requests/{email} {
+      allow read: if isAdmin() || (signedIn() && email == myEmail());
+      allow create, update: if signedIn() && email == myEmail();
+      allow delete: if isAdmin() || (signedIn() && email == myEmail());
+    }
+
+    // 作品のデータはメンバーだけが読み書きできる
+    match /works/{path=**} {
+      allow read, write: if isMember();
+    }
+  }
+}
