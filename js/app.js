@@ -155,8 +155,8 @@ function Header() {
     crumbs.push(h('span', { class: 'crumb-sep' }, '/'));
     crumbs.push(h('a', { href: `#/w/${r.params.w}`, class: 'crumb' }, work.title || '無題の作品'));
   }
-  if (r.name === 'cast') { crumbs.push(h('span', { class: 'crumb-sep' }, '/')); crumbs.push(h('span', { class: 'crumb' }, 'キャスト一覧')); }
-  if (r.name === 'admin') { crumbs.push(h('span', { class: 'crumb-sep' }, '/')); crumbs.push(h('span', { class: 'crumb' }, 'メンバー管理')); }
+  if (r.name === 'cast') { crumbs.push(h('span', { class: 'crumb-sep' }, '/')); crumbs.push(h('span', { class: 'crumb' }, 'メンバー一覧')); }
+  if (r.name === 'admin') { crumbs.push(h('span', { class: 'crumb-sep' }, '/')); crumbs.push(h('span', { class: 'crumb' }, 'アカウント管理')); }
   return h('header', { class: 'topbar' },
     h('nav', { class: 'crumbs' }, crumbs),
     h('div', { class: 'top-right' },
@@ -166,7 +166,7 @@ function Header() {
         h('summary', null, S.user.photo ? h('img', { src: S.user.photo, alt: '', class: 'avatar' }) : h('span', { class: 'avatar ph' }, (S.user.name || '?').slice(0, 1))),
         h('div', { class: 'menu' },
           h('div', { class: 'menu-who' }, S.user.name, h('small', null, S.user.email)),
-          S.role === 'admin' ? h('a', { href: '#/admin', onclick: (e) => e.target.closest('details').open = false }, 'メンバー管理') : null,
+          S.role === 'admin' ? h('a', { href: '#/admin', onclick: (e) => e.target.closest('details').open = false }, 'アカウント管理') : null,
           mode !== 'local' ? h('button', { class: 'linklike', onclick: () => auth.signOut() }, 'ログアウト') : null,
         )) : null,
     ));
@@ -186,7 +186,7 @@ function PageView() {
     h('button', { class: 'btn', onclick: () => auth.signOut() }, 'ログアウト'),
   ]);
   if (S.phase === 'login') return Gate('舞台図解メーカー', [
-    h('p', null, '台本ときっかけ、舞台図をみんなで作って、PDFに書き出すツールです。'),
+    h('p', null, '台本・タイミング・舞台図をみんなで作って、PDFに書き出すツールです。'),
     h('button', { class: 'btn primary big', onclick: doSignIn }, 'Googleでログイン'),
   ]);
   if (S.phase === 'setup') return Gate('はじめの設定', [
@@ -196,7 +196,7 @@ function PageView() {
     h('button', { class: 'btn ghost', onclick: () => auth.signOut() }, '別のアカウントでログイン'),
   ]);
   if (S.phase === 'pending') return Gate('参加の許可が必要です', [
-    h('p', null, 'このアカウントはまだ編集メンバーに登録されていません。'),
+    h('p', null, 'このアカウントはまだ編集できる人として登録されていません。'),
     h('p', { class: 'muted' }, S.user.email),
     S.ui.requested
       ? h('p', { class: 'ok-note' }, '参加リクエストを送りました。管理者が許可すると使えるようになります。')
@@ -228,7 +228,7 @@ setRenderers([renderPage, renderModal, renderDialog, renderToasts]);
 window.addEventListener('zukai-error', (e) => toast(e.detail, 'error', 8000));
 
 onDBError((e) => {
-  const msg = e && e.code === 'permission-denied' ? '権限がありません（メンバーとして許可されているか確認してください）' : (e.message || String(e));
+  const msg = e && e.code === 'permission-denied' ? '権限がありません（アカウント管理で許可されているか確認してください）' : (e.message || String(e));
   toast(msg, 'error', 6000);
 });
 

@@ -1,4 +1,4 @@
-// 作品・話・トラ・稿・きっかけ・図・写真のデータ操作
+// 作品・話・トラ・稿・タイミング・図・写真のデータ操作
 import { db, newId } from './db.js';
 import { resolveAnchor } from './script.js';
 
@@ -19,7 +19,7 @@ export function draftTitle(work, ep, track, draft) {
 
 export async function createWork(title, user) {
   const id = newId();
-  await db.set(P.work(id), { title, prefix: '【表現活動】', cast: [], createdAt: now(), updatedAt: now(), createdBy: user.name });
+  await db.set(P.work(id), { title, prefix: '【表現活動】', cast: [{ id: newId(8), tag: 'CD', name: '', roles: [] }], createdAt: now(), updatedAt: now(), createdBy: user.name });
   return id;
 }
 
@@ -43,7 +43,7 @@ export function emptyDraft(trackId, no, user) {
   return { trackId, no, zukaikko: '', theme: '', script: '', createdAt: now(), updatedAt: now(), updatedBy: user ? user.name : '' };
 }
 
-// 稿を複製して新しい稿を作る（きっかけ・図・写真ごと）
+// 稿を複製して新しい稿を作る（タイミング・図・写真ごと）
 export async function copyDraft(w, draftId, user) {
   const src = await db.get(P.doc(w, 'drafts', draftId));
   if (!src) throw new Error('元の稿が見つかりません');
@@ -113,7 +113,7 @@ export async function deleteWork(w) {
   await db.batch(ops);
 }
 
-// 台本を保存し、きっかけの位置を付け直す
+// 台本を保存し、タイミングの位置を付け直す
 export async function saveScript(w, draftId, script, blocks, user) {
   const ops = [{ op: 'update', path: P.doc(w, 'drafts', draftId), data: { script, updatedAt: now(), updatedBy: user.name } }];
   for (const b of blocks) {
@@ -123,7 +123,7 @@ export async function saveScript(w, draftId, script, blocks, user) {
   await db.batch(ops);
 }
 
-// 図解（《きっかけ》＋動きの文章＋舞台図）を作る。舞台図は必ず1枚つける
+// 図解（《タイミング》＋動きの文章＋舞台図）を作る。舞台図は必ず1枚つける
 export async function createBlock(w, draftId, { cue, offset, anchorText, shapes }) {
   const id = newId();
   const itemId = newId(8);
@@ -153,7 +153,7 @@ export async function createImage(w, draftId, img) {
   return id;
 }
 
-// キャストの貼り付けを解析：「1 ぐっち（ビーヴァー奥さん）」「ぐっち<TAB>ビーヴァー奥さん<TAB>奥」など
+// メンバーの貼り付けを解析：「1 ぐっち（ビーヴァー奥さん）」「ぐっち<TAB>ビーヴァー奥さん<TAB>奥」など
 // 先頭の数字は無視（番号は一覧の順で自動）。「CD ばにく」のように先頭が英字の記号なら記号として扱う
 export function parseCast(text) {
   const out = [];
@@ -171,7 +171,10 @@ export function parseCast(text) {
     let [name = '', role = '', label = ''] = cols;
     const rm = name.match(/^(.*?)\s*[（(](.*)[）)]\s*$/);
     if (rm && !role) { name = rm[1]; role = rm[2]; }
-    out.push({ id: newId(8), name: name.trim(), role: role.trim(), label: label.trim(), tag });
+    const names = role.split(/[\/／]/).map((x) => x.trim());
+    const labels = label.split(/[\/／]/).map((x) => x.trim());
+    const roles = names.map((n, k) => ({ name: n, label: labels[k] || '' })).filter((r) => r.name || r.label);
+    out.push({ id: newId(8), name: name.trim(), roles, tag });
   }
   return out;
 }

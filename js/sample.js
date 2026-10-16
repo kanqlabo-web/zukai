@@ -240,7 +240,7 @@ export async function buildSample(user) {
     const id = newId(8);
     CIDS[m[1]] = id;
     const role = m[3] || '';
-    return { id, name: m[2], role, label: LABELS[role] || '', tag: /^[0-9]+$/.test(m[1]) ? '' : m[1] };
+    return { id, name: m[2], roles: role ? [{ name: role, label: LABELS[role] || '' }] : [], tag: /^[0-9]+$/.test(m[1]) ? '' : m[1] };
   });
   const ops = [];
   const set = (path, data) => ops.push({ op: 'set', path, data });

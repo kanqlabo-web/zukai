@@ -1,6 +1,6 @@
 // 舞台図の描画（編集画面・一覧・PDFで共通）
 import { h } from './vdom.js';
-import { personCast, personNo } from './cast.js';
+import { personCast, personNo, rolesOf, roleVisible } from './cast.js';
 
 export const W = 1000;
 export const H = 470;
@@ -267,7 +267,7 @@ function textBox(s) {
   return [s.x - w / 2, s.y - (lines.length * size * 0.65), s.x + w / 2, s.y + (lines.length * size * 0.65)];
 }
 
-export function layoutLabels(list, idx, showRoles = true) {
+export function layoutLabels(list, idx, roleVis = {}) {
   const obstacles = [];
   for (const s of list) {
     if (s.t === 'person') { const r = s.r || 20; obstacles.push([s.x - r, s.y - r, s.x + r, s.y + r]); }
@@ -276,11 +276,11 @@ export function layoutLabels(list, idx, showRoles = true) {
   const placed = [];
   const out = [];
   const bad = (box) => box[0] < 12 || box[2] > 988 || box[1] < 12 || box[3] > 458;
-  if (showRoles) {
-    const persons = list.filter((s) => s.t === 'person' && !s.hideRole).sort((a, b) => a.y - b.y || a.x - b.x);
+  {
+    const persons = list.filter((s) => s.t === 'person').sort((a, b) => a.y - b.y || a.x - b.x);
     for (const s of persons) {
       const c = personCast(s, idx);
-      const text = c && c.label;
+      const text = c ? rolesOf(c).map((r, i) => (r.label && roleVisible(roleVis, c.id, i) ? r.label : '')).filter(Boolean).join('・') : '';
       if (!text) continue;
       const r = s.r || 20;
       const w = textW(text, ROLE_FS), hh = ROLE_FS * 1.1, g = 3;
@@ -343,10 +343,10 @@ export function layoutLabels(list, idx, showRoles = true) {
 }
 
 // 静的な舞台図（一覧・PDF用）
-export function StageSVG(shapes, { cls = 'stage', idx = null, showRoles = true } = {}) {
+export function StageSVG(shapes, { cls = 'stage', idx = null, roleVis = {} } = {}) {
   const list = sortShapes(shapes);
   return h('svg', { class: cls, viewBox: `0 0 ${W} ${H}`, xmlns: 'http://www.w3.org/2000/svg', preserveAspectRatio: 'xMidYMid meet' },
     stageFrame(),
     h('g', null, list.map((s) => shapeNode(s, { idx }))),
-    h('g', null, layoutLabels(list, idx, showRoles)));
+    h('g', null, layoutLabels(list, idx, roleVis)));
 }

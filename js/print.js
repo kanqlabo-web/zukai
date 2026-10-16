@@ -1,4 +1,4 @@
-// PDF書き出し用の表示（A4縦・左に台本、右にきっかけと舞台図）
+// PDF書き出し用の表示（A4縦・左に台本、右にタイミングと舞台図）
 import { h } from './vdom.js';
 import { db } from './db.js';
 import { S } from './state.js';
@@ -60,7 +60,7 @@ function NoteBlock(t, b, idx) {
         const g = t.diagrams[it.refId];
         return h('figure', { key: it.id, class: 'p-fig' },
           it.caption ? h('figcaption', null, it.caption) : null,
-          g ? StageSVG(g.shapes, { cls: 'stage p-stage', idx, showRoles: g.showRoles !== false }) : null);
+          g ? StageSVG(g.shapes, { cls: 'stage p-stage', idx, roleVis: g.roleVis || {} }) : null);
       }
       if (it.kind === 'image') {
         const im = t.images[it.refId];
@@ -75,7 +75,7 @@ function NoteBlock(t, b, idx) {
 function Sheet(data, t, i) {
   const { work } = data;
   const text = t.draft.script || '';
-  const rows = buildRows(text, t.blocks);
+  const rows = buildRows(text, t.blocks, t.draft.spkFix);
   const hls = highlightRanges(text, t.blocks);
   const title = draftTitle(work, t.ep, t.track, t.draft);
   const idx = castIndex(work.cast);

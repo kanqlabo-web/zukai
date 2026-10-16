@@ -1,4 +1,4 @@
-// キャスト一覧の番号付けと参照
+// メンバー一覧の番号付けと参照
 // 番号は一覧の上から順に 1, 2, 3… と自動で付く。「記号」を設定した人（CD など）は番号を使わない。
 import { newId } from './db.js';
 
@@ -12,9 +12,25 @@ export function ensureCastIds(cast) {
   return { cast: out, changed };
 }
 
+// 役の一覧（兼役は複数）。古いデータ（role / label の1つだけ）にも対応
+export function rolesOf(c) {
+  if (!c) return [];
+  if (Array.isArray(c.roles)) return c.roles.map((r) => r || { name: '', label: '' });
+  if (c.role || c.label) return [{ name: c.role || '', label: c.label || '' }];
+  return [];
+}
+export function roleText(c) { return rolesOf(c).map((r) => r.name).filter(Boolean).join('・'); }
+
 export function numberCast(cast) {
   let n = 0;
-  return (cast || []).map((c) => ({ ...c, no: c.tag ? String(c.tag) : String(++n) }));
+  return (cast || []).map((c) => ({ ...c, no: c.tag ? String(c.tag) : String(++n), roles: rolesOf(c) }));
+}
+
+// 舞台図ごとの役名の表示（未設定なら、最初の役だけ表示）
+export const roleKey = (cid, i) => `${cid}_${i}`;
+export function roleVisible(roleVis, cid, i) {
+  const v = roleVis && roleVis[roleKey(cid, i)];
+  return v === undefined ? i === 0 : !!v;
 }
 
 export function castIndex(cast) {
@@ -27,7 +43,7 @@ export function castIndex(cast) {
   return { list, byId, byNo };
 }
 
-// 舞台図の丸がどのキャストか（古いデータは番号で照合）
+// 舞台図の丸がどのメンバーか（古いデータは番号で照合）
 export function personCast(s, idx) {
   if (!idx) return null;
   if (s.cid) return idx.byId[s.cid] || null;
@@ -42,5 +58,6 @@ export function personNo(s, idx) {
 
 export function castLabel(c) {
   if (!c) return '';
-  return `${c.no} ${c.name}${c.role ? '（' + c.role + '）' : ''}`;
+  const r = roleText(c);
+  return `${c.no} ${c.name}${r ? '（' + r + '）' : ''}`;
 }

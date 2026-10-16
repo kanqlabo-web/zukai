@@ -1,31 +1,51 @@
-// 台本テキストの解析：話者ラベル、字下げ、《きっかけ》位置、段（行）分け。
+// 台本テキストの解析：話者ラベル、字下げ、《タイミング》位置、段（行）分け。
 
-// 行頭の「話者:」を見つける（英語の大文字名 / 短い日本語名）
-const LABEL_RE = /^(\s*)((?:[A-Z][A-Z0-9 &'’.\-\/()（）]*?)|(?:[^\s:：、。!！?？「」『』]{1,16}?))\s*[:：]/;
+// 行頭の「話者:」を見つける
+// 英語：大文字で始まる語の並び（Dursoi A / MR BEAVER / PETER (MAUGRIM) など）。小文字の語（of, the…）が入ると話者名とみなさない
+const EN_RE = /^(\s*)([A-Z][A-Za-z0-9'’.\-]*(?:\s+(?:&|[A-Z][A-Za-z0-9'’.\-]*))*(?:\s*[(（][^)）]{0,20}[)）])?)\s*[:：]/;
+// 日本語：16文字以内の名前（ピーター、ドゥルソイ（A） など）
+const JA_RE = /^(\s*)([^\s\x00-\x7f:：、。!！?？「」『』][^:：、。!！?？「」『』]{0,15}?)\s*[:：]/;
 const NARRATOR_RE = /^(NARRATOR|NARRATION|語り|語り手|ナレ|ナレーター|ナレーション)$/i;
 
-export function parseLines(text) {
+// fixes：手動で直した話者名の判定 [{ t: 行の文字, n: 話者名の文字数（0なら話者名なし） }]
+export function parseLines(text, fixes) {
+  const fixMap = new Map((fixes || []).map((f) => [f.t, f.n]));
   const lines = [];
   let pos = 0;
   let narrator = true;
+  let prev = null; // 直前の空行でない行
   for (const raw of (text || '').split('\n')) {
     const line = raw.replace(/\r$/, '');
-    const m = line.match(LABEL_RE);
     let label = null;
-    if (m) {
-      const name = m[2].replace(/[()（）\s]/g, '');
-      if (name) {
+    let name = '';
+    let fixed = false;
+    if (fixMap.has(line)) {
+      fixed = true;
+      const n = Math.min(fixMap.get(line) || 0, line.length);
+      if (n > 0) { label = { s: pos, e: pos + n }; name = line.slice(0, n).replace(/[:：\s]+$/, ''); }
+    } else {
+      let m = line.match(EN_RE);
+      if (!m) {
+        m = line.match(JA_RE);
+        // 英語の行が話者名なしなら、その訳の日本語の行も話者名なしとみなす
+        if (m && prev && /^[\x00-\x7f]/.test(prev.text.trim()) && !prev.label) m = null;
+      }
+      if (m && m[2].replace(/[()（）\s]/g, '')) {
         label = { s: pos + m[1].length, e: pos + m[0].length };
-        narrator = NARRATOR_RE.test(m[2].trim());
+        name = m[2];
       }
     }
-    lines.push({ start: pos, end: pos + line.length, label, indent: !narrator, blank: line.trim() === '' });
+    if (label) narrator = NARRATOR_RE.test(name.trim().replace(/\s*[(（].*$/, ''));
+    const blank = line.trim() === '';
+    const L = { start: pos, end: pos + line.length, label, indent: !narrator, blank, fixed };
+    lines.push(L);
+    if (!blank) prev = { text: line, label };
     pos += raw.length + 1;
   }
   return lines;
 }
 
-// 台本が書き換えられても、きっかけの語句の位置を探し直す
+// 台本が書き換えられても、タイミングの語句の位置を探し直す
 export function resolveAnchor(text, anchor) {
   if (!anchor) return { offset: 0, ok: false };
   text = text || '';
@@ -58,10 +78,10 @@ export function sortBlocks(text, blocks) {
     .sort((x, y) => x.r.offset - y.r.offset || (x.b.createdAt || 0) - (y.b.createdAt || 0));
 }
 
-// 台本を《きっかけ》ごとの段に分ける
-export function buildRows(text, blocks) {
+// 台本を《タイミング》ごとの段に分ける
+export function buildRows(text, blocks, fixes) {
   text = text || '';
-  const lines = parseLines(text);
+  const lines = parseLines(text, fixes);
   const sorted = sortBlocks(text, blocks);
   const rows = [{ start: 0, blocks: [] }];
   for (const { b, r } of sorted) {
@@ -80,7 +100,7 @@ export function buildRows(text, blocks) {
   return rows;
 }
 
-// 1行を「ラベル」「本文」「きっかけ強調」の区間に分ける
+// 1行を「ラベル」「本文」「タイミング強調」の区間に分ける
 export function lineSegments(text, line, highlights) {
   const cuts = new Set([line.start, line.end]);
   if (line.label) { cuts.add(line.label.s); cuts.add(line.label.e); }

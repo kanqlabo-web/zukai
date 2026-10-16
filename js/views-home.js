@@ -1,4 +1,4 @@
-// 作品一覧とメンバー管理
+// 作品一覧とアカウント管理
 import { h } from './vdom.js';
 import { db, mode } from './db.js';
 import { S, rerender, toast, fmtTime, go } from './state.js';
@@ -45,11 +45,11 @@ export function HomeView() {
       : works.length === 0 ? h('div', { class: 'empty' }, h('p', null, 'まだ作品がありません。'), h('p', { class: 'muted' }, '上の欄に作品名を入れて「新しい作品」を押してください。'))
         : h('div', { class: 'card-grid' }, works.map((w) => h('a', { key: w.id, class: 'work-card', href: `#/w/${w.id}` },
           h('div', { class: 'work-title' }, w.title || '無題の作品'),
-          h('div', { class: 'muted small' }, `キャスト ${(w.cast || []).length}人 ・ 更新 ${fmtTime(w.updatedAt)}`)))),
+          h('div', { class: 'muted small' }, `メンバー ${(w.cast || []).length}人 ・ 更新 ${fmtTime(w.updatedAt)}`)))),
   );
 }
 
-// ---------- メンバー管理 ----------
+// ---------- アカウント管理（ログインできる人） ----------
 async function addEmails(text, role, prune) {
   const emails = extractEmails(text);
   if (!emails.length) { toast('メールアドレスが見つかりませんでした', 'error'); return; }
@@ -80,7 +80,7 @@ export function AdminView() {
   const reqs = S.d.requests || [];
   const admins = members.filter((m) => m.role === 'admin').length;
   return h('main', { class: 'page narrow' },
-    h('div', { class: 'page-head' }, h('h1', null, 'メンバー管理')),
+    h('div', { class: 'page-head' }, h('h1', null, 'アカウント管理')),
     reqs.length ? h('section', { class: 'panel' },
       h('h2', null, `参加リクエスト（${reqs.length}）`),
       h('ul', { class: 'mlist' }, reqs.map((r) => h('li', { key: r.id },
@@ -98,22 +98,22 @@ export function AdminView() {
         'groups.google.com でグループを開き、「メンバー」画面からメンバー一覧をエクスポート（CSV）するか、メールアドレスをコピーして下に貼り付けてください。メールアドレス以外の文字が混ざっていても大丈夫です。'),
       h('textarea', { rows: 6, placeholder: 'taro@gmail.com\nhanako@gmail.com …', value: S.ui.bulk || '', oninput: (e) => { S.ui.bulk = e.target.value; } }),
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!S.ui.prune, onchange: (e) => { S.ui.prune = e.target.checked; rerender(); } }),
-        ' 貼り付けた一覧にいないメンバーを削除する（グループと同じ状態にそろえる。管理者は削除されません）'),
+        ' 貼り付けた一覧にいない人を削除する（グループと同じ状態にそろえる。管理者は削除されません）'),
       h('div', { class: 'actions' },
-        h('button', { class: 'btn primary', onclick: () => addEmails(S.ui.bulk, 'member', S.ui.prune) }, 'メンバーとして追加'),
+        h('button', { class: 'btn primary', onclick: () => addEmails(S.ui.bulk, 'member', S.ui.prune) }, '編集できる人として追加'),
         h('button', { class: 'btn', onclick: () => addEmails(S.ui.bulk, 'admin', false) }, '管理者として追加')),
     ),
     h('section', { class: 'panel' },
-      h('h2', null, `メンバー（${members.length}人）`),
+      h('h2', null, `ログインできる人（${members.length}人）`),
       h('ul', { class: 'mlist' }, members.map((m) => h('li', { key: m.id },
         h('div', { class: 'grow' }, h('span', null, m.id), m.name ? h('span', { class: 'muted small' }, '　' + m.name) : null),
         h('select', {
           value: m.role || 'member', disabled: m.id === S.user.email && admins <= 1,
           onchange: (e) => db.update('members/' + m.id, { role: e.target.value }),
-        }, h('option', { value: 'member' }, 'メンバー'), h('option', { value: 'admin' }, '管理者')),
+        }, h('option', { value: 'member' }, '編集者'), h('option', { value: 'admin' }, '管理者')),
         h('button', {
           class: 'btn small danger', disabled: m.id === S.user.email,
-          onclick: async () => { if (await confirmBox(`${m.id} をメンバーから削除しますか？`, { ok: '削除', danger: true })) db.remove('members/' + m.id); },
+          onclick: async () => { if (await confirmBox(`${m.id} がログインできないようにしますか？`, { ok: '削除', danger: true })) db.remove('members/' + m.id); },
         }, '削除'))))),
   );
 }

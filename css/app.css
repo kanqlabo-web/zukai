@@ -358,3 +358,22 @@ textarea { resize: vertical; line-height: 1.55; }
 .rules summary { cursor: pointer; color: var(--accent-2); }
 .rules-body { white-space: pre-wrap; background: #f6f5fb; border-radius: 8px; padding: 8px; margin-top: 6px; }
 @media (max-width: 900px) { .role-toggle { margin-left: 0; } }
+.roles-cell { min-width: 280px; }
+.role-line { display: flex; gap: 6px; align-items: center; margin: 2px 0; }
+.role-line input { padding: 5px 8px; }
+.role-line .lbl-in { width: 110px; flex: 0 0 110px; }
+.icon-sp { display: inline-block; width: 32px; flex-shrink: 0; }
+.add-role { background: none; border: 0; color: var(--accent-2); font-size: 12.5px; cursor: pointer; padding: 2px 0; }
+.role-box { background: #f6f5fb; border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; margin: 10px 0; }
+.role-box-title { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
+.role-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 0; border-bottom: 1px solid #ecebf3; }
+.role-row:last-child { border-bottom: 0; }
+.role-name { font-size: 13px; min-width: 0; }
+.role-name small { color: var(--muted); }
+.role-all { margin: 10px 0; font-size: 13.5px; }
+.role-all summary { cursor: pointer; color: var(--accent-2); font-weight: 600; }
+.role-all .role-box { max-height: 40vh; overflow-y: auto; }
+.seg-btn { white-space: nowrap; }
+.role-row .seg { flex-shrink: 0; }
+.role-name { flex: 1; }
+.tight-top { margin-top: 4px; }

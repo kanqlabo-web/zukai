@@ -4,8 +4,9 @@ import { db, DEL, newId } from './db.js';
 import { S, rerender, toast } from './state.js';
 import { P } from './model.js';
 import { W, H, stageFrame, shapeNode, sortShapes, moveShape, shapeCenter, simplify, LAYER, layoutLabels, insideShape, shapeArea, shapeBBox, isRegion } from './stage.js';
-import { castIndex, personCast, personNo } from './cast.js';
+import { castIndex, personCast, personNo, rolesOf, roleText, roleVisible, roleKey } from './cast.js';
 import { isDialogOpen } from './dialog.js';
+import { previousShapes, minCostAssign } from './assign.js';
 
 let E = null;
 let unsub = null;
@@ -18,14 +19,14 @@ export function openEditor(w, id) {
   E = {
     w, id, shapes: {}, loaded: false, tool: 'select', sel: new Set(), temp: {}, drag: null,
     zoom: 1, undo: [], redo: [], personCid: null, personFill: 'white', multi: false, lastTap: null,
-    filter: 'all', showRoles: true, focusText: null, fillCount: '',
+    filter: 'all', roleVis: {}, focusText: null, fillCount: '', fillMode: null, hmode: null,
   };
   S.ui.editDiagram = id;
   unsub = db.watchDoc(P.doc(w, 'diagrams', id), (g) => {
     if (!E) return;
     if (!g) { toast('この舞台図は削除されました'); closeEditor(); return; }
     E.shapes = g.shapes || {};
-    E.showRoles = g.showRoles !== false;
+    E.roleVis = g.roleVis || {};
     E.loaded = true;
     for (const sid of [...E.sel]) if (!E.shapes[sid]) E.sel.delete(sid);
     draw();
@@ -115,8 +116,19 @@ const rot = (x, y, deg) => {
   return [x * Math.cos(a) - y * Math.sin(a), x * Math.sin(a) + y * Math.cos(a)];
 };
 
-// ---------- キャスト ----------
+// ---------- メンバー ----------
 function idx() { return castIndex((S.d.work && S.d.work.cast) || []); }
+// 舞台に立つメンバー（CD係など記号の人は図解に出さない）
+const onStage = (ix) => ix.list.filter((c) => c.id && !c.tag);
+// ひとつ前の舞台図での各メンバーの位置
+function prevPositions(ix = idx()) {
+  const prev = previousShapes(E.id);
+  if (!prev) return null;
+  const pos = {};
+  for (const s of Object.values(prev)) if (s && s.t === 'person') { const c = personCast(s, ix); if (c && c.id) pos[c.id] = [s.x, s.y]; }
+  return pos;
+}
+const FAR = 1500; // 前の図にいない人の移動コスト
 function placedCids(shapes, ix = idx()) {
   const set = new Set();
   for (const s of Object.values(shapes)) if (s && s.t === 'person') { const c = personCast(s, ix); if (c && c.id) set.add(c.id); }
@@ -125,7 +137,7 @@ function placedCids(shapes, ix = idx()) {
 function nextCid(shapes, after) {
   const ix = idx();
   const placed = placedCids(shapes, ix);
-  const list = ix.list.filter((c) => c.id);
+  const list = onStage(ix);
   let start = 0;
   if (after) { const i = list.findIndex((c) => c.id === after); if (i >= 0) start = i + 1; }
   for (let k = 0; k < list.length; k++) {
@@ -134,7 +146,7 @@ function nextCid(shapes, after) {
   }
   return '';
 }
-// 丸にキャストを割り当てる（古い番号データは消す）
+// 丸にメンバーを割り当てる（古い番号データは消す）
 function withCid(s, cid) {
   const n = { ...s };
   delete n.no;
@@ -164,14 +176,14 @@ function placePerson(p) {
   commit({ [id]: s });
   const after = { ...shapes, [id]: s };
   E.personCid = cid ? nextCid(after, cid) || '' : '';
-  if (E.personCid === '' && cid) toast('キャスト全員を配置しました。次は番号なしの丸になります。');
+  if (E.personCid === '' && cid) toast('メンバー全員を配置しました。次は番号なしの丸になります。');
 }
 
 function lineUpRest() {
   const shapes = merged();
   const ix = idx();
   const placed = placedCids(shapes, ix);
-  const rest = ix.list.filter((c) => c.id && !placed.has(c.id));
+  const rest = onStage(ix).filter((c) => !placed.has(c.id));
   if (!rest.length) { toast('未配置の人はいません'); return; }
   const changes = {};
   const perRow = 16;
@@ -194,7 +206,7 @@ function setPersonNo(one, raw) {
   const oldC = personCast(base, ix);
   if (val === '') { commit({ [one.id]: withCid(base, '') }); return; }
   const c = ix.byNo[val];
-  if (!c || !c.id) { toast(`「${val}」はキャスト一覧にない番号です`, 'error'); draw(); return; }
+  if (!c || !c.id) { toast(`「${val}」はメンバー一覧にない番号です`, 'error'); draw(); return; }
   if (oldC && oldC.id === c.id) return;
   const ch = { [one.id]: withCid(base, c.id) };
   const other = findPersonOf(E.shapes, c.id, ix, one.id);
@@ -239,35 +251,109 @@ function fillRegions(regions) {
   const shapes = merged();
   const ix = idx();
   const placed = placedCids(shapes, ix);
-  let rest = shuffle(ix.list.filter((c) => c.id && !placed.has(c.id)));
-  const want = parseInt(E.fillCount, 10);
-  if (want > 0) rest = rest.slice(0, want);
-  if (!rest.length) { toast('まだ置いていない人がいません'); return; }
+  const restAll = onStage(ix).filter((c) => !placed.has(c.id));
+  if (!restAll.length) { toast('まだ置いていない人がいません'); return; }
+  const prev = prevPositions(ix);
+  const mode = E.fillMode || (prev ? 'stretch' : 'random');
+  const want = Math.min(parseInt(E.fillCount, 10) || restAll.length, restAll.length);
   const r = 20;
+  // 名前の表示はよけずに、人の丸だけをよけて並べる（名前はあとから空いている所に表示される）
   const occ = Object.values(shapes).filter((s) => s.t === 'person').map((s) => [s.x, s.y]);
   const areas = regions.map(shapeArea);
-  const total = areas.reduce((a, b) => a + b, 0) || 1;
-  const raw = areas.map((a) => (a / total) * rest.length);
+  const total = areas.reduce((x, y) => x + y, 0) || 1;
+  const raw = areas.map((x) => (x / total) * want);
   const alloc = raw.map(Math.floor);
-  let left = rest.length - alloc.reduce((a, b) => a + b, 0);
-  raw.map((v, i) => [v - Math.floor(v), i]).sort((a, b) => b[0] - a[0]).forEach(([, i]) => { if (left > 0) { alloc[i]++; left--; } });
-  const ch = {};
-  let used = 0;
+  let left = want - alloc.reduce((x, y) => x + y, 0);
+  raw.map((v, i) => [v - Math.floor(v), i]).sort((x, y) => y[0] - x[0]).forEach(([, i]) => { if (left > 0) { alloc[i]++; left--; } });
+  const pts = [];
   regions.forEach((g, i) => {
     if (!alloc[i]) return;
-    const pts = gridIn(g, alloc[i], r, occ);
-    for (const [x, y] of pts) {
-      const c = rest[used++];
-      if (!c) break;
-      const id = newId(8);
-      ch[id] = { id, t: 'person', cid: c.id, x, y, fill: 'white', r, z: zFor('person') };
-      occ.push([x, y]);
-    }
+    for (const q of gridIn(g, alloc[i], r, occ)) { pts.push(q); occ.push(q); }
   });
-  if (!used) { toast('図形が小さすぎて人を入れられませんでした', 'error'); return; }
+  if (!pts.length) { toast('図形が小さすぎて人を入れられませんでした', 'error'); return; }
+  let who;
+  if (mode === 'stretch' && prev) {
+    // 前の図からの移動がいちばん少なくなるように、場所とメンバーを組み合わせる
+    const cost = pts.map(([x, y]) => restAll.map((c) => (prev[c.id] ? Math.hypot(prev[c.id][0] - x, prev[c.id][1] - y) : FAR)));
+    who = minCostAssign(cost).map((j) => (j >= 0 ? restAll[j] : null));
+  } else {
+    const sh = shuffle(restAll.slice());
+    who = pts.map((_, i) => sh[i] || null);
+  }
+  const ch = {};
+  let used = 0;
+  pts.forEach(([x, y], i) => {
+    const c = who[i];
+    if (!c) return;
+    const id = newId(8);
+    ch[id] = { id, t: 'person', cid: c.id, x, y, fill: 'white', r, z: zFor('person') };
+    used++;
+  });
   commit(ch);
-  toast(used < rest.length ? `${used}人を入れました（${rest.length - used}人は入りきりませんでした。図形を大きくしてもう一度押してください）` : `${used}人をランダムに入れました`, 'info', 5000);
+  const how = mode === 'stretch' && prev ? '前の図からの移動が少なくなるように' : 'ランダムに';
+  toast(used < want ? `${used}人を${how}入れました（${want - used}人は入りきりませんでした。図形を大きくしてもう一度押してください）` : `${used}人を${how}入れました`, 'info', 5000);
 }
+
+// ---------- 選んだ人の自動入れ替え ----------
+function selectedPersons(ix = idx()) {
+  return selectedShapes().filter((s) => s.t === 'person' && personCast(s, ix) && !personCast(s, ix).tag);
+}
+function reassignStretch() {
+  const ix = idx();
+  const ps = selectedPersons(ix);
+  const prev = prevPositions(ix);
+  if (!prev) { toast('ひとつ前の舞台図がないため、最小ストレッチは使えません', 'error'); return; }
+  const members = ps.map((s) => personCast(s, ix));
+  const cost = ps.map((s) => members.map((c) => (prev[c.id] ? Math.hypot(prev[c.id][0] - s.x, prev[c.id][1] - s.y) : FAR)));
+  const res = minCostAssign(cost);
+  const ch = {};
+  let moved = 0;
+  ps.forEach((s, i) => {
+    const c = members[res[i]];
+    if (c && c.id !== members[i].id) { ch[s.id] = withCid(E.shapes[s.id], c.id); moved++; }
+  });
+  if (!moved) { toast('すでに移動がいちばん少ない並びです'); return; }
+  commit(ch);
+  toast(`${moved}人の番号を入れ替えました（前の図からの移動が最も少ない並び）`, 'info', 5000);
+}
+
+// 身長順：矢印の向き（低い→高い）に沿って、番号の小さい人から順に並べる
+function startHeight() {
+  const ix = idx();
+  const ps = selectedPersons(ix);
+  if (ps.length < 2) return;
+  const xs = ps.map((s) => s.x), ys = ps.map((s) => s.y);
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+  const y0 = Math.max(...ys) + 40, y1 = Math.min(...ys) - 40;
+  E.hmode = { ids: ps.map((s) => s.id), x1: cx, y1: Math.min(450, y0), x2: cx, y2: Math.max(20, y1) };
+  heightPreview();
+  draw();
+}
+function heightPreview() {
+  const hm = E.hmode;
+  const ix = idx();
+  const ps = hm.ids.map((id) => E.shapes[id]).filter(Boolean);
+  const dx = hm.x2 - hm.x1, dy = hm.y2 - hm.y1;
+  const L = Math.hypot(dx, dy) || 1;
+  const ux = dx / L, uy = dy / L;
+  const order = ps.slice().sort((a, b) => {
+    const ta = (a.x - hm.x1) * ux + (a.y - hm.y1) * uy, tb = (b.x - hm.x1) * ux + (b.y - hm.y1) * uy;
+    if (Math.abs(ta - tb) > 6) return ta - tb;
+    return ((a.x - hm.x1) * -uy + (a.y - hm.y1) * ux) - ((b.x - hm.x1) * -uy + (b.y - hm.y1) * ux);
+  });
+  const members = ps.map((s) => personCast(s, ix)).sort((a, b) => (parseInt(a.no, 10) || 0) - (parseInt(b.no, 10) || 0));
+  E.temp = {};
+  order.forEach((s, i) => { E.temp[s.id] = withCid(s, members[i].id); });
+}
+function applyHeight() {
+  const ch = {};
+  for (const id in E.temp) if (E.temp[id] && (E.temp[id].cid !== (E.shapes[id] || {}).cid)) ch[id] = E.temp[id];
+  const n = Object.keys(ch).length;
+  E.hmode = null;
+  E.temp = {};
+  if (n) { commit(ch); toast(`${n}人の番号を身長順に入れ替えました`); } else { toast('すでに身長順に並んでいます'); draw(); }
+}
+function cancelHeight() { E.hmode = null; E.temp = {}; draw(); }
 
 const passes = (s) => !s || E.filter === 'all' || (E.filter === 'cast' ? s.t === 'person' : s.t !== 'person');
 
@@ -332,6 +418,7 @@ function onKey(e) {
   if (mod && e.key.toLowerCase() === 'v') { e.preventDefault(); paste(); return; }
   if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); E.sel = new Set(Object.values(E.shapes).filter(passes).map((x) => x.id)); draw(); return; }
   if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSel(); return; }
+  if (E.hmode) { if (e.key === 'Escape') cancelHeight(); if (e.key === 'Enter') applyHeight(); return; }
   if (e.key === 'Escape') { if (E.drag) { E.drag = null; E.temp = {}; } else E.sel = new Set(); draw(); return; }
   const nudge = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
   if (nudge && E.sel.size) {
@@ -352,6 +439,10 @@ function down(e) {
   try { svg.setPointerCapture(e.pointerId); } catch (err) { /* noop */ }
   const p = svgPt(e);
   const hEl = e.target.closest('[data-h]');
+  if (E.hmode) {
+    if (hEl && hEl.getAttribute('data-h').startsWith('hp')) E.drag = { type: 'harrow', kind: hEl.getAttribute('data-h') };
+    return;
+  }
   if (hEl) {
     const [kind, id] = hEl.getAttribute('data-h').split(':');
     E.drag = { type: 'handle', kind, id, p0: p, orig: clone(cur(id)) };
@@ -403,7 +494,10 @@ function move(e) {
   if (!E || !E.drag) return;
   const p = svgPt(e);
   const d = E.drag;
-  if (d.type === 'move') {
+  if (d.type === 'harrow') {
+    if (d.kind === 'hp1') { E.hmode.x1 = p[0]; E.hmode.y1 = p[1]; } else { E.hmode.x2 = p[0]; E.hmode.y2 = p[1]; }
+    heightPreview();
+  } else if (d.type === 'move') {
     const dx = p[0] - d.p0[0], dy = p[1] - d.p0[1];
     if (!d.moved && Math.hypot(dx, dy) * unitPx() < 4) return;
     d.moved = true;
@@ -462,6 +556,7 @@ function up() {
   if (!E || !E.drag) return;
   const d = E.drag;
   E.drag = null;
+  if (d.type === 'harrow') { draw(); return; }
   if (d.type === 'move') {
     if (d.moved) {
       const ch = {};
@@ -554,7 +649,7 @@ const TOOLS = [
   ['arrow', '矢印'], ['block', '太矢印'], ['text', '文字'], ['pan', 'スクロール'],
 ];
 const HINTS = {
-  select: '図形をドラッグで移動。空いている所をドラッグすると範囲選択。「選べるもの」で図形だけ・キャストだけに絞れます。',
+  select: '図形をドラッグで移動。空いている所をドラッグすると範囲選択。「選べるもの」で図形だけ・メンバーだけに絞れます。',
   person: '舞台をタップすると、右の一覧で選んだ番号の丸を置きます。続けてタップすると次の番号になります。',
   ellipse: 'ドラッグして楕円を描きます（タップだけなら標準の大きさ）。',
   rect: 'ドラッグして四角を描きます。あとで回転もできます。',
@@ -585,10 +680,10 @@ function PersonPanel(shapes) {
   return h('div', null,
     h('div', { class: 'panel-title' }, '次に置く：', h('b', null, nm ? nm.no : '番号なし'), nm ? ` ${nm.name}` : ''),
     h('div', { class: 'prop' }, h('span', null, '塗り'), Seg([['white', '白'], ['gray', '灰'], ['black', '黒']], E.personFill, (v) => { E.personFill = v; draw(); })),
-    ix.list.length ? h('div', { class: 'chips' }, ix.list.filter((c) => c.id).map((m) => h('button', {
+    onStage(ix).length ? h('div', { class: 'chips' }, onStage(ix).map((m) => h('button', {
       key: 'c' + m.id, class: 'chip' + (placed.has(m.id) ? ' placed' : '') + (m.id === nextUp ? ' next' : ''),
-      title: (m.role || '') + (placed.has(m.id) ? '（配置済み：タップした場所へ移動します）' : ''), onclick: () => { E.personCid = m.id; draw(); },
-    }, h('b', null, m.no), ' ', m.name, m.label ? h('small', null, ' ' + m.label) : null))) : h('p', { class: 'muted small' }, 'キャスト一覧が空です。作品ページの「キャスト一覧」で入力すると番号を選べます。'),
+      title: roleText(m) + (placed.has(m.id) ? '（配置済み：タップした場所へ移動します）' : ''), onclick: () => { E.personCid = m.id; draw(); },
+    }, h('b', null, m.no), ' ', m.name, rolesOf(m).some((r) => r.label) ? h('small', null, ' ' + rolesOf(m).map((r) => r.label).filter(Boolean).join('・')) : null))) : h('p', { class: 'muted small' }, 'メンバー一覧が空です。作品ページの「メンバー一覧」で入力すると番号を選べます。'),
     h('p', { class: 'muted small' }, '線を引いた名前は配置済みです。選んでタップすると、その人をタップした場所へ動かします。'),
     h('div', { class: 'panel-actions' },
       h('button', { class: 'btn tiny', onclick: () => { E.personCid = ''; draw(); } }, '番号なしの丸'),
@@ -598,11 +693,73 @@ function PersonPanel(shapes) {
 
 function FilterBar() {
   return h('div', { class: 'prop filter-bar' }, h('span', null, '選べるもの'),
-    Seg([['all', 'すべて'], ['shapes', '図形'], ['cast', 'キャスト']], E.filter, (v) => {
+    Seg([['all', 'すべて'], ['shapes', '図形'], ['cast', 'メンバー']], E.filter, (v) => {
       E.filter = v;
       E.sel = new Set([...E.sel].filter((id) => passes(E.shapes[id])));
       draw();
     }));
+}
+
+function HeightArrow(upx) {
+  const hm = E.hmode;
+  const r = Math.max(9, Math.min(30, 12 / upx));
+  const L = Math.hypot(hm.x2 - hm.x1, hm.y2 - hm.y1) || 1;
+  const ux = (hm.x2 - hm.x1) / L, uy = (hm.y2 - hm.y1) / L;
+  const hs = 34;
+  const bx = hm.x2 - ux * hs, by = hm.y2 - uy * hs;
+  const head = `${hm.x2},${hm.y2} ${bx - uy * 18},${by + ux * 18} ${bx + uy * 18},${by - ux * 18}`;
+  return h('g', { class: 'harrow' },
+    h('line', { x1: hm.x1, y1: hm.y1, x2: bx, y2: by, stroke: '#2563eb', 'stroke-width': 7, 'stroke-linecap': 'round', opacity: 0.85, 'pointer-events': 'none' }),
+    h('polygon', { points: head, fill: '#2563eb', opacity: 0.85, 'pointer-events': 'none' }),
+    h('circle', { 'data-h': 'hp1', cx: hm.x1, cy: hm.y1, r, class: 'handle', 'stroke-width': 2 / upx }),
+    h('circle', { 'data-h': 'hp2', cx: hm.x2, cy: hm.y2, r, class: 'handle', 'stroke-width': 2 / upx }),
+    h('text', { x: hm.x1 - ux * (r + 16), y: hm.y1 - uy * (r + 16), 'text-anchor': 'middle', 'dominant-baseline': 'central', fill: '#2563eb', 'font-size': 22, 'font-weight': 700, 'pointer-events': 'none' }, '低'),
+    h('text', { x: hm.x2 + ux * (r + 16), y: hm.y2 + uy * (r + 16), 'text-anchor': 'middle', 'dominant-baseline': 'central', fill: '#2563eb', 'font-size': 22, 'font-weight': 700, 'pointer-events': 'none' }, '高'));
+}
+
+function HeightPanel() {
+  return h('div', null,
+    h('div', { class: 'panel-title' }, '身長順に入れ替え'),
+    h('p', { class: 'small' }, '青い矢印の両端（○）をドラッグして向きを決めてください。矢印の根元「低」から先「高」に向かって、番号の小さい人（身長の低い人）から順に並びます。'),
+    h('p', { class: 'muted small' }, `対象：${E.hmode.ids.length}人。丸の位置は変わらず、番号だけが入れ替わります。`),
+    h('div', { class: 'panel-actions' },
+      h('button', { class: 'btn small primary', onclick: applyHeight }, 'この並びで決定'),
+      h('button', { class: 'btn small', onclick: cancelHeight }, 'やめる')));
+}
+
+function setRoleVis(cid, i, v) {
+  const key = roleKey(cid, i);
+  E.roleVis = { ...E.roleVis, [key]: v };
+  db.update(path(), { ['roleVis.' + key]: v });
+  draw();
+}
+
+// 役ごとに、舞台図へ役名（図解での表記）を出すかどうか
+function RoleToggles(members, title) {
+  const rows = [];
+  for (const m of members) {
+    rolesOf(m).forEach((r, i) => {
+      if (!r.label) return;
+      const on = roleVisible(E.roleVis, m.id, i);
+      rows.push(h('div', { key: m.id + i, class: 'role-row' },
+        h('span', { class: 'role-name' }, members.length > 1 ? h('b', null, m.no + ' ') : null, r.name || '（役名なし）', h('small', null, '　' + r.label)),
+        Seg([[true, '表示'], [false, '隠す']], on, (v) => setRoleVis(m.id, i, v))));
+    });
+  }
+  if (!rows.length) {
+    return members.length === 1 ? h('p', { class: 'muted small' }, '役名を出すには、メンバー一覧で「図解での表記」を入力してください。') : null;
+  }
+  return h('div', { class: 'role-box' }, h('div', { class: 'role-box-title' }, title || '役名の表示'), rows);
+}
+
+function AllRoles() {
+  const ix = idx();
+  const ids = placedCids(E.shapes, ix);
+  const members = onStage(ix).filter((c) => ids.has(c.id) && rolesOf(c).some((r) => r.label));
+  if (!members.length) return null;
+  return h('details', { class: 'role-all' },
+    h('summary', null, `役名の表示（${members.length}人）`),
+    RoleToggles(members, ' '));
 }
 
 function SelPanel() {
@@ -614,8 +771,9 @@ function SelPanel() {
       h('ul', { class: 'tips small muted' },
         h('li', null, '複数を選ぶ：空いている所をドラッグ、または「複数選択」をオン'),
         h('li', null, 'パソコン：Ctrl+Z 元に戻す / Ctrl+D 複製 / Delete 削除 / 矢印キー 微調整')),
+      AllRoles(),
       h('div', { class: 'panel-actions' },
-        Object.keys(E.shapes).length ? h('button', { class: 'btn tiny', onclick: () => { E.sel = new Set(Object.values(E.shapes).filter(passes).map((x) => x.id)); draw(); } }, E.filter === 'cast' ? 'キャストをすべて選択' : E.filter === 'shapes' ? '図形をすべて選択' : 'すべて選択') : null,
+        Object.keys(E.shapes).length ? h('button', { class: 'btn tiny', onclick: () => { E.sel = new Set(Object.values(E.shapes).filter(passes).map((x) => x.id)); draw(); } }, E.filter === 'cast' ? 'メンバーをすべて選択' : E.filter === 'shapes' ? '図形をすべて選択' : 'すべて選択') : null,
         clipboard.length ? h('button', { class: 'btn tiny', onclick: paste }, `貼り付け（${clipboard.length}個）`) : null));
   }
   const one = list.length === 1 ? list[0] : null;
@@ -633,7 +791,7 @@ function SelPanel() {
         onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
         onchange: (e) => setPersonNo(one, e.target.value),
       }),
-      m ? h('span', { class: 'small' }, `${m.name}${m.role ? '（' + m.role + '）' : ''}`) : h('span', { class: 'muted small' }, '番号なし')));
+      m ? h('span', { class: 'small' }, `${m.name}${roleText(m) ? '（' + roleText(m) + '）' : ''}`) : h('span', { class: 'muted small' }, '番号なし')));
     parts.push(h('p', { class: 'muted small tight' }, 'ほかの丸と同じ番号にすると、2人の番号を入れ替えます。'));
   }
   if (persons.length) {
@@ -641,8 +799,19 @@ function SelPanel() {
     parts.push(h('div', { class: 'prop' }, h('span', null, '塗り'), Seg([['white', '白'], ['gray', '灰'], ['black', '黒']], f || 'white', (v) => setProps({ fill: v }, (s) => s.t === 'person'))));
     const r = persons.every((s) => (s.r || 20) === (persons[0].r || 20)) ? persons[0].r || 20 : null;
     parts.push(h('div', { class: 'prop' }, h('span', null, '大きさ'), Seg([[15, '小'], [20, '中'], [27, '大']], r, (v) => setProps({ r: v }, (s) => s.t === 'person'))));
-    const hid = persons.every((s) => !!s.hideRole) ? true : persons.every((s) => !s.hideRole) ? false : null;
-    parts.push(h('div', { class: 'prop' }, h('span', null, '役名'), Seg([[false, '表示'], [true, '隠す']], hid, (v) => setProps({ hideRole: v }, (s) => s.t === 'person'))));
+    if (one) { const m = personCast(one, idx()); if (m) parts.push(RoleToggles([m])); }
+    const movable = selectedPersons();
+    if (movable.length >= 2) {
+      const hasPrev = !!previousShapes(E.id);
+      parts.push(h('div', { class: 'fill-box' },
+        h('div', { class: 'role-box-title' }, `メンバーの自動入れ替え（${movable.length}人）`),
+        h('div', { class: 'panel-actions tight-top' },
+          h('button', { class: 'btn small', onclick: startHeight }, '身長順'),
+          h('button', { class: 'btn small', disabled: !hasPrev, onclick: reassignStretch }, '最小ストレッチ')),
+        h('div', { class: 'muted small' }, hasPrev
+          ? '丸の位置はそのままで番号を入れ替えます。最小ストレッチは、ひとつ前の舞台図からの移動がいちばん少なくなる並びにします。'
+          : '丸の位置はそのままで番号を入れ替えます。最小ストレッチは、ひとつ前の舞台図があるときに使えます。')));
+    }
   }
   if (regions.length) {
     const g = regions[0];
@@ -660,7 +829,9 @@ function SelPanel() {
       parts.push(h('div', { class: 'prop' }, h('span', null, '名前の表示'), Seg([[true, '表示'], [false, '隠す']], shown, (v) => setProps({ showName: v }, (x) => isRegion(x)))));
     }
     const ix = idx();
-    const restN = ix.list.filter((c) => c.id && !placedCids(merged(), ix).has(c.id)).length;
+    const restN = onStage(ix).filter((c) => !placedCids(merged(), ix).has(c.id)).length;
+    const hasPrev = !!previousShapes(E.id);
+    const fmode = E.fillMode || (hasPrev ? 'stretch' : 'random');
     parts.push(h('div', { class: 'fill-box' },
       h('div', { class: 'fill-row' },
         h('button', { class: 'btn small primary', disabled: !restN, onclick: () => fillRegions(regions) }, '残りの人で埋める'),
@@ -668,7 +839,10 @@ function SelPanel() {
           value: E.fillCount, placeholder: String(restN), inputmode: 'numeric', 'aria-label': '入れる人数',
           oninput: (e) => { E.fillCount = e.target.value.replace(/[^0-9]/g, ''); },
         }), '人')),
-      h('div', { class: 'muted small' }, restN ? `まだ置いていない${restN}人から、ランダムに図形の中へ並べます（人数は空欄なら全員）。` : 'キャスト全員がこの図に置かれています。')));
+      hasPrev ? h('div', { class: 'prop' }, h('span', null, '並べ方'), Seg([['stretch', '最小ストレッチ'], ['random', 'ランダム']], fmode, (v) => { E.fillMode = v; draw(); })) : null,
+      h('div', { class: 'muted small' }, !restN ? 'メンバー全員がこの図に置かれています。'
+        : fmode === 'stretch' ? `まだ置いていない${restN}人を、ひとつ前の舞台図からの移動が少なくなるように図形の中へ並べます（人数は空欄なら全員）。`
+          : `まだ置いていない${restN}人から、ランダムに図形の中へ並べます（人数は空欄なら全員）。`)));
     parts.push(h('div', { class: 'prop' }, h('span', null, '線'), Seg([[false, '実線'], [true, '点線']], !!g.dashed, (v) => setProps({ dashed: v }, (s) => regions.includes(s)))));
     parts.push(h('div', { class: 'prop' }, h('span', null, '太さ'), Seg([[2, '細'], [3, '普通'], [5, '太']], g.sw || 3, (v) => setProps({ sw: v }, (s) => regions.includes(s)))));
     parts.push(h('div', { class: 'prop' }, h('span', null, '塗り'), Seg([['none', 'なし'], ['light', '薄い灰'], ['white', '白']], g.fill || 'none', (v) => setProps({ fill: v }, (s) => regions.includes(s)))));
@@ -713,7 +887,7 @@ export function EditorView() {
   const upx = unitPx();
   const list = sortShapes(shapes);
   const ix = idx();
-  const single = E.sel.size === 1 && E.tool === 'select' ? shapes[[...E.sel][0]] : null;
+  const single = E.sel.size === 1 && E.tool === 'select' && !E.hmode ? shapes[[...E.sel][0]] : null;
   const d = E.drag;
   let marquee = null;
   if (d && d.type === 'marquee') {
@@ -726,9 +900,6 @@ export function EditorView() {
     h('header', { class: 'ed-top' },
       h('button', { class: 'btn primary', onclick: closeEditor }, '完了'),
       h('div', { class: 'ed-title' }, '舞台図の編集'),
-      h('label', { class: 'role-toggle', title: 'キャスト一覧の「図解での表記」を丸の横に表示します' },
-        h('input', { type: 'checkbox', checked: E.showRoles, onchange: (e) => { E.showRoles = e.target.checked; db.update(path(), { showRoles: e.target.checked }); draw(); } }),
-        h('span', null, '役名を表示')),
       h('div', { class: 'ed-top-btns' },
         h('button', { class: 'icon-btn lg', title: '元に戻す', disabled: !E.undo.length, onclick: undo }, '↶'),
         h('button', { class: 'icon-btn lg', title: 'やり直す', disabled: !E.redo.length, onclick: redo }, '↷'),
@@ -756,10 +927,11 @@ export function EditorView() {
         },
           stageFrame(),
           h('g', null, list.map((s) => shapeNode(s, { selected: E.sel.has(s.id), interactive: true, idx: ix }))),
-          h('g', null, layoutLabels(list, ix, E.showRoles)),
+          h('g', null, layoutLabels(list, ix, E.roleVis)),
           single ? h('g', { class: 'handles' }, handlesFor(single, upx)) : null,
-          marquee)),
+          marquee,
+          E.hmode ? HeightArrow(upx) : null)),
       h('aside', { class: 'ed-panel' },
         h('div', { class: 'rotate-hint' }, 'スマホは横向きにすると大きく編集できます。細かい所は右上の「＋」で拡大し、「スクロール」で移動してください。'),
-        E.tool === 'person' ? PersonPanel(shapes) : SelPanel())));
+        E.hmode ? HeightPanel() : E.tool === 'person' ? PersonPanel(shapes) : SelPanel())));
 }
