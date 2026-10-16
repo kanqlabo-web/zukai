@@ -1,6 +1,6 @@
 // ▼ Firebase の設定をここに貼り付けてください（README の手順 2 を参照）。
 // apiKey が空のままだと「デモモード」で動き、データはこのブラウザの中だけに保存されます。
-export const firebaseConfig = firebaseConfig = {
+export const firebaseConfig = {
   apiKey: "AIzaSyDFBoS_DMNN9EB7ohza1ijwHpDzFD93WBA",
   authDomain: "zukai-8a392.firebaseapp.com",
   projectId: "zukai-8a392",
