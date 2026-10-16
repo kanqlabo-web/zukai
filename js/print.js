@@ -2,7 +2,8 @@
 import { h } from './vdom.js';
 import { db } from './db.js';
 import { S } from './state.js';
-import { P, draftTitle } from './model.js';
+import { P, draftTitle, shortTrack } from './model.js';
+import { castIndex } from './cast.js';
 import { buildRows, highlightRanges } from './script.js';
 import { StageSVG } from './stage.js';
 import { CastTable, Legend, ScriptLines, DotText, CueTitle } from './sheet.js';
@@ -32,7 +33,8 @@ export async function loadPrint({ w, kind, id }) {
       if (d) targets.push({ draft: d, track: t, ep: e });
     }
     const nos = [...new Set(targets.map((x) => x.draft.no))];
-    const range = ts.length ? `${ts[0].title}-${ts.length > 1 ? ts[ts.length - 1].title.replace(/^トラ/, '') : ''}` : '';
+    const tnum = (t) => shortTrack(t.title).replace(/^トラ/, '');
+    const range = ts.length ? `${shortTrack(ts[0].title)}${ts.length > 1 ? '-' + tnum(ts[ts.length - 1]) : ''}` : '';
     fileName = `${e.title}${range}図解結合版${nos.length === 1 ? `_第${nos[0]}稿` : ''}`;
   }
   for (const t of targets) {
@@ -48,7 +50,7 @@ export async function loadPrint({ w, kind, id }) {
   return { work, targets, fileName, w, kind, id };
 }
 
-function NoteBlock(t, b) {
+function NoteBlock(t, b, idx) {
   const items = Object.entries(b.items || {}).map(([id, it]) => ({ id, ...it })).sort(byOrder);
   return h('div', { key: b.id, class: 'p-block' },
     b.cue ? CueTitle(b.cue) : null,
@@ -58,7 +60,7 @@ function NoteBlock(t, b) {
         const g = t.diagrams[it.refId];
         return h('figure', { key: it.id, class: 'p-fig' },
           it.caption ? h('figcaption', null, it.caption) : null,
-          g ? StageSVG(g.shapes, 'stage p-stage') : null);
+          g ? StageSVG(g.shapes, { cls: 'stage p-stage', idx, showRoles: g.showRoles !== false }) : null);
       }
       if (it.kind === 'image') {
         const im = t.images[it.refId];
@@ -76,6 +78,7 @@ function Sheet(data, t, i) {
   const rows = buildRows(text, t.blocks);
   const hls = highlightRanges(text, t.blocks);
   const title = draftTitle(work, t.ep, t.track, t.draft);
+  const idx = castIndex(work.cast);
   return h('table', { key: t.draft.id, class: 'sheet' + (i > 0 ? ' newpage' : '') },
     h('colgroup', null, h('col', { class: 'c-script' }), h('col', { class: 'c-notes' })),
     h('thead', null, h('tr', null, h('th', { colspan: 2, class: 'sheet-title' }, title))),
@@ -87,7 +90,7 @@ function Sheet(data, t, i) {
         Legend())),
       text ? rows.map((row) => h('tr', { key: 'r' + row.start, class: 'p-row' },
         h('td', { class: 'p-script' }, ScriptLines(text, row.lines, hls)),
-        h('td', { class: 'p-notes' }, row.blocks.map(({ b }) => NoteBlock(t, b)))))
+        h('td', { class: 'p-notes' }, row.blocks.map(({ b }) => NoteBlock(t, b, idx)))))
         : h('tr', { class: 'p-row' }, h('td', { class: 'p-script' }, '（台本なし）'), h('td', { class: 'p-notes' }, ''))));
 }
 
@@ -109,6 +112,6 @@ export function PrintView() {
       h('button', { class: 'btn primary', onclick: () => window.print() }, 'PDFを保存')),
     h('div', { class: 'print-root' }, data.targets.length
       ? data.targets.map((t, i) => Sheet(data, t, i))
-      : h('p', { class: 'pad' }, 'この話にはまだ稿がありません。')),
+      : h('p', { class: 'pad' }, 'この話にはまだトラックがありません。')),
   ];
 }

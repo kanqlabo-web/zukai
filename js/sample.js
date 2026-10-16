@@ -197,9 +197,10 @@ CHILDREN: Dinner!
 let zc = 0;
 const z = (t) => (LAYER[t] || 0) * 1e13 + Date.now() + zc++;
 
-function person(no, x, y, fill = 'white') { const id = newId(8); return [id, { id, t: 'person', no: String(no), x, y, fill, r: 20, z: z('person') }]; }
+let CIDS = {};
+function person(no, x, y, fill = 'white') { const id = newId(8); return [id, { id, t: 'person', cid: CIDS[String(no)], x, y, fill, r: 20, z: z('person') }]; }
 function text(str, x, y, size = 22) { const id = newId(8); return [id, { id, t: 'text', text: str, x, y, size, z: z('text') }]; }
-function blob(pts) { const id = newId(8); return [id, { id, t: 'blob', pts, z: z('blob') }]; }
+function blob(pts, name = '') { const id = newId(8); return [id, { id, t: 'blob', pts, name, z: z('blob') }]; }
 function ellipse(x, y, rx, ry, extra = {}) { const id = newId(8); return [id, { id, t: 'ellipse', x, y, rx, ry, rot: 0, z: z('ellipse'), ...extra }]; }
 function rect(x, y, w, hh, extra = {}) { const id = newId(8); return [id, { id, t: 'rect', x, y, w, h: hh, rot: 0, round: true, z: z('rect'), ...extra }]; }
 function arrow(x1, y1, x2, y2, style = 'line') { const id = newId(8); return [id, { id, t: 'arrow', style, head: 'end', x1, y1, x2, y2, z: z('arrow') }]; }
@@ -232,13 +233,18 @@ const shapesOf = (list) => Object.fromEntries(list);
 export async function buildSample(user) {
   const w = newId();
   const now = Date.now();
+  const LABELS = { 'ルーシィ': 'ルー', 'エドマンド': 'エド', 'ピーター': 'ピ', 'スーザン': 'ス', 'ビーヴァー': 'ビー', 'ビーヴァー奥さん': '奥', '白い魔女': '魔', '白い魔女のドワーフ': '白ド', 'モーグリム': 'モグ', 'サンタクロース': 'サンタ', 'タムナスさん': 'タム' };
+  CIDS = {};
   const cast = CAST.split('\n').map((l) => {
     const m = l.match(/^(\S+)\s+(.*?)(?:（(.*)）)?$/);
-    return { no: m[1], name: m[2], role: m[3] || '' };
+    const id = newId(8);
+    CIDS[m[1]] = id;
+    const role = m[3] || '';
+    return { id, name: m[2], role, label: LABELS[role] || '', tag: /^[0-9]+$/.test(m[1]) ? '' : m[1] };
   });
   const ops = [];
   const set = (path, data) => ops.push({ op: 'set', path, data });
-  set(P.work(w), { title: 'ナルニア国物語（見本）', prefix: '【表現活動】', cast, createdAt: now, updatedAt: now, createdBy: user.name });
+  set(P.work(w), { title: 'ナルニア国物語（見本）', prefix: '【表現活動】', cast, labelRules: '役名は〇の中ではなく、〇の横に書く（Arial 9）。\n大きな〇で表した場合は、〇の中に「木」「草」などと書く。\n〇は塗りつぶしなし。', createdAt: now, updatedAt: now, createdBy: user.name });
   const ep = newId();
   set(P.doc(w, 'episodes', ep), { title: '2話', order: 1, createdAt: now });
 
@@ -252,9 +258,9 @@ export async function buildSample(user) {
 
   // ---- トラ1 ----
   const t1 = newId(), d1 = newId();
-  set(P.doc(w, 'tracks', t1), { episodeId: ep, title: 'トラ1', order: 1, createdAt: now });
+  set(P.doc(w, 'tracks', t1), { episodeId: ep, title: 'トラック1', order: 1, createdAt: now });
   set(P.doc(w, 'drafts', d1), { trackId: t1, no: 1, zukaikko: 'C、B', theme: '', script: TORA1, createdAt: now, updatedAt: now, updatedBy: user.name });
-  const kids1 = [person(2, 520, 205), person(23, 525, 285), person(28, 590, 300), person(18, 610, 220), text('ルー', 525, 165, 18), text('エド', 470, 300, 18), text('ピ', 620, 335, 18), text('ス', 640, 190, 18)];
+  const kids1 = [person(2, 520, 205), person(23, 525, 285), person(28, 590, 300), person(18, 610, 220)];
   const band = [[130, 60], [960, 40], [900, 120], [640, 150], [560, 180], [470, 210], [420, 300], [600, 360], [720, 420], [840, 440], [880, 400], [700, 300], [640, 240], [230, 450], [120, 380], [120, 80]];
   const g1 = mkDia(d1, [...fill(others([2, 23, 28, 18, 16]), band, 54), ...kids1, person(16, 121, 428), arrow(640, 330, 870, 270)]);
   mkBlock(d1, TORA1, 'PETER: Lucy', '', true, [
@@ -263,12 +269,12 @@ export async function buildSample(user) {
   ]);
   mkBlock(d1, TORA1, 'NARRATOR: Led by Lucy', '', true, [{ kind: 'text', text: '● 4人は真ん中の扉からタムナスハウスに入る' }]);
   const g2 = mkDia(d1, [
-    rect(200, 120, 150, 210, { round: false }), text('暖炉', 200, 140, 18),
+    rect(200, 120, 150, 210, { round: false, name: '暖炉' }),
     ...[[7, 160, 70], [14, 160, 125], [19, 160, 180], [15, 160, 240], [10, 240, 70], [8, 240, 125], [9, 240, 180], [25, 240, 240]].map((a) => person(...a)),
-    rect(390, 90, 150, 70), text('棚', 390, 95, 18), ...[[33, 340, 55], [34, 390, 55], [3, 440, 55], [17, 360, 115], [21, 420, 115]].map((a) => person(...a)),
-    rect(620, 90, 190, 60), text('扉', 735, 95, 18), ...[[27, 545, 90], [30, 595, 90], [31, 645, 90], [29, 695, 90]].map((a) => person(...a)),
-    rect(620, 280, 130, 140, { round: false }), text('テーブル', 620, 290, 18), ...[[25, 590, 205], [38, 650, 205], [12, 560, 270], [6, 660, 270], [11, 590, 330], [13, 650, 330]].map((a) => person(...a)),
-    ellipse(840, 235, 60, 110), text('ソファ', 840, 235, 18), ...[[37, 830, 140], [5, 780, 180], [36, 880, 180], [3, 780, 240], [20, 885, 245], [4, 790, 300], [1, 840, 340], [22, 880, 300]].map((a) => person(...a)),
+    rect(390, 90, 150, 70, { name: '棚' }), ...[[33, 340, 55], [34, 390, 55], [3, 440, 55], [17, 360, 115], [21, 420, 115]].map((a) => person(...a)),
+    rect(620, 90, 190, 60, { name: '扉' }), ...[[27, 545, 90], [30, 595, 90], [31, 645, 90], [29, 695, 90]].map((a) => person(...a)),
+    rect(620, 280, 130, 140, { round: false, name: 'テーブル' }), ...[[26, 590, 205], [38, 650, 205], [12, 560, 270], [6, 660, 270], [11, 590, 330], [13, 650, 330]].map((a) => person(...a)),
+    ellipse(840, 235, 60, 110, { name: 'ソファ' }), ...[[37, 830, 140], [5, 780, 180], [36, 880, 180], [35, 780, 240], [20, 885, 245], [4, 790, 300], [1, 840, 340], [22, 880, 300]].map((a) => person(...a)),
     person(2, 540, 40), person(23, 600, 40), person(28, 650, 40), person(18, 700, 40),
     person(16, 121, 428),
   ]);
@@ -281,20 +287,20 @@ export async function buildSample(user) {
 
   // ---- トラ2 ----
   const t2 = newId(), d2 = newId();
-  set(P.doc(w, 'tracks', t2), { episodeId: ep, title: 'トラ2', order: 2, createdAt: now });
+  set(P.doc(w, 'tracks', t2), { episodeId: ep, title: 'トラック2', order: 2, createdAt: now });
   set(P.doc(w, 'drafts', d2), { trackId: t2, no: 1, zukaikko: 'F', theme: '', script: TORA2, createdAt: now, updatedAt: now, updatedBy: user.name });
   const forest = [[300, 85], [600, 75], [850, 95], [905, 200], [840, 230], [760, 240], [730, 320], [750, 400], [660, 390], [630, 300], [560, 230], [420, 225], [300, 190], [275, 120]];
   const kids2 = [person(23, 310, 345), person(2, 380, 345), person(18, 260, 380), person(28, 385, 395), person(24, 880, 345),
-    text('エド', 300, 305, 18), text('ルー', 385, 305, 18), text('ス', 225, 370, 18), text('ピ', 385, 432, 18), text('ビー', 880, 385, 18)];
-  const g3 = mkDia(d2, [blob(forest), ...fill(others([2, 23, 28, 18, 24, 16]), forest, 50), text('森', 680, 130, 26), ...kids2, person(16, 121, 428)]);
+];
+  const g3 = mkDia(d2, [blob(forest, '森'), ...fill(others([2, 23, 28, 18, 24, 16]), forest, 50), ...kids2, person(16, 121, 428)]);
   mkBlock(d2, TORA2, 'Just then,', 'Just then,', true, [
     { kind: 'text', text: '● 兄弟4人は下手前方、4人の周りを避けるようにして半円の森、森の奥である上手側からビーバーさんが登場\n\n＊木は針葉樹を意識して下に手を伸ばす' },
     { kind: 'diagram', refId: g3, caption: '' },
   ]);
   const forest2 = [[140, 130], [300, 70], [700, 70], [900, 110], [900, 220], [820, 290], [740, 300], [650, 230], [500, 200], [300, 230], [150, 230]];
-  const g4 = mkDia(d2, [blob(forest2), ...fill(others([2, 23, 28, 18, 24, 16]), forest2, 50), text('森', 680, 120, 26),
+  const g4 = mkDia(d2, [blob(forest2, '森'), ...fill(others([2, 23, 28, 18, 24, 16]), forest2, 50),
     person(18, 520, 410), person(23, 560, 385), person(2, 600, 360), person(28, 640, 335), person(24, 720, 365),
-    text('ス', 480, 420, 18), text('エド', 540, 350, 18), text('ルー', 580, 325, 18), text('ピ', 640, 298, 18), text('ビー', 760, 360, 18), person(16, 121, 428)]);
+    person(16, 121, 428)]);
   mkBlock(d2, TORA2, 'Further in,', 'Further in', true, [
     { kind: 'text', text: '● 4人は中央に向かって歩き、森が全体に広がっていって、４人とビーバーさんが横並びになる。' },
     { kind: 'diagram', refId: g4, caption: '' },
@@ -303,13 +309,11 @@ export async function buildSample(user) {
     { kind: 'text', text: '● 上手後方に太陽、後ろの方全体に森\n→森の木は風が吹き明るく、エドマンドの周りは変化しない\n☆太陽はアスランの象徴、エドマンド以外は明るく前向きな雰囲気' },
   ]);
   const forest3 = [[160, 120], [300, 60], [700, 60], [830, 100], [830, 190], [700, 220], [500, 230], [300, 250], [150, 210]];
-  const g5 = mkDia(d2, [blob(forest3), ellipse(870, 110, 85, 70), text('太陽', 930, 200, 20),
+  const g5 = mkDia(d2, [blob(forest3, '森'), ellipse(870, 110, 85, 70, { name: '太陽' }),
     ...fill([27, 40, 41, 26, 15, 30, 35, 19, 9, 8, 10, 7, 33, 21, 29, 25, 5, 6, 20, 13, 22, 3, 4, 1], forest3, 52),
     ...[[39, 830, 70], [36, 900, 70], [31, 820, 120], [32, 880, 120], [38, 920, 120]].map((a) => person(...a)),
-    text('森', 610, 130, 26),
     person(11, 520, 325), person(12, 560, 320), person(14, 505, 365), person(17, 575, 365), person(23, 540, 370, 'gray'),
     person(2, 340, 395), person(18, 690, 395), person(28, 790, 410), person(24, 850, 410),
-    text('ルー', 290, 380, 18), text('エド', 540, 420, 18), text('スー', 690, 355, 18), text('ピ', 795, 370, 18), text('ビー', 850, 450, 18),
     person(16, 121, 428)]);
   mkBlock(d2, TORA2, 'Edmund felt', 'Edmund felt', false, [
     { kind: 'text', text: '● エドマンドの周りの木はエドマンドをつかむ\n☆エドマンドの後ろめたさを表現' },

@@ -1,5 +1,6 @@
 // 舞台図の描画（編集画面・一覧・PDFで共通）
 import { h } from './vdom.js';
+import { personCast, personNo } from './cast.js';
 
 export const W = 1000;
 export const H = 470;
@@ -96,14 +97,14 @@ export function moveShape(s, dx, dy) {
 
 const HIT = { stroke: 'transparent', 'stroke-width': 22, fill: 'none', 'pointer-events': 'stroke' };
 
-export function shapeNode(s, { selected = false, interactive = false } = {}) {
+export function shapeNode(s, { selected = false, interactive = false, idx = null } = {}) {
   const sel = selected ? ' sel' : '';
   const common = { key: s.id, 'data-id': interactive ? s.id : null, class: 'shape' + sel };
   const dash = s.dashed ? '12 9' : null;
   const sw = s.sw || 3;
   if (s.t === 'person') {
     const r = s.r || 20;
-    const label = s.no == null ? '' : String(s.no);
+    const label = personNo(s, idx);
     const fs = label.length <= 1 ? r * 1.1 : label.length === 2 ? r * 0.98 : r * 0.78;
     return h('g', { ...common, transform: `translate(${s.x},${s.y})` },
       h('circle', { r, fill: FILLS[s.fill] || '#fff', stroke: INK, 'stroke-width': 2.4 }),
@@ -183,9 +184,169 @@ export function shapeNode(s, { selected = false, interactive = false } = {}) {
 
 function maxLen(lines) { return Math.max(1, ...lines.map((l) => [...l].length)); }
 
+// ---------- 図形の内側判定・面積 ----------
+const rotPt = (x, y, deg) => {
+  const a = (deg * Math.PI) / 180;
+  return [x * Math.cos(a) - y * Math.sin(a), x * Math.sin(a) + y * Math.cos(a)];
+};
+function inPoly(x, y, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i], [xj, yj] = poly[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+function distSeg(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy || 1)));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+// 点が図形の内側にあり、縁から margin 以上離れているか
+export function insideShape(s, x, y, margin = 0) {
+  if (s.t === 'ellipse' || s.t === 'rect') {
+    const [lx, ly] = rotPt(x - s.x, y - s.y, -(s.rot || 0));
+    if (s.t === 'rect') return Math.abs(lx) <= s.w / 2 - margin && Math.abs(ly) <= s.h / 2 - margin;
+    const rx = s.rx - margin, ry = s.ry - margin;
+    if (rx <= 0 || ry <= 0) return false;
+    return (lx * lx) / (rx * rx) + (ly * ly) / (ry * ry) <= 1;
+  }
+  if (s.t === 'blob') {
+    const p = s.pts || [];
+    if (p.length < 3 || !inPoly(x, y, p)) return false;
+    if (!margin) return true;
+    for (let i = 0, j = p.length - 1; i < p.length; j = i++) if (distSeg(x, y, p[j][0], p[j][1], p[i][0], p[i][1]) < margin) return false;
+    return true;
+  }
+  return false;
+}
+export function shapeBBox(s) {
+  if (s.t === 'blob') {
+    const xs = s.pts.map((q) => q[0]), ys = s.pts.map((q) => q[1]);
+    return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+  }
+  if (s.t === 'ellipse' || s.t === 'rect') {
+    const hw = s.t === 'ellipse' ? s.rx : s.w / 2, hh = s.t === 'ellipse' ? s.ry : s.h / 2;
+    const c = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([a, b]) => rotPt(a, b, s.rot || 0));
+    const xs = c.map((q) => q[0] + s.x), ys = c.map((q) => q[1] + s.y);
+    return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+  }
+  return [0, 0, 0, 0];
+}
+export function shapeArea(s) {
+  if (s.t === 'ellipse') return Math.PI * s.rx * s.ry;
+  if (s.t === 'rect') return s.w * s.h;
+  if (s.t === 'blob') {
+    const p = s.pts; let a = 0;
+    for (let i = 0, j = p.length - 1; i < p.length; j = i++) a += (p[j][0] + p[i][0]) * (p[j][1] - p[i][1]);
+    return Math.abs(a / 2);
+  }
+  return 0;
+}
+export const isRegion = (s) => s && (s.t === 'ellipse' || s.t === 'rect' || s.t === 'blob');
+
+// ---------- 役名・図形名の自動配置（重ならない場所を探す） ----------
+const ROLE_FS = 17;
+const NAME_FS = 22;
+const LABEL_FONT = 'Arial, "Hiragino Sans", "Noto Sans JP", "Noto Sans CJK JP", "Yu Gothic", Meiryo, sans-serif';
+function textW(str, fs) {
+  let w = 0;
+  for (const ch of String(str)) w += /[\x00-\xff]/.test(ch) ? fs * 0.58 : fs * 1.0;
+  return w;
+}
+const hit = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
+function overlapArea(a, b) {
+  const w = Math.min(a[2], b[2]) - Math.max(a[0], b[0]);
+  const hgt = Math.min(a[3], b[3]) - Math.max(a[1], b[1]);
+  return w > 0 && hgt > 0 ? w * hgt : 0;
+}
+function textBox(s) {
+  const size = s.size || 24;
+  const lines = String(s.text || '').split('\n');
+  const w = Math.max(...lines.map((l) => textW(l, size)));
+  return [s.x - w / 2, s.y - (lines.length * size * 0.65), s.x + w / 2, s.y + (lines.length * size * 0.65)];
+}
+
+export function layoutLabels(list, idx, showRoles = true) {
+  const obstacles = [];
+  for (const s of list) {
+    if (s.t === 'person') { const r = s.r || 20; obstacles.push([s.x - r, s.y - r, s.x + r, s.y + r]); }
+    else if (s.t === 'text') obstacles.push(textBox(s));
+  }
+  const placed = [];
+  const out = [];
+  const bad = (box) => box[0] < 12 || box[2] > 988 || box[1] < 12 || box[3] > 458;
+  if (showRoles) {
+    const persons = list.filter((s) => s.t === 'person' && !s.hideRole).sort((a, b) => a.y - b.y || a.x - b.x);
+    for (const s of persons) {
+      const c = personCast(s, idx);
+      const text = c && c.label;
+      if (!text) continue;
+      const r = s.r || 20;
+      const w = textW(text, ROLE_FS), hh = ROLE_FS * 1.1, g = 3;
+      const cands = [
+        [s.x + r + g, s.y - hh / 2], [s.x - r - g - w, s.y - hh / 2],
+        [s.x - w / 2, s.y + r + 1], [s.x - w / 2, s.y - r - hh - 1],
+        [s.x + r * 0.7, s.y - r - hh * 0.7], [s.x + r * 0.7, s.y + r * 0.6],
+        [s.x - r * 0.7 - w, s.y - r - hh * 0.7], [s.x - r * 0.7 - w, s.y + r * 0.6],
+      ];
+      let best = null, bestScore = Infinity;
+      for (let i = 0; i < cands.length; i++) {
+        const [x, y] = cands[i];
+        const box = [x, y, x + w, y + hh];
+        let score = i * 0.5 + (bad(box) ? 5000 : 0);
+        for (const o of obstacles) score += overlapArea(box, o) * 3;
+        for (const o of placed) score += overlapArea(box, o) * 3;
+        if (score < bestScore) { bestScore = score; best = box; }
+        if (score < 1) break;
+      }
+      placed.push(best);
+      out.push(h('text', {
+        key: 'rl' + s.id, x: best[0], y: best[1] + hh * 0.52, 'dominant-baseline': 'central', 'font-size': ROLE_FS,
+        fill: '#111', 'font-family': LABEL_FONT, 'pointer-events': 'none', class: 'role-label',
+      }, text));
+    }
+  }
+  const regions = list.filter((s) => isRegion(s) && s.name && s.showName !== false);
+  for (const s of regions) {
+    const text = s.name;
+    const w = textW(text, NAME_FS), hh = NAME_FS * 1.15;
+    const bb = shapeBBox(s);
+    const [cx, cy] = [(bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2];
+    let best = null, bestScore = Infinity;
+    const step = 14;
+    for (let y = bb[1] + hh / 2; y <= bb[3] - hh / 2; y += step) {
+      for (let x = bb[0] + w / 2; x <= bb[2] - w / 2; x += step) {
+        const box = [x - w / 2, y - hh / 2, x + w / 2, y + hh / 2];
+        if (!insideShape(s, box[0], box[1], 2) || !insideShape(s, box[2], box[1], 2) || !insideShape(s, box[0], box[3], 2) || !insideShape(s, box[2], box[3], 2)) continue;
+        let score = Math.hypot(x - cx, y - cy) * 0.02;
+        for (const o of obstacles) score += overlapArea(box, o);
+        for (const o of placed) score += overlapArea(box, o);
+        if (score < bestScore) { bestScore = score; best = box; }
+      }
+    }
+    if (!best || bestScore > w * hh * 0.25) {
+      // 内側に空きがなければ、外側の上か下に置く
+      const top = [cx - w / 2, bb[1] - hh - 2, cx + w / 2, bb[1] - 2];
+      const bot = [cx - w / 2, bb[3] + 2, cx + w / 2, bb[3] + hh + 2];
+      const sc = (box) => (bad(box) ? 1e6 : 0) + obstacles.concat(placed).reduce((a, o) => a + overlapArea(box, o), 0);
+      const alt = sc(top) <= sc(bot) ? top : bot;
+      if (!best || sc(alt) < bestScore) best = alt;
+    }
+    placed.push(best);
+    out.push(h('text', {
+      key: 'nl' + s.id, x: (best[0] + best[2]) / 2, y: (best[1] + best[3]) / 2, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+      'font-size': NAME_FS, fill: '#222', 'font-family': LABEL_FONT, 'pointer-events': 'none', class: 'name-label',
+    }, text));
+  }
+  return out;
+}
+
 // 静的な舞台図（一覧・PDF用）
-export function StageSVG(shapes, cls = 'stage') {
+export function StageSVG(shapes, { cls = 'stage', idx = null, showRoles = true } = {}) {
+  const list = sortShapes(shapes);
   return h('svg', { class: cls, viewBox: `0 0 ${W} ${H}`, xmlns: 'http://www.w3.org/2000/svg', preserveAspectRatio: 'xMidYMid meet' },
     stageFrame(),
-    h('g', null, sortShapes(shapes).map((s) => shapeNode(s))));
+    h('g', null, list.map((s) => shapeNode(s, { idx }))),
+    h('g', null, layoutLabels(list, idx, showRoles)));
 }

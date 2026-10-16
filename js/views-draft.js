@@ -7,6 +7,9 @@ import { buildRows, highlightRanges } from './script.js';
 import { StageSVG } from './stage.js';
 import { CastTable, Legend, ScriptLines, DotText } from './sheet.js';
 import { openEditor } from './editor.js';
+import { confirmBox } from './dialog.js';
+import { castIndex } from './cast.js';
+import { resolveAnchor } from './script.js';
 
 const byOrder = (a, b) => (a.order || 0) - (b.order || 0);
 export const itemsOf = (b) => Object.entries(b.items || {}).map(([id, it]) => ({ id, ...it })).sort(byOrder);
@@ -100,7 +103,8 @@ async function makeBlock(withCue) {
   } else if (S.ui.lineSel != null) {
     offset = S.ui.lineSel; anchorText = (S.ui.lineText || '').slice(0, 40);
   } else return;
-  const { itemId } = await createBlock(w, d, { cue, offset, anchorText });
+  const prev = lastDiagramBefore(offset);
+  const { itemId } = await createBlock(w, d, { cue, offset, anchorText, shapes: prev ? prev.shapes : {} });
   S.ui.focusItem = itemId;
   touch(w, d);
   clearSel();
@@ -131,12 +135,27 @@ export function SelectionBar() {
   return h('div', { class: 'selbar' },
     h('div', { class: 'selbar-text' }, sel ? `「${preview(sel.text)}」` : `この行：${preview(S.ui.lineText) || '（空行）'}`),
     h('div', { class: 'selbar-btns' },
-      sel ? h('button', { class: 'btn primary', onpointerdown: keep, onclick: () => makeBlock(true) }, '《きっかけ》を作る') : null,
-      h('button', { class: 'btn' + (sel ? '' : ' primary'), onpointerdown: keep, onclick: () => makeBlock(false) }, sel ? 'きっかけなしのメモ' : 'この行にメモを追加'),
+      sel ? h('button', { class: 'btn primary', onpointerdown: keep, onclick: () => makeBlock(true) }, '《きっかけ》で図解を追加') : null,
+      h('button', { class: 'btn' + (sel ? '' : ' primary'), onpointerdown: keep, onclick: () => makeBlock(false) }, sel ? 'きっかけなしで図解を追加' : 'この行に図解を追加'),
       h('button', { class: 'btn ghost', onpointerdown: keep, onclick: clearSel, 'aria-label': '閉じる' }, '×')));
 }
 
-// ---------- メモの項目操作 ----------
+// 新しい図解の位置より前にある、最後の舞台図（人の位置を引き継ぐため）
+function lastDiagramBefore(offset) {
+  const { draft } = ctx();
+  const text = (draft && draft.script) || '';
+  let best = null, bestOff = -1;
+  for (const b of S.d.blocks || []) {
+    const r = resolveAnchor(text, b.anchor);
+    if (r.offset > offset) continue;
+    const dias = itemsOf(b).filter((it) => it.kind === 'diagram');
+    if (!dias.length) continue;
+    if (r.offset >= bestOff) { bestOff = r.offset; best = dias[dias.length - 1]; }
+  }
+  return best ? (S.d.diagrams || []).find((g) => g.id === best.refId) : null;
+}
+
+// ---------- 図解の項目操作 ----------
 function blockPath(w, b) { return P.doc(w, 'blocks', b.id); }
 
 async function addItem(w, d, b, item) {
@@ -159,7 +178,7 @@ async function moveItem(w, b, items, i, dir) {
 }
 
 async function removeItem(w, d, b, it) {
-  if (it.kind !== 'text' && !confirm(it.kind === 'diagram' ? 'この舞台図を削除しますか？' : 'この写真を削除しますか？')) return;
+  if (it.kind !== 'text' && !(await confirmBox(it.kind === 'diagram' ? 'この舞台図を削除しますか？' : 'この写真を削除しますか？', { ok: '削除', danger: true }))) return;
   const ops = [{ op: 'update', path: blockPath(w, b), data: { [`items.${it.id}`]: DEL } }];
   if (it.refId) ops.push({ op: 'remove', path: P.doc(w, it.kind === 'diagram' ? 'diagrams' : 'images', it.refId) });
   await db.batch(ops);
@@ -167,7 +186,7 @@ async function removeItem(w, d, b, it) {
 }
 
 async function removeBlock(w, d, b) {
-  if (!confirm(`《${b.cue || 'きっかけなし'}》のメモを削除しますか？（中の舞台図・写真も消えます）`)) return;
+  if (!(await confirmBox(`《${b.cue || 'きっかけなし'}》の図解を削除しますか？\n中の舞台図・写真も消えます。`, { ok: '削除', danger: true }))) return;
   const ops = [{ op: 'remove', path: blockPath(w, b) }];
   for (const it of itemsOf(b)) if (it.refId) ops.push({ op: 'remove', path: P.doc(w, it.kind === 'diagram' ? 'diagrams' : 'images', it.refId) });
   await db.batch(ops);
@@ -265,7 +284,7 @@ function ItemView(w, d, b, it, i, items, rows) {
         oninput: (e) => { saveLater(blockPath(w, b), { [`items.${it.id}.caption`]: e.target.value }); touch(w, d); },
       }),
       h('button', { class: 'thumb', onclick: () => openEditor(w, it.refId), title: 'クリックで舞台図を編集' },
-        g ? StageSVG(g.shapes) : h('div', { class: 'muted small pad' }, '読み込み中…'),
+        g ? StageSVG(g.shapes, { idx: castIndex(S.d.work && S.d.work.cast), showRoles: g.showRoles !== false }) : h('div', { class: 'muted small pad' }, '読み込み中…'),
         h('span', { class: 'thumb-hint' }, '編集')),
       bar([
         h('button', { class: 'btn tiny', onclick: () => openEditor(w, it.refId) }, '編集'),
@@ -319,7 +338,7 @@ function BlockCard(w, d, b, r, rowIndex, indexInRow, rows) {
           canMerge ? h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; db.update(blockPath(w, b), { newRow: false }); } }, '上の段とまとめる') : null,
           b.newRow === false ? h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; db.update(blockPath(w, b), { newRow: true }); } }, 'この位置で段を分ける') : null,
           h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; S.ui.reanchor = b.id; S.ui.sel = null; S.ui.lineSel = null; rerender(); } }, '台本上の位置を付け替える'),
-          h('button', { class: 'linklike danger', onclick: (e) => { e.target.closest('details').open = false; removeBlock(w, d, b); } }, 'このメモを削除')))),
+          h('button', { class: 'linklike danger', onclick: (e) => { e.target.closest('details').open = false; removeBlock(w, d, b); } }, 'この図解を削除')))),
     !r.ok ? h('div', { class: 'warn small' }, '台本の中にこの語句が見つかりません。「⋯」→「位置を付け替える」で直してください。') : null,
     b.newRow === false && indexInRow === 0 ? null : null,
     items.map((it, i) => ItemView(w, d, b, it, i, items, rows)),
@@ -338,7 +357,7 @@ function ScriptModal(w, d, draft, blocks) {
   return h('div', { class: 'overlay', onclick: (e) => { if (e.target.classList.contains('overlay')) close(); } },
     h('div', { class: 'dialog wide' },
       h('h2', null, '台本を貼り付け・編集'),
-      h('p', { class: 'muted small' }, 'このトラの台本をそのまま貼り付けてください。「PETER:」「ピーター:」のような行頭の話者名は自動で薄い文字になり、セリフは字下げされます（語り・NARRATOR は字下げしません）。'),
+      h('p', { class: 'muted small' }, 'このトラックの台本をそのまま貼り付けてください。「PETER:」「ピーター:」のような行頭の話者名は自動で薄い文字になり、セリフは字下げされます（語り・NARRATOR は字下げしません）。'),
       changed ? h('div', { class: 'warn' }, '開いている間に、ほかの人が台本を更新しました。',
         h('button', { class: 'btn tiny', onclick: () => { S.ui.scriptEdit = { value: draft.script || '', base: draft.script || '' }; rerender(); } }, '最新の台本を読み込む')) : null,
       h('textarea', { class: 'script-ta', value: m.value, oninput: (e) => { m.value = e.target.value; }, spellcheck: false, ref: (el) => el.focus() }),
@@ -379,7 +398,7 @@ export function DraftView() {
         h('a', { class: 'btn primary', href: `#/w/${w}/print/d/${d}` }, 'PDFに書き出す'),
         h('button', {
           class: 'btn', title: 'この稿を複製して次の稿を作ります', onclick: async () => {
-            if (!confirm(`第${draft.no}稿を複製して、新しい稿を作りますか？`)) return;
+            if (!(await confirmBox(`第${draft.no}稿を複製して、新しい稿を作りますか？`, { ok: '作る' }))) return;
             const nd = await copyDraft(w, d, S.user);
             toast('新しい稿を作りました');
             go(`#/w/${w}/d/${nd}`);
@@ -396,7 +415,7 @@ export function DraftView() {
         CastTable(work.cast),
         h('a', { class: 'small', href: `#/w/${w}/cast` }, 'キャスト一覧を編集')),
       h('div', { class: 'muted small' }, `最終更新 ${fmtTime(draft.updatedAt)} ${draft.updatedBy || ''}`)),
-    h('div', { class: 'howto small' }, '台本の語句をなぞって選ぶと《きっかけ》を作れます。行をタップすると、きっかけなしのメモも追加できます。'),
+    h('div', { class: 'howto small' }, '台本の語句をなぞって選ぶと、《きっかけ》つきの図解を追加できます。行をタップすると、きっかけなしの図解も追加できます。'),
     Legend(),
     !text ? h('div', { class: 'empty' },
       h('p', null, 'まだ台本がありません。'),
@@ -405,7 +424,7 @@ export function DraftView() {
       h('div', { class: 'scol' }, ScriptLines(text, row.lines, hls, { lineSel: S.ui.lineSel, onLine })),
       h('div', { class: 'ncol' },
         row.blocks.map(({ b, r }, k) => BlockCard(w, d, b, r, ri, k, rows)),
-        row.blocks.length === 0 ? h('div', { class: 'ncol-empty muted small' }, ri === 0 ? '左の台本の語句を選ぶと、ここに《きっかけ》のメモができます。' : '') : null)))) : null,
+        row.blocks.length === 0 ? h('div', { class: 'ncol-empty muted small' }, ri === 0 ? '左の台本の語句を選ぶと、ここに《きっかけ》の図解ができます。' : '') : null)))) : null,
     S.ui.scriptEdit ? ScriptModal(w, d, draft, blocks) : null,
   );
 }

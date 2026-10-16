@@ -8,10 +8,12 @@ import { DraftView, SelectionBar } from './views-draft.js';
 import { EditorView } from './editor.js';
 import { PrintView, loadPrint } from './print.js';
 import { P } from './model.js';
+import { DialogView } from './dialog.js';
 
 const $app = document.getElementById('app');
 const $modal = document.getElementById('modal');
 const $toasts = document.getElementById('toasts');
+const $dialog = document.getElementById('dialog');
 
 let subs = [];
 function unsubAll() { for (const u of subs) { try { u(); } catch (e) { /* noop */ } } subs = []; }
@@ -221,7 +223,9 @@ function renderToasts() {
   render($toasts, S.toasts.map((t) => h('div', { key: 't' + t.id, class: 'toast ' + t.kind }, t.msg)));
 }
 
-setRenderers([renderPage, renderModal, renderToasts]);
+function renderDialog() { render($dialog, DialogView()); }
+setRenderers([renderPage, renderModal, renderDialog, renderToasts]);
+window.addEventListener('zukai-error', (e) => toast(e.detail, 'error', 8000));
 
 onDBError((e) => {
   const msg = e && e.code === 'permission-denied' ? '権限がありません（メンバーとして許可されているか確認してください）' : (e.message || String(e));

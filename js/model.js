@@ -9,9 +9,12 @@ export const P = {
 };
 const now = () => Date.now();
 
+// 画面では「トラック」、PDFのタイトルなど細かい所では「トラ」と表記する
+export function shortTrack(title) { return String(title || '').replace(/トラック/g, 'トラ'); }
+
 export function draftTitle(work, ep, track, draft) {
   const prefix = work && work.prefix != null ? work.prefix : '【表現活動】';
-  return `${prefix}${ep ? ep.title : ''}図解_${track ? track.title : ''}_第${draft ? draft.no : 1}稿`;
+  return `${prefix}${ep ? ep.title : ''}図解_${track ? shortTrack(track.title) : ''}_第${draft ? draft.no : 1}稿`;
 }
 
 export async function createWork(title, user) {
@@ -120,14 +123,22 @@ export async function saveScript(w, draftId, script, blocks, user) {
   await db.batch(ops);
 }
 
-export async function createBlock(w, draftId, { cue, offset, anchorText }) {
+// 図解（《きっかけ》＋動きの文章＋舞台図）を作る。舞台図は必ず1枚つける
+export async function createBlock(w, draftId, { cue, offset, anchorText, shapes }) {
   const id = newId();
   const itemId = newId(8);
-  await db.set(P.doc(w, 'blocks', id), {
-    draftId, cue: cue || '', anchor: { offset, text: anchorText || '' }, newRow: true,
-    items: { [itemId]: { order: 1, kind: 'text', text: '● ' } }, createdAt: now(),
-  });
-  return { id, itemId };
+  const diaItem = newId(8);
+  const gid = newId();
+  await db.batch([
+    { op: 'set', path: P.doc(w, 'diagrams', gid), data: { draftId, shapes: shapes || {}, createdAt: now() } },
+    {
+      op: 'set', path: P.doc(w, 'blocks', id), data: {
+        draftId, cue: cue || '', anchor: { offset, text: anchorText || '' }, newRow: true, createdAt: now(),
+        items: { [itemId]: { order: 1, kind: 'text', text: '● ' }, [diaItem]: { order: 2, kind: 'diagram', refId: gid, caption: '' } },
+      },
+    },
+  ]);
+  return { id, itemId, diagramId: gid };
 }
 
 export async function createDiagram(w, draftId, shapes = {}) {
@@ -142,23 +153,25 @@ export async function createImage(w, draftId, img) {
   return id;
 }
 
-// キャストの貼り付けを解析：「1 ぐっち（ビーヴァー奥さん）」「1<TAB>ぐっち<TAB>ビーヴァー奥さん」など
+// キャストの貼り付けを解析：「1 ぐっち（ビーヴァー奥さん）」「ぐっち<TAB>ビーヴァー奥さん<TAB>奥」など
+// 先頭の数字は無視（番号は一覧の順で自動）。「CD ばにく」のように先頭が英字の記号なら記号として扱う
 export function parseCast(text) {
   const out = [];
   for (let line of (text || '').split('\n')) {
-    line = line.replace(/　/g, ' ').trim();
+    line = line.replace(/\u3000/g, ' ').trim();
     if (!line) continue;
-    let no = '', name = '', role = '';
-    const tab = line.split('\t').map((s) => s.trim()).filter(Boolean);
-    if (tab.length >= 2) {
-      [no, name, role = ''] = tab;
-    } else {
+    let cols = line.split('\t').map((s) => s.trim());
+    let tag = '';
+    if (cols.length === 1) {
       const m = line.match(/^(\S+)\s+(.+)$/);
-      if (!m) { name = line; } else { no = m[1]; name = m[2]; }
+      cols = m ? [m[1], m[2]] : [line];
     }
+    if (cols.length >= 2 && /^[0-9０-９]+$/.test(cols[0])) cols.shift();
+    else if (cols.length >= 2 && /^[A-Za-z]{1,4}$/.test(cols[0])) tag = cols.shift();
+    let [name = '', role = '', label = ''] = cols;
     const rm = name.match(/^(.*?)\s*[（(](.*)[）)]\s*$/);
     if (rm && !role) { name = rm[1]; role = rm[2]; }
-    out.push({ no: no.trim(), name: name.trim(), role: role.trim() });
+    out.push({ id: newId(8), name: name.trim(), role: role.trim(), label: label.trim(), tag });
   }
   return out;
 }

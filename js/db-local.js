@@ -15,7 +15,7 @@ function persist() {
   try {
     localStorage.setItem(KEY, JSON.stringify(data));
   } catch (e) {
-    alert('デモモードの保存容量（約5MB）がいっぱいです。写真を減らすか、Firebase を設定してください。');
+    window.dispatchEvent(new CustomEvent('zukai-error', { detail: 'デモモードの保存容量（約5MB）がいっぱいです。写真を減らすか、Firebase を設定してください。' }));
   }
   if (channel) channel.postMessage('changed');
   notifySoon();

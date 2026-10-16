@@ -1,9 +1,10 @@
 // 図解シートの部品（編集画面とPDFで共通）
 import { h } from './vdom.js';
 import { lineSegments } from './script.js';
+import { numberCast } from './cast.js';
 
 export function CastTable(cast) {
-  const list = (cast || []).slice();
+  const list = numberCast(cast);
   const rows = [];
   for (let i = 0; i < list.length; i += 4) rows.push(list.slice(i, i + 4));
   if (!rows.length) return h('p', { class: 'muted small' }, 'キャスト一覧が未入力です。');
