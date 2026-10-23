@@ -60,6 +60,10 @@ export async function get(path) {
   const s = await F.getDoc(ref(path));
   return s.exists() ? data(s) : null;
 }
+// 手元の控え（開いている画面のデータ）から読む。なければサーバーから
+export async function getCached(path) {
+  try { const s = await F.getDocFromCache(ref(path)); return s.exists() ? data(s) : null; } catch (e) { return get(path); }
+}
 export async function set(path, d) { await F.setDoc(ref(path), enc(d)); }
 export async function update(path, patch) { await F.updateDoc(ref(path), conv(patch)); }
 export async function remove(path) { await F.deleteDoc(ref(path)); }
@@ -78,7 +82,7 @@ export async function batch(ops) {
     await b.commit();
   }
 }
-// リンク共有で作品に参加する（編集者として試し、だめなら閲覧者として）
+// リンク共有でライブラリーに参加する（編集者として試し、だめなら閲覧者として）
 export async function joinWork(w, key, email) {
   const r = ref(`works/${w}`);
   const lastJoin = { by: email, key, at: Date.now() };
@@ -110,3 +114,18 @@ export async function signIn() {
   await A.signInWithPopup(auth, p);
 }
 export async function signOut() { await A.signOut(auth); }
+// Googleドライブのファイルを読むための一時的な鍵（選んだファイルだけ読める drive.file）
+// readAll=true：URL で指定したドキュメントを読むため、ドライブ全体を読める許可（drive.readonly）をもらう
+const driveTok = {};
+export async function driveToken(readAll = false) {
+  const k = readAll ? 'all' : 'file';
+  if (driveTok[k] && driveTok[k].until > Date.now()) return driveTok[k].token;
+  const p = new A.GoogleAuthProvider();
+  p.addScope(readAll ? 'https://www.googleapis.com/auth/drive.readonly' : 'https://www.googleapis.com/auth/drive.file');
+  if (auth.currentUser && auth.currentUser.email) p.setCustomParameters({ login_hint: auth.currentUser.email });
+  const r = auth.currentUser ? await A.reauthenticateWithPopup(auth.currentUser, p) : await A.signInWithPopup(auth, p);
+  const c = A.GoogleAuthProvider.credentialFromResult(r);
+  if (!c || !c.accessToken) throw new Error('Googleドライブの許可をもらえませんでした');
+  driveTok[k] = { token: c.accessToken, until: Date.now() + 50 * 60 * 1000 };
+  return driveTok[k].token;
+}

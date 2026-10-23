@@ -56,7 +56,7 @@ function listNow(col, where) {
     if (!inCol(p, col)) continue;
     const d = data[p];
     if (where && where.length === 3 && where[1] === 'array-contains') {
-      // デモモードでは参加者のない古い作品も表示する
+      // デモモードでは参加者のない古いライブラリーも表示する
       if (Array.isArray(d[where[0]]) && !d[where[0]].includes(where[2])) continue;
     } else if (where && d[where[0]] !== where[1]) continue;
     out.push({ id: p.slice(col.length + 1), ...clone(d) });

@@ -1,13 +1,17 @@
-// 舞台図エディタ（パソコン・スマホ・タブレット対応、同時編集は図形ごとに反映）
+// 図の編集画面（パソコン・スマホ・タブレット対応、同時編集は図形ごとに反映）
 import { h, render } from './vdom.js';
 import { db, DEL, newId } from './db.js';
 import { S, rerender, toast } from './state.js';
 import { P } from './model.js';
-import { W, H, stageFrame, shapeNode, sortShapes, moveShape, shapeCenter, simplify, LAYER, layoutLabels, isRegion, isFillable, canName } from './stage.js';
+import { textInRegion } from './drawimport.js';
+import { shapesFromClipboard, MARK } from './clippaste.js';
+import { W, H, stageFrame, shapeNode, sortShapes, moveShape, shapeCenter, shapeBBox, simplify, LAYER, layoutLabels, isRegion, isFillable, canName, insideShape, linePoints } from './stage.js';
 import { fillWeight, pointsFor } from './fill.js';
 import { castIndex, personCast, personNo, rolesOf, roleText, roleVisible, roleKey } from './cast.js';
 import { isDialogOpen } from './dialog.js';
-import { previousShapes, minCostAssign } from './assign.js';
+import { UndoButtons, undoAll, redoAll } from './undo.js';
+import { previousShapes, minCostAssign, diagramSequence } from './assign.js';
+import { setPresence, others, colorOf } from './presence.js';
 
 let E = null;
 let unsub = null;
@@ -19,13 +23,15 @@ export function openEditor(w, id) {
   if (unsub) unsub();
   E = {
     w, id, shapes: {}, loaded: false, tool: 'select', sel: new Set(), temp: {}, drag: null,
-    zoom: 1, undo: [], redo: [], personCid: null, personFill: 'white', multi: false, lastTap: null,
-    filter: 'all', roleVis: {}, focusText: null, fillCount: '', fillMode: null, hmode: null, inline: null,
+    zoom: 1, undo: [], redo: [], personCid: null, personFill: 'white', personRing: false, multi: false, lastTap: null,
+    filter: 'all', roleVis: {}, focusText: null, fillCount: '', fillMode: null, hmode: null, inline: null, poly: null,
+    propagate: false, linkPeople: false, // 図を開くたびに、どちらもオフから始める
   };
   S.ui.editDiagram = id;
+  setPresence(w, { g: id, sel: [] });
   unsub = db.watchDoc(P.doc(w, 'diagrams', id), (g) => {
     if (!E) return;
-    if (!g) { toast('この舞台図は削除されました'); closeEditor(); return; }
+    if (!g) { toast('この図は削除されました'); closeEditor(); return; }
     E.shapes = g.shapes || {};
     E.roleVis = g.roleVis || {};
     E.loaded = true;
@@ -38,6 +44,7 @@ export function openEditor(w, id) {
 }
 
 export function closeEditor() {
+  if (E) setPresence(E.w, { g: null, sel: null });
   if (unsub) unsub();
   unsub = null;
   E = null;
@@ -66,13 +73,209 @@ function merged() {
 }
 function zFor(t) { return (LAYER[t] || 0) * 1e13 + Date.now() + (zSeq++ % 1000) / 1000; }
 
+// ---------- 後の図にも反映 ----------
+// 変えた「項目」ごとに、あとの図でもその項目が変える前と同じなら、同じように変える。
+//   位置・大きさ・色や塗り・黒い円・名前・番号など、項目は別々に判定する
+//   あとの図でその項目がすでに違っていたら、その項目はそこで止める（それより後の図にも反映しない）
+// 人：
+//   あとの図で、この図から大きく動いている（PERSON_FAR より離れている）人には、番号の入れ替え以外は反映しない
+//   動かしたときは、あとの図で近くにいれば、同じだけ動かす
+//   番号の入れ替えは、あとの図でもその人が同じ番号のままなら、どこにいても反映する（同じ番号の人が2人になるときは反映しない）
+// 消す：あとの図でも変える前とまったく同じなら消す
+// 新しく置いたもの：あとの図が、この図の背景をすべて含んでいる（この図から続いている）あいだは追加する。
+//   人は、黒い円のない人だけ追加する（その番号の人がすでにいる図には追加しない）
+const PERSON_FAR = 200;
+function setPropPref(v) { E.propagate = v; draw(); }
+function distToPoly(pts, x, y) {
+  let best = Infinity;
+  for (let i = 1; i < pts.length; i++) {
+    const [ax, ay] = pts[i - 1], [bx, by] = pts[i];
+    const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / L));
+    best = Math.min(best, Math.hypot(ax + dx * t - x, ay + dy * t - y));
+  }
+  return best;
+}
+const isPerson = (s) => !!s && s.t === 'person';
+const stable = (o) => (o == null ? 'null' : typeof o !== 'object' ? JSON.stringify(o) : Array.isArray(o) ? '[' + o.map(stable).join(',') + ']' : '{' + Object.keys(o).sort().map((k) => k + ':' + stable(o[k])).join(',') + '}');
+const same = (a, b) => stable(a) === stable(b);
+const POS = ['x', 'y', 'x1', 'y1', 'x2', 'y2', 'pts'];
+const IDENT = ['cid', 'no'];
+const PROP_GROUPS = [POS, ['rx', 'ry', 'w', 'h'], IDENT];
+const IGNORE = new Set(['id', 't']); // 前面へ・背面へ（z）も反映する
+function changedGroups(b, a) {
+  const keys = [...new Set([...Object.keys(b), ...Object.keys(a)])].filter((k) => !IGNORE.has(k) && !same(b[k], a[k]));
+  const groups = [];
+  const used = new Set();
+  for (const g of PROP_GROUPS) if (keys.some((k) => g.includes(k))) { groups.push(g); g.forEach((k) => used.add(k)); }
+  for (const k of keys) if (!used.has(k)) groups.push([k]);
+  return groups;
+}
+const cidOf = (s) => (isPerson(s) && s.cid) || null;
+
+// あとの図の中から、同じ図形を探す（id が同じもの。なければ、種類・中身・場所がほぼ同じもの）
+const MATCH_TOL = 40;
+const bodyOf = (s) => { const o = { ...s }; delete o.id; delete o.z; return o; };
+function centerOf(s) {
+  if (Array.isArray(s.pts) && s.pts.length) {
+    let x = 0, y = 0, n = 0;
+    for (const p of s.pts) { const q = Array.isArray(p) ? p : [p.x, p.y]; x += q[0] || 0; y += q[1] || 0; n++; }
+    return [x / n, y / n];
+  }
+  if (s.x1 !== undefined) return [((s.x1 || 0) + (s.x2 || 0)) / 2, ((s.y1 || 0) + (s.y2 || 0)) / 2];
+  return [(s.x || 0) + (s.w || 0) / 2, (s.y || 0) + (s.h || 0) / 2];
+}
+function shiftShape(s, dx, dy) {
+  const o = {};
+  const r = (v) => Math.round(v * 10) / 10;
+  if (s.x !== undefined) { o.x = r(s.x + dx); o.y = r((s.y || 0) + dy); }
+  if (s.x1 !== undefined) { o.x1 = r(s.x1 + dx); o.y1 = r(s.y1 + dy); o.x2 = r(s.x2 + dx); o.y2 = r(s.y2 + dy); }
+  if (Array.isArray(s.pts)) o.pts = s.pts.map((p) => (Array.isArray(p) ? [r(p[0] + dx), r(p[1] + dy), ...p.slice(2)] : { ...p, x: r(p.x + dx), y: r(p.y + dy) }));
+  return o;
+}
+// b→a が形を変えない平行移動なら、そのずれを返す
+function moveDelta(b, a) {
+  const cb = centerOf(b), ca = centerOf(a);
+  const dx = ca[0] - cb[0], dy = ca[1] - cb[1];
+  const t = shiftShape(b, dx, dy);
+  const near = (u, v) => (Array.isArray(u) ? Array.isArray(v) && u.length === v.length && u.every((x, i) => near(x, v[i]))
+    : u && typeof u === 'object' ? v && Object.keys(u).every((k) => near(u[k], v[k]))
+    : typeof u === 'number' ? typeof v === 'number' && Math.abs(u - v) < 1.5 : u === v);
+  return Object.keys(t).every((k) => near(t[k], a[k])) ? [dx, dy] : null;
+}
+function matchLater(sh, id, b, used) {
+  if (sh[id] && !used.has(id) && (!b || sh[id].t === b.t)) return id;
+  if (!b) return null;
+  if (isPerson(b)) {
+    if (!b.cid) return null;
+    const hit = Object.keys(sh).filter((k) => !used.has(k) && cidOf(sh[k]) === b.cid);
+    return hit.length === 1 ? hit[0] : null;
+  }
+  const bb = stable(bodyOf(b)), cb = centerOf(b);
+  let best = null, bd = Infinity;
+  for (const k of Object.keys(sh)) {
+    const x = sh[k];
+    if (!x || x.t !== b.t || used.has(k)) continue;
+    if (stable(bodyOf(x)) === bb) return k;
+    const sameWord = (b.t === 'text' && (x.text || '') === (b.text || '')) || (b.name && x.name === b.name);
+    const c = centerOf(x);
+    const d = Math.hypot(c[0] - cb[0], c[1] - cb[1]) * (sameWord ? 0.3 : 1) + (sameWord ? 0 : MATCH_TOL);
+    if (d < bd) { bd = d; best = k; }
+  }
+  return bd <= MATCH_TOL ? best : null;
+}
+
+function propagation(changes, beforeShapes) {
+  if (!E.propagate) return [];
+  const seq = diagramSequence();
+  const i = seq.indexOf(E.id);
+  if (i < 0) return [];
+  const later = seq.slice(i + 1).map((id) => (S.d.diagrams || []).find((g) => g.id === id)).filter(Boolean);
+  const sceneIds = Object.keys(beforeShapes).filter((id) => beforeShapes[id] && !isPerson(beforeShapes[id]));
+  // 図形ごとの、まだ反映を続けている項目
+  const act = {};
+  for (const id of Object.keys(changes)) {
+    const b = beforeShapes[id] || null, a = changes[id];
+    if (b && a) act[id] = { kind: 'mod', groups: changedGroups(b, a) };
+    else if (b && !a) act[id] = { kind: 'del' };
+    else if (!b && a) act[id] = { kind: 'add' };
+  }
+  const refOf = {};
+  const out = [];
+  out.skipped = new Set(); // 大きく離れていて反映しなかった人の番号
+  for (const g of later) {
+    const ids = Object.keys(act);
+    if (!ids.length) break;
+    const sh = g.shapes || {};
+    const used = new Set();
+    const lidOf = {};
+    for (const id of ids) { const m = matchLater(sh, id, refOf[id] || beforeShapes[id] || null, used); if (m) { used.add(m); lidOf[id] = m; } }
+    // 背景の図形がおおむね同じなら、同じ場面の続きの図とみなす（追加を反映する）
+    const scUsed = new Set(used);
+    const matchedScene = sceneIds.filter((id) => { const m = matchLater(sh, id, beforeShapes[id], scUsed); if (m) scUsed.add(m); return m; }).length;
+    const linked = !sceneIds.length || matchedScene >= Math.ceil(sceneIds.length * 0.6);
+    const ch = {};
+    const idOfL = {};
+    for (const id of ids) {
+      const st = act[id], b = beforeShapes[id], a = changes[id];
+      const lid = lidOf[id] || id;
+      const l = lidOf[id] ? sh[lid] : null;
+      idOfL[lid] = id;
+      if (st.kind === 'del') {
+        // 消す：あとの図にもあれば消す（人は、大きく離れていなければ）
+        const farP = l && isPerson(b) && Math.hypot((l.x || 0) - (b.x || 0), (l.y || 0) - (b.y || 0)) > PERSON_FAR;
+        if (l && !farP) ch[lid] = null; else delete act[id];
+      } else if (st.kind === 'add') {
+        const c = cidOf(a);
+        if (linked && !sh[id] && !(c && Object.values(sh).some((x) => cidOf(x) === c))) ch[id] = a; else delete act[id];
+      } else {
+        if (!l) { delete act[id]; continue; }
+        const person = isPerson(b);
+        const far = person && Math.hypot((l.x || 0) - (b.x || 0), (l.y || 0) - (b.y || 0)) > PERSON_FAR;
+        const n = { ...l };
+        st.groups = st.groups.filter((grp) => {
+          if (grp === IDENT) {
+            if (!grp.every((k) => same(l[k], b[k]))) return false;
+          } else if (person && far) {
+            out.skipped.add(personNo(b, idx()) || '番号なし');
+            return false; // 大きく動いている人には反映しない
+          } else if (!person && grp === POS && !grp.every((k) => same(l[k], b[k]))) {
+            // 場所が少しずれている図形：ただの平行移動なら、同じだけ動かす
+            const d = moveDelta(b, a);
+            if (!d) return false;
+            Object.assign(n, shiftShape(l, d[0], d[1]));
+            return true;
+          } else if (person && grp === POS) {
+            // 近くにいれば、同じだけ動かす
+            n.x = Math.round((l.x || 0) + (a.x - b.x));
+            n.y = Math.round((l.y || 0) + (a.y - b.y));
+            return true;
+          } else if (!grp.every((k) => same(l[k], b[k]))) return false;
+          for (const k of grp) { if (a[k] === undefined) delete n[k]; else n[k] = a[k]; }
+          return true;
+        });
+        if (!st.groups.length) delete act[id];
+        else refOf[id] = l; // 次の図では、この図での（変える前の）形を手がかりに探す
+        if (!same(n, l)) ch[lid] = n;
+      }
+    }
+    // 同じ番号の人が2人になる変更は、この図から先には反映しない
+    const res = { ...sh };
+    for (const id in ch) { if (ch[id] == null) delete res[id]; else res[id] = ch[id]; }
+    const count = {};
+    for (const x of Object.values(res)) { const c = cidOf(x); if (c) count[c] = (count[c] || 0) + 1; }
+    for (const id of Object.keys(ch)) {
+      const c = cidOf(ch[id]);
+      if (!c || count[c] < 2 || same(c, cidOf(sh[id]))) continue;
+      const st = act[idOfL[id] || id];
+      if (!sh[id]) { delete ch[id]; delete act[idOfL[id] || id]; continue; }
+      const n = { ...ch[id] };
+      for (const k of IDENT) { if (sh[id][k] === undefined) delete n[k]; else n[k] = sh[id][k]; }
+      if (st) { st.groups = st.groups.filter((grp) => grp !== IDENT); if (!st.groups.length) delete act[idOfL[id] || id]; }
+      if (same(n, sh[id])) delete ch[id]; else ch[id] = n;
+    }
+    const keys = Object.keys(ch);
+    if (keys.length) out.push({ gid: g.id, after: ch, before: Object.fromEntries(keys.map((id) => [id, sh[id] ? clone(sh[id]) : null])) });
+  }
+  return out;
+}
+let propToastAt = 0;
+function applyProp(list, which) {
+  for (const p of list || []) {
+    const patch = {};
+    for (const id in p[which]) patch['shapes.' + id] = p[which][id] == null ? DEL : p[which][id];
+    db.update(P.doc(E.w, 'diagrams', p.gid), patch).catch((e) => toast('あとの図に反映できませんでした: ' + (e.message || e), 'error'));
+  }
+}
+
 async function commit(changes, record = true) {
   const ids = Object.keys(changes);
   if (!ids.length) return;
   const before = {};
   for (const id of ids) before[id] = clone(E.shapes[id]) || null;
+  const prop = record ? propagation(changes, clone(E.shapes)) : [];
   if (record) {
-    E.undo.push({ before, after: clone(changes) });
+    E.undo.push({ before, after: clone(changes), prop });
     if (E.undo.length > 150) E.undo.shift();
     E.redo = [];
   }
@@ -83,7 +286,14 @@ async function commit(changes, record = true) {
   }
   E.temp = {};
   draw();
-  try { await db.update(path(), patch); } catch (e) { toast('舞台図を保存できませんでした: ' + (e.message || e), 'error', 6000); }
+  if (prop.length) {
+    applyProp(prop, 'after');
+    if (Date.now() - propToastAt > 4000 && !(prop.skipped && prop.skipped.size)) { propToastAt = Date.now(); toast(`あとの${prop.length}枚の図にも反映しました`); }
+  }
+  if (prop.skipped && prop.skipped.size) {
+    toast(`${[...prop.skipped].join('・')}は、あとの図で離れた場所にいるため、あとの図は変えていません`, 'info', 5000);
+  }
+  try { await db.update(path(), patch); } catch (e) { toast('図を保存できませんでした: ' + (e.message || e), 'error', 6000); }
 }
 
 function undo() {
@@ -91,12 +301,14 @@ function undo() {
   if (!op) return;
   E.redo.push(op);
   commit(clone(op.before), false);
+  applyProp(op.prop, 'before');
 }
 function redo() {
   const op = E.redo.pop();
   if (!op) return;
   E.undo.push(op);
   commit(clone(op.after), false);
+  applyProp(op.prop, 'after');
 }
 
 // ---------- 座標 ----------
@@ -121,7 +333,7 @@ const rot = (x, y, deg) => {
 function idx() { return castIndex((S.d.work && S.d.work.cast) || []); }
 // 舞台に立つメンバー（CD係など記号の人は図解に出さない）
 const onStage = (ix) => ix.list.filter((c) => c.id && !c.tag);
-// ひとつ前の舞台図での各メンバーの位置
+// ひとつ前の図での各メンバーの位置
 function prevPositions(ix = idx()) {
   const prev = previousShapes(E.id);
   if (!prev) return null;
@@ -173,7 +385,7 @@ function placePerson(p) {
     }
   }
   const id = newId(8);
-  const s = withCid({ id, t: 'person', x, y, fill: E.personFill, r: 20, z: zFor('person') }, cid);
+  const s = withCid({ id, t: 'person', x, y, fill: E.personFill, r: 20, z: zFor('person'), ...(E.personRing ? { ring: true } : {}) }, cid);
   commit({ [id]: s });
   const after = { ...shapes, [id]: s };
   E.personCid = cid ? nextCid(after, cid) || '' : '';
@@ -190,7 +402,7 @@ function lineUpRest() {
   const perRow = 16;
   rest.forEach((c, i) => {
     const id = newId(8);
-    changes[id] = { id, t: 'person', cid: c.id, fill: E.personFill, r: 20, z: zFor('person'), x: 130 + (i % perRow) * 49, y: 60 + Math.floor(i / perRow) * 50 };
+    changes[id] = { id, t: 'person', cid: c.id, fill: E.personFill, r: 20, z: zFor('person'), ...(E.personRing ? { ring: true } : {}), x: 130 + (i % perRow) * 49, y: 60 + Math.floor(i / perRow) * 50 };
   });
   commit(changes);
   E.sel = new Set(Object.keys(changes));
@@ -266,6 +478,55 @@ function fillRegions(regions) {
   toast(`${used}人を${how}入れました`, 'info', 4000);
 }
 
+// ---------- はける：選んだ人を、近いほうの袖（上手・下手）へ動かす ----------
+// 袖は舞台の左右の枠（x 10〜90 と 910〜990）。重ならないよう、もとの上下の並び順のまま縦に並べる。
+// 入りきらないときは2列の互い違いにし、それでも足りなければ間を詰める
+const WINGS = { left: [10, 90], right: [910, 990] };
+function exitPersons() {
+  const ps = selectedShapes().filter(isPerson);
+  if (!ps.length) return;
+  const all = merged();
+  const ch = {};
+  for (const side of ['left', 'right']) {
+    const [x0, x1] = WINGS[side];
+    const mine = ps.filter((s) => (side === 'left' ? s.x < W / 2 : s.x >= W / 2)).sort((a, b) => a.y - b.y || a.x - b.x);
+    if (!mine.length) continue;
+    const sel = new Set(mine.map((s) => s.id));
+    // すでに袖にいる（選んでいない）人の場所はあけておく
+    const stay = Object.values(all).filter((s) => isPerson(s) && !sel.has(s.id) && !ps.includes(s) && s.x >= x0 && s.x <= x1);
+    const r = Math.max(...mine.map((s) => s.r || 20));
+    const top = 10 + r + 3, bottom = 460 - r - 3;
+    const cx = (x0 + x1) / 2;
+    const free = (n, step, cols) => {
+      const slots = [];
+      for (let i = 0; i < n; i++) {
+        const y = top + i * step;
+        const x = cols === 1 ? cx : cx + (i % 2 ? 1 : -1) * Math.min(16, (x1 - x0) / 2 - r);
+        if (!stay.some((o) => Math.hypot(o.x - x, o.y - y) < r + (o.r || 20) - 2)) slots.push([x, y]);
+      }
+      return slots;
+    };
+    let slots = free(Math.floor((bottom - top) / (2 * r + 3)) + 1, 2 * r + 3, 1);
+    if (slots.length < mine.length) slots = free(Math.floor((bottom - top) / (r + 2)) + 1, r + 2, 2);
+    if (slots.length < mine.length) {
+      const step = (bottom - top) / Math.max(1, mine.length - 1);
+      slots = mine.map((_, i) => [cx + (i % 2 ? 1 : -1) * Math.min(16, (x1 - x0) / 2 - r), top + i * step]);
+    }
+    // 上下の順番を保ったまま、もとの高さに近い場所へ
+    let k = 0;
+    mine.forEach((s, i) => {
+      const left = mine.length - i;
+      let best = k;
+      for (let j = k; j <= slots.length - left; j++) {
+        if (Math.abs(slots[j][1] - s.y) < Math.abs(slots[best][1] - s.y)) best = j;
+      }
+      ch[s.id] = { ...cur(s.id), x: Math.round(slots[best][0]), y: Math.round(slots[best][1]) };
+      k = best + 1;
+    });
+  }
+  commit(ch);
+}
+
 // ---------- 選んだ人の自動入れ替え ----------
 function selectedPersons(ix = idx()) {
   return selectedShapes().filter((s) => s.t === 'person' && personCast(s, ix) && !personCast(s, ix).tag);
@@ -274,7 +535,7 @@ function reassignStretch() {
   const ix = idx();
   const ps = selectedPersons(ix);
   const prev = prevPositions(ix);
-  if (!prev) { toast('ひとつ前の舞台図がないため、最小ストレッチは使えません', 'error'); return; }
+  if (!prev) { toast('ひとつ前の図がないため、最小ストレッチは使えません', 'error'); return; }
   const members = ps.map((s) => personCast(s, ix));
   const cost = ps.map((s) => members.map((c) => (prev[c.id] ? Math.hypot(prev[c.id][0] - s.x, prev[c.id][1] - s.y) : FAR)));
   const res = minCostAssign(cost);
@@ -368,8 +629,43 @@ function reorder(front) {
 }
 function copySel() {
   clipboard = clone(selectedShapes());
-  if (clipboard.length) toast(`${clipboard.length}個をコピーしました（別の図にも貼り付けられます）`);
+  if (clipboard.length) {
+    toast(`${clipboard.length}個をコピーしました（別の図にも貼り付けられます）`);
+    // ほかのアプリからの貼り付けと区別するため、パソコンのクリップボードにも目印を入れておく
+    try { navigator.clipboard.writeText(MARK).catch(() => {}); } catch (e) { /* noop */ }
+  }
 }
+// ほかのアプリ（Googleドキュメント・スライドなど）からの貼り付け
+async function pasteExternal(dt) {
+  const at = [W / 2, H / 2];
+  let busy = setTimeout(() => toast('貼り付けています…'), 400);
+  let list;
+  try {
+    list = await shapesFromClipboard(dt, at, { cast: (S.d.work && S.d.work.cast) || [], onError: (e) => toast(e.message || String(e), 'error', 8000) });
+  } finally { clearTimeout(busy); }
+  if (list === 'internal' || (!list && clipboard.length)) { paste(); return; }
+  if (!list || !list.length) { toast('貼り付けられるもの（図形・画像・文字）がありませんでした', 'error', 6000); return; }
+  const ch = {};
+  const ids = [];
+  for (const sh of list) {
+    const id = newId(8);
+    ch[id] = { ...sh, id, z: zFor(sh.t) };
+    ids.push(id);
+  }
+  commit(ch);
+  E.sel = new Set(ids);
+  draw();
+  const imgs = list.filter((x) => x.t === 'image').length;
+  toast(imgs === list.length ? `画像を${imgs}枚貼り付けました` : `${list.length}個を貼り付けました`);
+}
+document.addEventListener('paste', (e) => {
+  if (!E || isDialogOpen() || E.inline) return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  pasteExternal(e.clipboardData);
+}, true);
 function paste() { if (clipboard.length) duplicateList(clipboard, 20, 20); }
 
 // ---------- ダブルクリックで文字を入れる（パワーポイントの図形のように） ----------
@@ -429,14 +725,20 @@ function onKey(e) {
   const tag = (e.target && e.target.tagName) || '';
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
   const mod = e.ctrlKey || e.metaKey;
-  if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
-  if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
+  if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redoAll() : undoAll(); return; }
+  if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redoAll(); return; }
   if (mod && e.key.toLowerCase() === 'd') { e.preventDefault(); duplicateList(selectedShapes()); return; }
   if (mod && e.key.toLowerCase() === 'c') { copySel(); return; }
-  if (mod && e.key.toLowerCase() === 'v') { e.preventDefault(); paste(); return; }
+  // Ctrl+V は「貼り付け」の操作（paste）で受け取る（ほかのアプリからの画像や図形も貼れるように）
   if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); E.sel = new Set(Object.values(E.shapes).filter(passes).map((x) => x.id)); draw(); return; }
   if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSel(); return; }
   if (E.hmode) { if (e.key === 'Escape') cancelHeight(); if (e.key === 'Enter') applyHeight(); return; }
+  if (E.poly) {
+    if (e.key === 'Enter') { e.preventDefault(); finishPoly(); }
+    else if (e.key === 'Escape') cancelPoly();
+    else if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); undoPolyPoint(); }
+    return;
+  }
   if (e.key === 'Escape') { if (E.drag) { E.drag = null; E.temp = {}; } else E.sel = new Set(); draw(); return; }
   const nudge = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
   if (nudge && E.sel.size) {
@@ -467,6 +769,24 @@ function down(e) {
     E.drag = { type: 'handle', kind, id, p0: p, orig: clone(cur(id)) };
     return;
   }
+  // 説明書き（キャラ名・図形の名前）をつかんだ
+  const lEl = E.tool === 'select' && e.target.closest('[data-label]');
+  if (lEl) {
+    const lid = lEl.getAttribute('data-label'), kind = lEl.getAttribute('data-lkind');
+    const owner = cur(lid);
+    if (owner) {
+      const c0 = lEl.getAttribute('data-lc').split(',').map(Number);
+      const anchor = kind === 'role' ? [owner.x, owner.y] : shapeCenter(owner);
+      const bb = kind === 'role' ? null : shapeBBox(owner);
+      // 動かせる範囲：人は丸のすぐ周り（半径＋約40）、図形は図形の外側約30まで
+      const max = kind === 'role' ? (owner.r || 20) + 40 : Infinity;
+      const box = bb ? [bb[0] - 30, bb[1] - 30, bb[2] + 30, bb[3] + 30] : null;
+      E.sel = new Set([lid]);
+      E.drag = { type: 'label', id: lid, kind, p0: p, c0, anchor, max, box, moved: false };
+      draw();
+      return;
+    }
+  }
   const sEl = e.target.closest('[data-id]');
   let id = sEl && sEl.getAttribute('data-id');
   if (id && E.tool === 'select' && !passes(cur(id))) id = null;
@@ -478,7 +798,20 @@ function down(e) {
       const wasOnly = E.sel.size > 1 && E.sel.has(id) && !additive;
       if (additive) E.sel.add(id);
       else if (!E.sel.has(id)) E.sel = new Set([id]);
-      E.drag = { type: 'move', p0: p, ids: [...E.sel], orig: Object.fromEntries([...E.sel].map((i) => [i, clone(cur(i))])), moved: false, tapId: id, wasOnly };
+      const ids = [...E.sel];
+      // 図と人を連動：動かす図形の中（線なら近く）にいる人も一緒に動かす
+      if (E.linkPeople) {
+        const all = merged();
+        for (const sh of ids.map((i) => all[i]).filter((x) => x && !isPerson(x))) {
+          for (const pr of Object.values(all)) {
+            if (!isPerson(pr) || ids.includes(pr.id)) continue;
+            const inRegion = isRegion(sh) && insideShape(sh, pr.x, pr.y, 0);
+            const nearLine = sh.t === 'line' && distToPoly(linePoints(sh), pr.x, pr.y) < (pr.r || 20) + 14;
+            if (inRegion || nearLine) ids.push(pr.id);
+          }
+        }
+      }
+      E.drag = { type: 'move', p0: p, ids, orig: Object.fromEntries(ids.map((i) => [i, clone(cur(i))])), moved: false, tapId: id, wasOnly };
     } else {
       if (!additive) E.sel = new Set();
       E.drag = { type: 'marquee', p0: p, p1: p, base: new Set(E.sel) };
@@ -493,12 +826,10 @@ function down(e) {
     E.drag = { type: 'create', id: nid, p0: p };
   } else if (t === 'arrow' || t === 'block') {
     const nid = newId(8);
-    E.temp[nid] = { id: nid, t: 'arrow', style: t === 'block' ? 'block' : 'line', head: 'end', x1: p[0], y1: p[1], x2: p[0], y2: p[1], z: zFor('arrow') };
+    E.temp[nid] = { id: nid, t: 'arrow', style: t === 'block' ? 'block' : 'line', head: 'end', ...(t === 'block' ? { width: E.blockW || 46 } : {}), x1: p[0], y1: p[1], x2: p[0], y2: p[1], z: zFor('arrow') };
     E.drag = { type: 'create', id: nid, p0: p };
-  } else if (t === 'line' || t === 'curve') {
-    const nid = newId(8);
-    E.temp[nid] = { id: nid, t: 'line', mode: t === 'curve' ? 'curve' : 'straight', pts: [p, p], z: zFor('line') };
-    E.drag = { type: 'create', id: nid, p0: p };
+  } else if (['line', 'curve', 'carrow', 'cblock'].includes(t)) {
+    polyClick(p);
   } else if (t === 'freeline') {
     const nid = newId(8);
     E.drag = { type: 'freeline', id: nid, pts: [p] };
@@ -518,12 +849,28 @@ function down(e) {
 }
 
 function move(e) {
+  if (E && E.poly && !E.drag) { polyHover(svgPt(e)); return; }
   if (!E || !E.drag) return;
   const p = svgPt(e);
   const d = E.drag;
+  d.shift = e.shiftKey;
   if (d.type === 'harrow') {
     if (d.kind === 'hp1') { E.hmode.x1 = p[0]; E.hmode.y1 = p[1]; } else { E.hmode.x2 = p[0]; E.hmode.y2 = p[1]; }
     heightPreview();
+  } else if (d.type === 'label') {
+    const dx = p[0] - d.p0[0], dy = p[1] - d.p0[1];
+    if (!d.moved && Math.hypot(dx, dy) * unitPx() < 3) return;
+    d.moved = true;
+    let ox = d.c0[0] + dx - d.anchor[0], oy = d.c0[1] + dy - d.anchor[1];
+    const len = Math.hypot(ox, oy);
+    if (len > d.max) { ox *= d.max / len; oy *= d.max / len; }
+    if (d.box) {
+      ox = Math.max(d.box[0], Math.min(d.box[2], d.anchor[0] + ox)) - d.anchor[0];
+      oy = Math.max(d.box[1], Math.min(d.box[3], d.anchor[1] + oy)) - d.anchor[1];
+    }
+    E.temp[d.id] = { ...E.shapes[d.id], [d.kind === 'role' ? 'labelOff' : 'nameOff']: [Math.round(ox), Math.round(oy)] };
+    draw();
+    return;
   } else if (d.type === 'move') {
     const dx = p[0] - d.p0[0], dy = p[1] - d.p0[1];
     if (!d.moved && Math.hypot(dx, dy) * unitPx() < 4) return;
@@ -543,7 +890,6 @@ function move(e) {
   } else if (d.type === 'create') {
     const s = E.temp[d.id];
     if (s.t === 'arrow') { s.x2 = p[0]; s.y2 = p[1]; }
-    else if (s.t === 'line') s.pts = [d.p0, p];
     else {
       s.x = (d.p0[0] + p[0]) / 2; s.y = (d.p0[1] + p[1]) / 2;
       if (s.t === 'ellipse') { s.rx = Math.max(4, Math.abs(p[0] - d.p0[0]) / 2); s.ry = Math.max(4, Math.abs(p[1] - d.p0[1]) / 2); }
@@ -577,6 +923,11 @@ function move(e) {
       const [lx, ly] = rot(p[0] - o.x, p[1] - o.y, -(o.rot || 0));
       if (o.t === 'ellipse') { s.rx = Math.round(Math.max(8, Math.abs(lx))); s.ry = Math.round(Math.max(8, Math.abs(ly))); }
       else if (o.t === 'rect') { s.w = Math.round(Math.max(16, Math.abs(lx) * 2)); s.h = Math.round(Math.max(16, Math.abs(ly) * 2)); }
+      else if (o.t === 'image') {
+        // 画像は縦横の比を変えない（Shift を押すと自由に）
+        if (d.shift) { s.w = Math.round(Math.max(12, Math.abs(lx) * 2)); s.h = Math.round(Math.max(12, Math.abs(ly) * 2)); }
+        else { const k = Math.max(12 / Math.min(o.w, o.h), Math.max(Math.abs(lx) * 2 / o.w, Math.abs(ly) * 2 / o.h)); s.w = Math.round(o.w * k); s.h = Math.round(o.h * k); }
+      }
       else if (o.t === 'person') { s.r = Math.round(Math.max(10, Math.min(48, Math.hypot(lx, ly) / Math.SQRT2))); }
       else if (o.t === 'blob' || o.t === 'line') {
         const [cx, cy] = shapeCenter(o);
@@ -595,6 +946,18 @@ function up() {
   const d = E.drag;
   E.drag = null;
   if (d.type === 'harrow') { draw(); return; }
+  if (d.type === 'label') {
+    if (d.moved && E.temp[d.id]) commit({ [d.id]: E.temp[d.id] });
+    else {
+      // 説明書きをダブルクリックすると、自動の位置に戻す
+      const now = Date.now();
+      if (E.lastTap && E.lastTap.id === 'L' + d.id && now - E.lastTap.t < 450) { E.lastTap = null; resetLabelPos(d.id, d.kind); }
+      else E.lastTap = { id: 'L' + d.id, t: now };
+      E.temp = {};
+    }
+    draw();
+    return;
+  }
   if (d.type === 'move') {
     if (d.moved) {
       const ch = {};
@@ -610,12 +973,7 @@ function up() {
     }
   } else if (d.type === 'create') {
     const s = { ...E.temp[d.id] };
-    if (s.t === 'line') {
-      let [a, b] = s.pts;
-      if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 20) b = [a[0] + 200, a[1]];
-      a = a.map(Math.round); b = b.map(Math.round);
-      s.pts = s.mode === 'curve' ? curveFrom(a, b) : [a, b];
-    } else if (s.t === 'arrow') {
+    if (s.t === 'arrow') {
       if (Math.hypot(s.x2 - s.x1, s.y2 - s.y1) < 20) { s.x2 = s.x1 + 160; s.y2 = s.y1; }
       for (const k of ['x1', 'y1', 'x2', 'y2']) s[k] = Math.round(s[k]);
     } else if (s.t === 'ellipse') {
@@ -654,17 +1012,86 @@ function up() {
   draw();
 }
 
-// 直線の両端から、ゆるく曲がった曲線を作る
-function curveFrom(a, b) {
-  const dx = b[0] - a[0], dy = b[1] - a[1];
-  const L = Math.hypot(dx, dy) || 1;
-  const nx = -dy / L, ny = dx / L, k = L * 0.3;
-  return [a, [Math.round(a[0] + dx / 3 + nx * k), Math.round(a[1] + dy / 3 + ny * k)],
-    [Math.round(a[0] + (dx * 2) / 3 + nx * k), Math.round(a[1] + (dy * 2) / 3 + ny * k)], b];
+// ---------- 直線・曲線：点を順に打って作る ----------
+// 直線は点を順につなぐ（ギザギザも作れる）。曲線は点の間をなめらかにつなぐ
+function polyClick(p) {
+  const q = [Math.round(p[0]), Math.round(p[1])];
+  const mode = E.tool === 'line' ? 'straight' : 'smooth';
+  // 曲線矢印・太い曲線矢印は、矢印の先を付けた曲線
+  const extra = E.tool === 'carrow' ? { head: 'end' } : E.tool === 'cblock' ? { head: 'end', style: 'block', width: E.blockW || 40 } : {};
+  if (!E.poly) {
+    const id = newId(8);
+    E.poly = { id, mode, extra, pts: [q], z: zFor('line') };
+  } else {
+    const last = E.poly.pts[E.poly.pts.length - 1];
+    // 最後の点をもう一度押したら（ダブルクリックを含む）確定
+    if (Math.hypot(last[0] - q[0], last[1] - q[1]) * unitPx() < 12) { finishPoly(); return; }
+    E.poly.pts.push(q);
+  }
+  polyHover(q);
+}
+function polyHover(p) {
+  const pl = E.poly;
+  E.temp = { [pl.id]: { id: pl.id, t: 'line', mode: pl.mode, ...(pl.extra || {}), pts: [...pl.pts, p], z: pl.z } };
+  draw();
+}
+function finishPoly() {
+  const pl = E.poly;
+  if (!pl) return;
+  E.poly = null;
+  E.temp = {};
+  if (pl.pts.length < 2) { draw(); return; }
+  commit({ [pl.id]: { id: pl.id, t: 'line', mode: pl.mode, ...(pl.extra || {}), pts: pl.pts, z: pl.z } });
+  E.sel = new Set([pl.id]);
+  E.tool = 'select';
+  draw();
+}
+function cancelPoly() { E.poly = null; E.temp = {}; draw(); }
+function undoPolyPoint() {
+  if (!E.poly) return;
+  E.poly.pts.pop();
+  if (!E.poly.pts.length) { cancelPoly(); return; }
+  polyHover(E.poly.pts[E.poly.pts.length - 1]);
 }
 function setLineMode(s, mode) {
-  const a = s.pts[0], b = s.pts[s.pts.length - 1];
-  commit({ [s.id]: { ...s, mode, pts: mode === 'curve' ? curveFrom(a, b) : [a, b] } });
+  const pts = s.mode === 'curve' ? [s.pts[0], s.pts[s.pts.length - 1]] : s.pts;
+  commit({ [s.id]: { ...s, mode, pts } });
+}
+
+// 太矢印の太さ（つまみで自由に＋よく使う太さのボタン）
+function WidthControl(value, onLive, onSet) {
+  return h('div', { class: 'prop width-ctl' }, h('span', null, '太さ'),
+    h('input', {
+      type: 'range', min: 12, max: 120, step: 2, value, class: 'grow',
+      oninput: (e) => onLive(+e.target.value), onchange: (e) => onSet(+e.target.value),
+    }),
+    h('span', { class: 'small width-num' }, String(value)),
+    Seg([[24, '細'], [40, '普通'], [64, '太'], [96, '特太']], value, onSet));
+}
+function setWidthLive(list, v) {
+  for (const x of list) E.temp[x.id] = { ...E.shapes[x.id], width: v };
+  draw();
+}
+
+function BlockToolPanel() {
+  return h('div', null,
+    h('div', { class: 'panel-title' }, '太矢印を引く'),
+    h('p', { class: 'small' }, '始点から終点へドラッグします。太さは先に選んでおけます（引いたあとも、選んで変えられます）。'),
+    WidthControl(E.blockW || 46, (v) => { E.blockW = v; draw(); }, (v) => { E.blockW = v; draw(); }));
+}
+function PolyPanel() {
+  const n = E.poly ? E.poly.pts.length : 0;
+  return h('div', null,
+    h('div', { class: 'panel-title' }, { curve: '曲線を引く', carrow: '曲線矢印を引く', cblock: '太い曲線矢印を引く' }[E.tool] || '直線を引く'),
+    h('p', { class: 'small' }, E.tool !== 'line'
+      ? '曲げたい所を順に押していくと、点の間がなめらかにつながります。'
+      : '角にしたい所を順に押していくと、点の間がまっすぐつながります（ギザギザも作れます）。'),
+    h('p', { class: 'muted small' }, '最後の点をもう一度押す（ダブルクリック）か Enter で完成。Esc でやめます。'),
+    E.tool === 'cblock' ? WidthControl(E.blockW || 40, (v) => { E.blockW = v; if (E.poly) { E.poly.extra.width = v; polyHover(E.poly.pts[E.poly.pts.length - 1]); } else draw(); }, (v) => { E.blockW = v; if (E.poly) E.poly.extra.width = v; draw(); }) : null,
+    n ? h('div', { class: 'panel-actions' },
+      h('button', { class: 'btn small primary', disabled: n < 2, onclick: finishPoly }, `完成（${n}点）`),
+      h('button', { class: 'btn small', onclick: undoPolyPoint }, '1点戻す'),
+      h('button', { class: 'btn small', onclick: cancelPoly }, 'やめる')) : null);
 }
 
 // ---------- 描画 ----------
@@ -673,7 +1100,7 @@ function handlesFor(s, upx) {
   const hs = [];
   const H1 = (kind, x, y, cls = '') => h('circle', { key: kind, 'data-h': `${kind}:${s.id}`, cx: x, cy: y, r, class: 'handle ' + cls, 'stroke-width': 2 / upx });
   const local = (x, y) => { const [a, b] = rot(x, y, s.rot || 0); return [s.x + a, s.y + b]; };
-  if (s.t === 'ellipse' || s.t === 'rect') {
+  if (s.t === 'ellipse' || s.t === 'rect' || s.t === 'image') {
     const hw = s.t === 'ellipse' ? s.rx : s.w / 2, hh = s.t === 'ellipse' ? s.ry : s.h / 2;
     const [rx, ry] = local(hw, hh);
     const [ox, oy] = local(0, -hh - 18 / upx - 10);
@@ -691,9 +1118,11 @@ function handlesFor(s, upx) {
   } else if (s.t === 'person') {
     const rr = (s.r || 20) + 4;
     hs.push(H1('resize', s.x + rr * 0.72, s.y + rr * 0.72));
-  } else if (s.t === 'line' && s.mode !== 'free') {
+  } else if (s.t === 'line' && s.mode !== 'free' && s.mode !== 'curve') {
+    s.pts.forEach((q, i) => hs.push(H1('pt' + i, q[0], q[1])));
+  } else if (s.t === 'line' && s.mode === 'curve') {
     const p = s.pts;
-    if (s.mode === 'curve' && p.length === 4) {
+    if (p.length === 4) {
       hs.push(h('line', { key: 'g1', x1: p[0][0], y1: p[0][1], x2: p[1][0], y2: p[1][1], class: 'handle-line', 'stroke-width': 1.5 / upx }));
       hs.push(h('line', { key: 'g2', x1: p[3][0], y1: p[3][1], x2: p[2][0], y2: p[2][1], class: 'handle-line', 'stroke-width': 1.5 / upx }));
       hs.push(H1('pt1', p[1][0], p[1][1], 'rot'));
@@ -712,7 +1141,7 @@ function handlesFor(s, upx) {
 const ICONS = {
   select: () => h('path', { d: 'M6 3l0 16 4.2-4.1 2.9 6.3 2.4-1.1-2.9-6.2 5.9 0z', fill: 'currentColor' }),
   pan: () => h('path', { d: 'M12 2l3 3h-2v5h5V8l3 3-3 3v-2h-5v5h2l-3 3-3-3h2v-5H6v2l-3-3 3-3v2h5V5H9z', fill: 'currentColor' }),
-  person: () => [h('circle', { cx: 12, cy: 12, r: 8.5, fill: 'none', stroke: 'currentColor', 'stroke-width': 2 }), h('text', { x: 12, y: 16, 'text-anchor': 'middle', 'font-size': 11, 'font-weight': 700, fill: '#e60012' }, '1')],
+  person: () => [h('circle', { cx: 12, cy: 12, r: 8, fill: 'none', stroke: '#e60012', 'stroke-width': 1.6 }), h('text', { x: 12, y: 16, 'text-anchor': 'middle', 'font-size': 11, 'font-weight': 700, fill: '#e60012' }, '1')],
   ellipse: () => h('ellipse', { cx: 12, cy: 12, rx: 9.5, ry: 6, fill: 'none', stroke: 'currentColor', 'stroke-width': 2 }),
   rect: () => h('rect', { x: 3, y: 6, width: 18, height: 12, rx: 3, fill: 'none', stroke: 'currentColor', 'stroke-width': 2 }),
   blob: () => h('path', { d: 'M4 13c0-5 5-8 9-6s7 1 7 5-4 3-6 5-10 2-10-4z', fill: 'none', stroke: 'currentColor', 'stroke-width': 2 }),
@@ -720,12 +1149,14 @@ const ICONS = {
   block: () => h('path', { d: 'M2 9h11V5l8 7-8 7v-4H2z', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.8, 'stroke-linejoin': 'round' }),
   line: () => h('line', { x1: 3, y1: 19, x2: 21, y2: 5, stroke: 'currentColor', 'stroke-width': 2.2, 'stroke-linecap': 'round' }),
   curve: () => [h('path', { d: 'M3 19C6 5 16 21 21 5', fill: 'none', stroke: 'currentColor', 'stroke-width': 2.2, 'stroke-linecap': 'round' })],
+  carrow: () => [h('path', { d: 'M3 19C5 8 13 5 18 7', fill: 'none', stroke: 'currentColor', 'stroke-width': 2.2, 'stroke-linecap': 'round' }), h('path', { d: 'M21 8.5l-6.5 2.6 1.2-7z', fill: 'currentColor' })],
+  cblock: () => h('path', { d: 'M3 20C3 11 8 7 14 7V3.5l7 6-7 6V11c-4 0-7 3-7 9z', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.7, 'stroke-linejoin': 'round' }),
   freeline: () => h('path', { d: 'M3 15c3-6 5 4 8-2s4-6 6-2 3 3 4 0', fill: 'none', stroke: 'currentColor', 'stroke-width': 2.2, 'stroke-linecap': 'round' }),
   text: () => h('text', { x: 12, y: 17.5, 'text-anchor': 'middle', 'font-size': 15, 'font-weight': 700, fill: 'currentColor' }, 'あ'),
 };
 const TOOLS = [
   ['select', '選択'], ['person', '人'], ['ellipse', '楕円'], ['rect', '四角'], ['blob', '手書き囲み'],
-  ['line', '直線'], ['curve', '曲線'], ['freeline', '手書き線'], ['arrow', '矢印'], ['block', '太矢印'], ['text', '文字'], ['pan', 'スクロール'],
+  ['line', '直線'], ['curve', '曲線'], ['freeline', '手書き線'], ['arrow', '矢印'], ['carrow', '曲線矢印'], ['block', '太矢印'], ['cblock', '太い曲線矢印'], ['text', '文字'], ['pan', 'スクロール'],
 ];
 const HINTS = {
   select: '図形をドラッグで移動。空いている所をドラッグすると範囲選択。図形や人をダブルクリック（ダブルタップ）すると名前や役名を書けます。',
@@ -733,8 +1164,10 @@ const HINTS = {
   ellipse: 'ドラッグして楕円を描きます（タップだけなら標準の大きさ）。',
   rect: 'ドラッグして四角を描きます。あとで回転もできます。',
   blob: '指やマウスで囲みたい形をなぞってください。自動で閉じた線になります。',
-  line: '始点から終点へドラッグして直線を引きます。',
-  curve: '始点から終点へドラッグすると曲線になります。四角い調整点を動かすと曲がり方を変えられます。',
+  line: '点を順に押して直線（折れ線）を引きます。',
+  curve: '点を順に押すと、間がなめらかにつながった曲線になります。',
+  carrow: '点を順に押すと、なめらかな曲線の矢印になります。最後に押した点が矢印の先です。',
+  cblock: '点を順に押すと、白抜きの太い曲線の矢印になります。最後に押した点が矢印の先です。',
   freeline: '指やマウスでなぞった形の線を引きます（閉じません）。',
   arrow: '始点から終点へドラッグします。',
   block: '始点から終点へドラッグすると白抜きの太い矢印になります。',
@@ -751,7 +1184,7 @@ function Seg(options, value, onPick) {
 function RulesNote() {
   const rules = S.d.work && S.d.work.labelRules;
   if (!rules) return null;
-  return h('details', { class: 'rules' }, h('summary', null, '図解での表記のルール'), h('div', { class: 'rules-body small' }, rules));
+  return h('details', { class: 'rules' }, h('summary', null, 'キャラクターの表記のルール'), h('div', { class: 'rules-body small' }, rules));
 }
 
 function PersonPanel(shapes) {
@@ -762,10 +1195,12 @@ function PersonPanel(shapes) {
   return h('div', null,
     h('div', { class: 'panel-title' }, '次に置く：', h('b', null, nm ? nm.no : '番号なし'), nm ? ` ${nm.name}` : ''),
     h('div', { class: 'prop' }, h('span', null, '塗り'), Seg([['white', '白'], ['gray', '灰'], ['black', '黒']], E.personFill, (v) => { E.personFill = v; draw(); })),
+    h('div', { class: 'prop' }, h('span', null, '黒い円'), Seg([[false, 'なし'], [true, 'あり']], E.personRing, (v) => { E.personRing = v; draw(); })),
+    h('p', { class: 'muted small tight' }, '黒い円で囲むのは、役や人として扱うとき・一人ひとりとして見るときです。ふだんの立ち位置は赤の丸付き数字だけにします。'),
     onStage(ix).length ? h('div', { class: 'chips' }, onStage(ix).map((m) => h('button', {
       key: 'c' + m.id, class: 'chip' + (placed.has(m.id) ? ' placed' : '') + (m.id === nextUp ? ' next' : ''),
       title: roleText(m) + (placed.has(m.id) ? '（配置済み：タップした場所へ移動します）' : ''), onclick: () => { E.personCid = m.id; draw(); },
-    }, h('b', null, m.no), ' ', m.name, rolesOf(m).some((r) => r.label) ? h('small', null, ' ' + rolesOf(m).map((r) => r.label).filter(Boolean).join('・')) : null))) : h('p', { class: 'muted small' }, 'メンバー一覧が空です。作品ページの「メンバー一覧」で入力すると番号を選べます。'),
+    }, h('b', null, m.no), ' ', m.name, rolesOf(m).some((r) => r.label) ? h('small', null, ' ' + rolesOf(m).map((r) => r.label).filter(Boolean).join('・')) : null))) : h('p', { class: 'muted small' }, 'メンバー一覧が空です。ライブラリーページの「メンバー一覧」で入力すると番号を選べます。'),
     h('p', { class: 'muted small' }, '線を引いた名前は配置済みです。選んでタップすると、その人をタップした場所へ動かします。'),
     h('div', { class: 'panel-actions' },
       h('button', { class: 'btn tiny', onclick: () => { E.personCid = ''; draw(); } }, '番号なしの人'),
@@ -811,25 +1246,75 @@ function HeightPanel() {
 
 function setRoleVis(cid, i, v) {
   const key = roleKey(cid, i);
+  const before = { [key]: E.roleVis[key] };
   E.roleVis = { ...E.roleVis, [key]: v };
   db.update(path(), { ['roleVis.' + key]: v });
+  propRoleVis(before, { [key]: v });
   draw();
 }
+// キャラ名の表示も、あとの図に反映する（あとの図でも同じ設定のままなら）
+function propRoleVis(before, after) {
+  if (!E.propagate) return;
+  const seq = diagramSequence();
+  const i = seq.indexOf(E.id);
+  if (i < 0) return;
+  const keys = new Set(Object.keys(after));
+  for (const gid of seq.slice(i + 1)) {
+    const g = (S.d.diagrams || []).find((x) => x.id === gid);
+    if (!g) continue;
+    const rv = g.roleVis || {};
+    const patch = {};
+    for (const k of [...keys]) {
+      const cur = rv[k] === undefined ? null : rv[k], was = before[k] === undefined ? null : before[k];
+      if (cur !== was) { keys.delete(k); continue; }
+      patch['roleVis.' + k] = after[k] == null ? DEL : after[k];
+    }
+    if (!Object.keys(patch).length) break;
+    db.update(P.doc(E.w, 'diagrams', gid), patch);
+  }
+}
 
-// 役ごとに、舞台図へ役名（図解での表記）を出すかどうか
+// 役ごとに、図へ役名（キャラクターの表記）を出すかどうか
+// この図での、その人の黒い円
+function ringOf(cid) {
+  const ix = idx();
+  const sh = Object.values(merged()).find((x) => isPerson(x) && (personCast(x, ix) || {}).id === cid);
+  return !!(sh && sh.ring);
+}
+// 説明書きの位置を自動に戻す
+function resetLabelPos(id, kind) {
+  const sh = { ...E.shapes[id] };
+  if (!sh) return;
+  delete sh[kind === 'role' ? 'labelOff' : 'nameOff'];
+  commit({ [id]: sh });
+}
+// 選んだ人たちの役名を、まとめて表示・非表示にする（auto：黒い円に合わせる）
+function setRolesMany(members, v) {
+  const patch = {};
+  const before = {}, after = {};
+  for (const m of members) rolesOf(m).forEach((r, i) => {
+    if (!r.label) return;
+    const key = roleKey(m.id, i);
+    before[key] = E.roleVis[key]; after[key] = v === 'auto' ? null : v;
+    patch['roleVis.' + key] = v === 'auto' ? DEL : v;
+    if (v === 'auto') { const n = { ...E.roleVis }; delete n[key]; E.roleVis = n; } else E.roleVis = { ...E.roleVis, [key]: v };
+  });
+  if (Object.keys(patch).length) { db.update(path(), patch); propRoleVis(before, after); }
+  draw();
+}
 function RoleToggles(members, title) {
   const rows = [];
   for (const m of members) {
     rolesOf(m).forEach((r, i) => {
       if (!r.label) return;
-      const on = roleVisible(E.roleVis, m.id, i);
+      const on = roleVisible(E.roleVis, m.id, i, ringOf(m.id));
       rows.push(h('div', { key: m.id + i, class: 'role-row' },
         h('span', { class: 'role-name' }, members.length > 1 ? h('b', null, m.no + ' ') : null, r.name || '（役名なし）', h('small', null, '　' + r.label)),
         Seg([[true, '表示'], [false, '隠す']], on, (v) => setRoleVis(m.id, i, v))));
     });
   }
   if (!rows.length) {
-    return members.length === 1 ? h('p', { class: 'muted small' }, '役名を出すには、メンバー一覧で「図解での表記」を入力してください。') : null;
+    return members.length === 1 ? h('p', { class: 'muted small' }, '役名を出すには、メンバー一覧で「キャラクターの表記」を入力してください。') : null;
   }
   return h('div', { class: 'role-box' }, h('div', { class: 'role-box-title' }, title || '役名の表示'), rows);
 }
@@ -844,6 +1329,43 @@ function AllRoles() {
     RoleToggles(members, ' '));
 }
 
+// 人 → 名前つきの円（楕円の図形）。名前は、書き添えの文字かキャラ名
+function personsToShapes(persons) {
+  const ix = idx();
+  const ch = {};
+  for (const p of persons) {
+    const c = personCast(p, ix);
+    const name = (p.label || '').trim() || (c ? (rolesOf(c)[0] && (rolesOf(c)[0].label || rolesOf(c)[0].name)) || c.name || '' : '') || '';
+    const r = (p.r || 20) + 4;
+    const n = { id: p.id, t: 'ellipse', x: p.x, y: p.y, rx: r, ry: r, rot: 0, z: zFor('ellipse') };
+    if (name) { n.name = name; n.showName = true; }
+    if (p.fill === 'gray') n.fill = 'gray';
+    if (p.fill === 'black') n.fill = 'dark';
+    ch[p.id] = n;
+  }
+  commit(ch);
+  toast(persons.length > 1 ? `${persons.length}人を図形にしました` : '図形にしました');
+}
+
+function textsToNames(texts) {
+  const ch = {};
+  const all = Object.values(E.shapes);
+  const groups = new Map();
+  for (const t of texts) {
+    const r = textInRegion(t, all);
+    if (!r) continue;
+    if (!groups.has(r.id)) groups.set(r.id, []);
+    groups.get(r.id).push(t);
+  }
+  for (const [rid, ts] of groups) {
+    ts.sort((a, b) => a.y - b.y || a.x - b.x);
+    const r = E.shapes[rid];
+    ch[rid] = { ...r, name: ts.map((t) => String(t.text).replace(/\n/g, '')).join(''), showName: true };
+    for (const t of ts) ch[t.id] = null;
+  }
+  commit(ch);
+  toast('図形の名前にしました');
+}
 function SelPanel() {
   const list = selectedShapes();
   if (!list.length) {
@@ -889,7 +1411,22 @@ function SelPanel() {
     parts.push(h('div', { class: 'prop' }, h('span', null, '塗り'), Seg([['white', '白'], ['gray', '灰'], ['black', '黒']], f || 'white', (v) => setProps({ fill: v }, (s) => s.t === 'person'))));
     const r = persons.every((s) => (s.r || 20) === (persons[0].r || 20)) ? persons[0].r || 20 : null;
     parts.push(h('div', { class: 'prop' }, h('span', null, '大きさ'), Seg([[15, '小'], [20, '中'], [27, '大']], r, (v) => setProps({ r: v }, (s) => s.t === 'person'))));
-    if (one) { const m = personCast(one, idx()); if (m) parts.push(RoleToggles([m])); }
+    parts.push(h('div', { class: 'panel-actions' },
+      h('button', { class: 'btn small', title: '選んだ人を、近いほうの袖（上手・下手）へ動かします', onclick: exitPersons }, `はける（${persons.length}人）`)));
+    const ring = persons.every((s) => !!s.ring === !!persons[0].ring) ? !!persons[0].ring : null;
+    parts.push(h('div', { class: 'prop' }, h('span', null, '黒い円'), Seg([[false, 'なし'], [true, 'あり']], ring, (v) => setProps({ ring: v }, (s) => s.t === 'person'))));
+    parts.push(h('p', { class: 'muted small tight' }, '黒い円で囲むのは、役や人として扱うとき・一人ひとりとして見るときです。ふだんの立ち位置は赤の丸付き数字だけにします。'));
+    {
+      const ixx = idx();
+      const ms = persons.map((x) => personCast(x, ixx)).filter((m) => m && rolesOf(m).some((r) => r.label));
+      if (ms.length) {
+        const states = ms.flatMap((m) => rolesOf(m).map((r, i) => (r.label ? roleVisible(E.roleVis, m.id, i, ringOf(m.id)) : null)).filter((x) => x !== null));
+        const cur = states.every((x) => x) ? true : states.every((x) => !x) ? false : null;
+        parts.push(h('div', { class: 'prop' }, h('span', null, 'キャラ名'),
+          Seg([[true, '表示'], [false, '隠す'], ['auto', '自動']], cur, (v) => setRolesMany(ms, v))));
+        parts.push(h('p', { class: 'muted small tight' }, `選んだ${ms.length > 1 ? ms.length + '人' : '人'}のキャラ名をまとめて切り替えます。「自動」は、黒い円で囲んだ人だけ表示します。`));
+      }
+    }
     const movable = selectedPersons();
     if (movable.length >= 2) {
       const hasPrev = !!previousShapes(E.id);
@@ -899,9 +1436,18 @@ function SelPanel() {
           h('button', { class: 'btn small', onclick: startHeight }, '身長順'),
           h('button', { class: 'btn small', disabled: !hasPrev, onclick: reassignStretch }, '最小ストレッチ')),
         h('div', { class: 'muted small' }, hasPrev
-          ? '立ち位置はそのままで番号を入れ替えます。最小ストレッチは、ひとつ前の舞台図からの移動がいちばん少なくなる並びにします。'
-          : '立ち位置はそのままで番号を入れ替えます。最小ストレッチは、ひとつ前の舞台図があるときに使えます。')));
+          ? '立ち位置はそのままで番号を入れ替えます。最小ストレッチは、ひとつ前の図からの移動がいちばん少なくなる並びにします。'
+          : '立ち位置はそのままで番号を入れ替えます。最小ストレッチは、ひとつ前の図があるときに使えます。')));
     }
+  }
+  if (list.some((x) => Array.isArray(x.labelOff) || Array.isArray(x.nameOff))) {
+    parts.push(h('div', { class: 'panel-actions' }, h('button', {
+      class: 'btn small', onclick: () => {
+        const ch = {};
+        for (const x of list) if (Array.isArray(x.labelOff) || Array.isArray(x.nameOff)) { const n = { ...E.shapes[x.id] }; delete n.labelOff; delete n.nameOff; ch[x.id] = n; }
+        commit(ch);
+      },
+    }, '名前・キャラ名の位置を自動に戻す')));
   }
   if (one && canName(one)) {
     parts.push(h('label', { class: 'prop' }, h('span', null, '名前'),
@@ -932,13 +1478,20 @@ function SelPanel() {
         }), '人')),
       hasPrev ? h('div', { class: 'prop' }, h('span', null, '並べ方'), Seg([['stretch', '最小ストレッチ'], ['random', 'ランダム']], fmode, (v) => { E.fillMode = v; draw(); })) : null,
       h('div', { class: 'muted small' }, !restN ? 'メンバー全員がこの図に置かれています。'
-        : fmode === 'stretch' ? `まだ置いていない${restN}人を、ひとつ前の舞台図からの移動が少なくなるように${where}並べます（人数は空欄なら全員）。`
+        : fmode === 'stretch' ? `まだ置いていない${restN}人を、ひとつ前の図からの移動が少なくなるように${where}並べます（人数は空欄なら全員）。`
           : `まだ置いていない${restN}人から、${where}ほどよく散らして並べます（人数は空欄なら全員）。`)));
   }
-  const lines = list.filter((x) => x.t === 'line');
+  const lines = list.filter((x) => x.t === 'line' && x.style !== 'block'); // 太い曲線矢印は線の太さを使わない
   const stroked = regions.concat(lines);
   if (one && one.t === 'line' && one.mode !== 'free') {
-    parts.push(h('div', { class: 'prop' }, h('span', null, '種類'), Seg([['straight', '直線'], ['curve', '曲線']], one.mode || 'straight', (v) => { if (v !== (one.mode || 'straight')) setLineMode(one, v); })));
+    const cur = one.mode === 'straight' || !one.mode ? 'straight' : 'smooth';
+    parts.push(h('div', { class: 'prop' }, h('span', null, '種類'), Seg([['straight', '直線'], ['smooth', '曲線']], cur, (v) => { if (v !== cur || one.mode === 'curve') setLineMode(one, v); })));
+    parts.push(h('div', { class: 'prop' }, h('span', null, '矢印'), Seg([['none', 'なし'], ['end', '片側'], ['both', '両側']], one.head || 'none', (v) => setProps({ head: v }))));
+    if (one.head && one.head !== 'none') {
+      parts.push(h('div', { class: 'prop' }, h('span', null, '形'), Seg([['line', '線'], ['block', '太矢印']], one.style || 'line', (v) => setProps({ style: v, width: one.width || 40 }))));
+      if (one.style === 'block') parts.push(WidthControl(one.width || 40, (v) => setWidthLive([one], v), (v) => { E.blockW = v; setProps({ width: v }); }));
+    }
+    parts.push(h('p', { class: 'muted small tight' }, '丸い点をドラッグすると形を直せます。'));
   }
   if (stroked.length) {
     const g = stroked[0];
@@ -956,7 +1509,7 @@ function SelPanel() {
       parts.push(h('div', { class: 'prop' }, h('span', null, '先端'), Seg([['end', '片側'], ['both', '両側'], ['none', 'なし']], one.head || 'end', (v) => setProps({ head: v }))));
       parts.push(h('div', { class: 'prop' }, h('span', null, '線'), Seg([[false, '実線'], [true, '点線']], !!one.dashed, (v) => setProps({ dashed: v }))));
     } else {
-      parts.push(h('div', { class: 'prop' }, h('span', null, '幅'), Seg([[30, '細'], [46, '普通'], [70, '太']], one.width || 46, (v) => setProps({ width: v }))));
+      parts.push(WidthControl(one.width || 46, (v) => setWidthLive([one], v), (v) => { E.blockW = v; setProps({ width: v }); }));
     }
   }
   if (one && one.t === 'text') {
@@ -974,6 +1527,17 @@ function SelPanel() {
   if (one && (one.t === 'ellipse' || one.t === 'rect' || one.t === 'text')) {
     parts.push(h('div', { class: 'prop' }, h('span', null, '回転'), Seg([[0, '0°'], [45, '45°'], [90, '90°'], [135, '135°']], one.rot || 0, (v) => setProps({ rot: v }))));
   }
+  // 人として取り込まれたもの（石ころ・草など）を、名前つきの円の図形にする
+  const inTexts = list.filter((x) => x.t === 'text' && textInRegion(x, Object.values(E.shapes)));
+  if (inTexts.length) {
+    parts.push(h('div', { class: 'prop' },
+      h('button', { class: 'btn', title: '図形の中に書いてある文字を、その図形の名前にします', onclick: () => textsToNames(inTexts) }, '囲んでいる図形の名前にする')));
+  }
+  const selPeople = list.filter((x) => x.t === 'person');
+  if (selPeople.length) {
+    parts.push(h('div', { class: 'prop' },
+      h('button', { class: 'btn', title: '人ではないもの（石ころ・草など）を、名前つきの円の図形にします', onclick: () => personsToShapes(selPeople) }, selPeople.length > 1 ? `選んだ${selPeople.length}人を図形にする` : '図形にする')));
+  }
   parts.push(h('div', { class: 'panel-actions' },
     h('button', { class: 'btn tiny', onclick: () => duplicateList(list) }, '複製'),
     h('button', { class: 'btn tiny', onclick: copySel }, 'コピー'),
@@ -983,9 +1547,64 @@ function SelPanel() {
   return h('div', null, parts);
 }
 
+// 舞台にいる人がメンバーより多いときの、控えめなお知らせ（作業の邪魔はしない）
+function CountChip(shapes, ix) {
+  const members = onStage(ix).length;
+  const persons = Object.values(shapes).filter((s) => s && s.t === 'person');
+  if (!members || persons.length <= members) return null;
+  const noNum = persons.filter((s) => !personCast(s, ix)).length;
+  return h('span', {
+    class: 'count-chip',
+    title: `舞台の人：${persons.length}人（番号なし${noNum}人を含む）／メンバー：${members}人`,
+  }, `人が${persons.length - members}人多い（${persons.length}／${members}）`);
+}
+
+// ほかの人がこの図で選んでいる図形に、その人の色の枠と名前を出す
+function presBox(s) {
+  if (s.t === 'person') { const r = (s.r || 20) + 4; return [s.x - r, s.y - r, s.x + r, s.y + r]; }
+  if (s.t === 'text') {
+    const size = s.size || 24;
+    const lines = String(s.text || '').split('\n');
+    const w = Math.max(...lines.map((l) => [...l].reduce((a, ch) => a + (/[\x00-\xff]/.test(ch) ? size * 0.58 : size), 0)), size);
+    return [s.x - w / 2 - 3, s.y - lines.length * size * 0.65, s.x + w / 2 + 3, s.y + lines.length * size * 0.65];
+  }
+  if (s.t === 'ellipse') {
+    const t = ((s.rot || 0) * Math.PI) / 180, c = Math.cos(t), sn = Math.sin(t);
+    const hw = Math.hypot(s.rx * c, s.ry * sn) + 8, hh = Math.hypot(s.rx * sn, s.ry * c) + 8;
+    return [s.x - hw, s.y - hh, s.x + hw, s.y + hh];
+  }
+  const b = shapeBBox(s);
+  return [b[0] - 8, b[1] - 8, b[2] + 8, b[3] + 8];
+}
+export function PresenceMarks(shapes, here, upx) {
+  const out = [];
+  for (const p of here) {
+    const c = colorOf(p.email);
+    let first = true;
+    for (const id of p.sel || []) {
+      const s = shapes[id];
+      if (!s) continue;
+      const [x1, y1, x2, y2] = presBox(s);
+      // 自分が選んだときと同じ、形に沿った点線（色はその人の色）
+      out.push(h('g', { key: p.email + id, class: 'pres-sel', style: { '--sel': c } }, shapeNode(s, { selected: true, idx: idx() })));
+      if (first) {
+        const fs = 13 / upx;
+        const tw = [...String(p.name)].length * fs * 0.95 + 8 / upx;
+        out.push(h('g', { key: p.email + id + 'n', 'pointer-events': 'none' },
+          h('rect', { x: x1, y: y1 - fs - 6 / upx, width: tw, height: fs + 6 / upx, rx: 3 / upx, fill: c }),
+          h('text', { x: x1 + 4 / upx, y: y1 - 4 / upx, 'font-size': fs, fill: '#fff', 'font-weight': 700 }, p.name)));
+        first = false;
+      }
+    }
+  }
+  return out;
+}
+
 export function EditorView() {
   if (!E) return null;
   const shapes = merged();
+  setPresence(E.w, { g: E.id, sel: [...E.sel].sort() });
+  const here = others().filter((p) => p.g === E.id);
   const upx = unitPx();
   const list = sortShapes(shapes);
   const ix = idx();
@@ -996,15 +1615,22 @@ export function EditorView() {
     const x = Math.min(d.p0[0], d.p1[0]), y = Math.min(d.p0[1], d.p1[1]);
     marquee = h('rect', { x, y, width: Math.abs(d.p1[0] - d.p0[0]), height: Math.abs(d.p1[1] - d.p0[1]), class: 'marquee', 'stroke-width': 1.5 / upx });
   }
-  const setTool = (t) => { E.tool = t; if (t !== 'select') E.sel = new Set(); draw(); };
+  const setTool = (t) => { if (E.poly) finishPoly(); E.tool = t; if (t !== 'select') E.sel = new Set(); draw(); };
   const zi = ZOOMS.indexOf(E.zoom);
-  return h('div', { class: 'ed-root', role: 'dialog', 'aria-label': '舞台図の編集' },
+  return h('div', { class: 'ed-root', role: 'dialog', 'aria-label': '図の編集' },
     h('header', { class: 'ed-top' },
       h('button', { class: 'btn primary', onclick: closeEditor }, '完了'),
-      h('div', { class: 'ed-title' }, '舞台図の編集'),
+      h('div', { class: 'ed-title' }, '図の編集'),
+      here.length ? h('div', { class: 'pres-tags in-editor', title: 'この図を開いている人' }, here.map((p) => h('span', { key: p.email, class: 'pres-tag', style: { background: colorOf(p.email) } }, p.name))) : null,
+      CountChip(shapes, ix),
+      h('label', { class: 'prop-toggle', title: 'この図で直したこと（動かす・足す・消す・色・キャラ名の表示など）を、あとの図にも反映します。図を開くたびにオフに戻ります' },
+        h('input', { type: 'checkbox', checked: E.propagate, onchange: (e) => setPropPref(e.target.checked) }),
+        h('span', null, 'あとの図にも反映')),
+      h('label', { class: 'prop-toggle', title: '楕円・四角・囲み・線を動かすと、その中（線ならそば）にいる人も一緒に動きます' },
+        h('input', { type: 'checkbox', checked: E.linkPeople, onchange: (e) => { E.linkPeople = e.target.checked; draw(); } }),
+        h('span', null, '図と人を連動')),
       h('div', { class: 'ed-top-btns' },
-        h('button', { class: 'icon-btn lg', title: '元に戻す', disabled: !E.undo.length, onclick: undo }, '↶'),
-        h('button', { class: 'icon-btn lg', title: 'やり直す', disabled: !E.redo.length, onclick: redo }, '↷'),
+        UndoButtons('icon-btn lg'),
         h('span', { class: 'sep' }),
         h('button', { class: 'icon-btn lg', title: '縮小', disabled: zi <= 0, onclick: () => { E.zoom = ZOOMS[Math.max(0, zi - 1)]; draw(); } }, '−'),
         h('span', { class: 'zoom-val' }, Math.round(E.zoom * 100) + '%'),
@@ -1029,12 +1655,13 @@ export function EditorView() {
         },
           stageFrame(),
           h('g', null, list.map((s) => shapeNode(s, { selected: E.sel.has(s.id), interactive: true, idx: ix }))),
-          h('g', null, layoutLabels(list, ix, E.roleVis)),
+          h('g', null, layoutLabels(list, ix, E.roleVis, E.tool === 'select')),
+          h('g', { class: 'pres-marks' }, PresenceMarks(shapes, here, upx)),
           single ? h('g', { class: 'handles' }, handlesFor(single, upx)) : null,
           marquee,
           E.hmode ? HeightArrow(upx) : null),
         E.inline ? InlineBox() : null),
       h('aside', { class: 'ed-panel' },
         h('div', { class: 'rotate-hint' }, 'スマホは横向きにすると大きく編集できます。細かい所は右上の「＋」で拡大し、「スクロール」で移動してください。'),
-        E.hmode ? HeightPanel() : E.tool === 'person' ? PersonPanel(shapes) : SelPanel())));
+        E.hmode ? HeightPanel() : E.tool === 'person' ? PersonPanel(shapes) : ['line', 'curve', 'carrow', 'cblock'].includes(E.tool) ? PolyPanel() : E.tool === 'block' ? BlockToolPanel() : SelPanel())));
 }

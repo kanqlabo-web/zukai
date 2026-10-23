@@ -26,11 +26,12 @@ export function numberCast(cast) {
   return (cast || []).map((c) => ({ ...c, no: c.tag ? String(c.tag) : String(++n), roles: rolesOf(c) }));
 }
 
-// 舞台図ごとの役名の表示（未設定なら、最初の役だけ表示）
+// 図ごとの役名の表示（未設定なら、最初の役だけ表示）
 export const roleKey = (cid, i) => `${cid}_${i}`;
-export function roleVisible(roleVis, cid, i) {
+// 役名を出すか。図で決めていなければ、黒い円で囲んだ人（役・人として扱う人）だけ出す
+export function roleVisible(roleVis, cid, i, ring) {
   const v = roleVis && roleVis[roleKey(cid, i)];
-  return v === undefined ? i === 0 : !!v;
+  return v === undefined || v === null ? i === 0 && !!ring : !!v;
 }
 
 export function castIndex(cast) {
@@ -43,7 +44,7 @@ export function castIndex(cast) {
   return { list, byId, byNo };
 }
 
-// 舞台図の丸がどのメンバーか（古いデータは番号で照合）
+// 図の丸がどのメンバーか（古いデータは番号で照合）
 export function personCast(s, idx) {
   if (!idx) return null;
   if (s.cid) return idx.byId[s.cid] || null;

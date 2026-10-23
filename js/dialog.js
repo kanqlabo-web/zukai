@@ -60,7 +60,12 @@ export function DialogView() {
       opts.title ? h('h2', null, opts.title) : null,
       opts.message ? h('p', { class: 'dlg-msg' }, opts.message) : null,
       opts.detail ? h('p', { class: 'muted small' }, opts.detail) : null,
-      fields.map((f, i) => h('label', { key: f.key, class: 'field' },
+      fields.map((f, i) => f.type === 'checkbox'
+        ? h('label', { key: f.key, class: 'check-field' },
+          h('input', { type: 'checkbox', checked: !!values[f.key], onchange: (e) => { values[f.key] = e.target.checked; } }),
+          h('span', null, f.label),
+          f.hint ? h('small', { class: 'muted' }, f.hint) : null)
+        : h('label', { key: f.key, class: 'field' },
         h('span', null, f.label),
         f.type === 'textarea'
           ? h('textarea', { rows: f.rows || 4, value: values[f.key], placeholder: f.placeholder || '', oninput: (e) => { values[f.key] = e.target.value; }, ref: i === 0 ? (el) => el.focus() : null })

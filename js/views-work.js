@@ -1,14 +1,20 @@
-// 作品ページ（話・トラック・稿の一覧）とメンバー一覧
+// ライブラリーページ（話・トラック・稿の一覧）とメンバー一覧
 import { h } from './vdom.js';
-import { db } from './db.js';
-import { S, rerender, toast, fmtTime, saveLater, go } from './state.js';
-import { P, createEpisode, createTrack, copyDraft, deleteDraft, deleteTrack, deleteEpisode, parseCast } from './model.js';
-import { confirmDeleteWork } from './views-home.js';
+import { db, auth } from './db.js';
+import { S, rerender, toast, fmtTime, saveLater, go, pickFile } from './state.js';
+import { readZukaiPdf, importZukai } from './pdfimport.js';
+import { analyzeDocHtml, sliceToHtml, SLICE_TYPE } from './docimport.js';
+import { pickDocHtml, pairFigures } from './gdrive.js';
+import { mode } from './db.js';
+import { newDraftFlow } from './views-draft.js';
+import { P, draftName, createEpisode, createTrack, copyDraft, deleteDraft, deleteTrack, deleteEpisode, parseCast } from './model.js';
+import { confirmDeleteWork, confirmLeaveWork } from './views-home.js';
 import { ask, confirmBox } from './dialog.js';
 import { ensureCastIds, numberCast, rolesOf } from './cast.js';
 import { myRole, canEdit, isOwner, ROLE_LABEL, rolesOfWork, saveRoles, joinUrl, profileName, openGroupWindow, waitGroups, cancelGroupWait } from './access.js';
-import { GROUP_LOOKUP_URL } from './settings.js';
+import { GROUP_LOOKUP_URL, ADMIN_EMAILS } from './settings.js';
 import { CastTable } from './sheet.js';
+import { others, NameTags } from './presence.js';
 import { newId } from './db.js';
 
 const byOrder = (a, b) => (a.order || 0) - (b.order || 0) || (a.createdAt || 0) - (b.createdAt || 0);
@@ -43,7 +49,7 @@ export function WorkView() {
   const w = S.route.params.w;
   const work = S.d.work;
   if (work === undefined) return h('main', { class: 'page' }, h('p', { class: 'muted' }, '読み込み中…'));
-  if (work === null) return h('main', { class: 'page' }, h('p', null, 'この作品は見つからないか、あなたに共有されていません。'), h('a', { href: '#/' }, '作品一覧へ'));
+  if (work === null) return h('main', { class: 'page' }, h('p', null, 'このライブラリーは見つからないか、あなたに共有されていません。'), h('a', { href: '#/' }, 'ライブラリー一覧へ'));
   const eps = (S.d.episodes || []).slice().sort(byOrder);
   const edit = canEdit(work);
   const owner = isOwner(work);
@@ -54,7 +60,7 @@ export function WorkView() {
   return h('main', { class: 'page' },
     h('div', { class: 'page-head' },
       h('input', {
-        class: 'title-input', value: work.title, 'aria-label': '作品名', readonly: !edit,
+        class: 'title-input', value: work.title, 'aria-label': 'ライブラリー名', readonly: !edit,
         oninput: (e) => saveLater(workPath, { title: e.target.value, updatedAt: Date.now() }),
       }),
       h('div', { class: 'actions' },
@@ -68,9 +74,9 @@ export function WorkView() {
               if (r) db.update(workPath, { prefix: r.v });
             },
           },
-          owner ? { label: 'この作品を削除', danger: true, fn: () => confirmDeleteWork(w, work) } : null,
+          owner ? { label: 'このライブラリーを削除', danger: true, fn: () => confirmDeleteWork(w, work) } : null,
         ]) : null)),
-    !edit ? h('div', { class: 'note' }, 'この作品は閲覧のみで共有されています。見ることとPDFの書き出しができます。') : null,
+    !edit ? h('div', { class: 'note' }, 'このライブラリーは閲覧のみで共有されています。見ることとPDFの書き出しができます。') : null,
     h('p', { class: 'muted small' }, `PDFのタイトル例：${work.prefix ?? '【表現活動】'}2話図解_トラ1_第1稿`),
     eps.length === 0 ? h('div', { class: 'empty' }, h('p', null, 'まだ話がありません。'), edit ? h('p', { class: 'muted' }, '「＋ 話を追加」から始めましょう（例：1話、2話）。') : null) : null,
     eps.map((ep, i) => {
@@ -79,7 +85,8 @@ export function WorkView() {
         h('div', { class: 'ep-head' },
           h('h2', null, ep.title),
           h('div', { class: 'actions' },
-            ts.length ? h('a', { class: 'btn small', href: `#/w/${w}/print/e/${ep.id}` }, 'この話をPDFに') : null,
+            ts.length ? h('a', { class: 'btn small', href: `#/w/${w}/show/e/${ep.id}` }, 'この話を見る') : null,
+            ts.length ? h('a', { class: 'btn small', href: `#/w/${w}/print/e/${ep.id}` }, 'この話を書き出す') : null,
             edit ? h('button', {
               class: 'btn small primary', onclick: async () => {
                 const t = await askName('トラックを追加', 'トラックの名前', `トラック${ts.length + 1}`, '追加');
@@ -96,24 +103,27 @@ export function WorkView() {
         h('ul', { class: 'tracks' }, ts.map((t, k) => {
           const ds = drafts.filter((d) => d.trackId === t.id).sort((a, b) => (b.no || 0) - (a.no || 0));
           const latest = ds[0];
-          return h('li', { key: t.id, class: 'track' },
+          const here = others().filter((p) => p.d && ds.some((x) => x.id === p.d));
+          return h('li', { key: t.id, class: 'track' + (here.length ? ' has-pres' : '') },
             h('a', { class: 'track-main', href: latest ? (edit ? `#/w/${w}/d/${latest.id}` : `#/w/${w}/print/d/${latest.id}`) : '#' },
-              h('div', { class: 'track-title' }, t.title, latest ? h('span', { class: 'badge' }, `第${latest.no}稿`) : null),
+              h('div', { class: 'track-title' }, t.title, latest ? h('span', { class: 'badge' }, draftName(latest)) : null),
               h('div', { class: 'muted small' },
-                latest && latest.zukaikko ? `図解っ子：${latest.zukaikko} ・ ` : '',
-                latest ? `更新 ${fmtTime(latest.updatedAt)}${latest.updatedBy ? '（' + latest.updatedBy + '）' : ''}` : '')),
+                latest && latest.zukaikko ? `図解っ子：${latest.zukaikko}${latest.updatedAt ? ' ・ ' : ''}` : '',
+                latest && latest.updatedAt ? `更新 ${fmtTime(latest.updatedAt)}${latest.updatedBy ? '（' + latest.updatedBy + '）' : ''}` : ''),
+              NameTags(here, 'in-track')),
             h('div', { class: 'track-actions' },
               ds.length > 1 ? h('select', {
                 class: 'small', 'aria-label': '稿を選ぶ', value: '',
                 onchange: (e) => { if (e.target.value) go(edit ? `#/w/${w}/d/${e.target.value}` : `#/w/${w}/print/d/${e.target.value}`); },
-              }, h('option', { value: '' }, '稿を選ぶ'), ds.map((d) => h('option', { value: d.id }, `第${d.no}稿`))) : null,
-              latest ? h('a', { class: 'btn small', href: `#/w/${w}/print/d/${latest.id}` }, 'PDF') : null,
+              }, h('option', { value: '' }, '稿を選ぶ'), ds.map((d) => h('option', { value: d.id }, draftName(d)))) : null,
+              latest ? h('a', { class: 'btn small', href: `#/w/${w}/show/d/${latest.id}` }, '見る') : null,
+              latest ? h('a', { class: 'btn small', href: `#/w/${w}/print/d/${latest.id}` }, '書き出す') : null,
               !edit ? null : Menu([
-                latest ? { label: '新しい稿を作る（最新の稿を複製）', fn: async () => { const nd = await copyDraft(w, latest.id, S.user); toast('新しい稿を作りました'); go(`#/w/${w}/d/${nd}`); } } : null,
+                latest ? { label: '新しい稿を作る（最新稿を複製）', fn: () => newDraftFlow(w, latest, ds) } : null,
                 { label: '名前を変える', fn: async () => { const n = await askName('トラックの名前を変える', 'トラックの名前', t.title); if (n) db.update(P.doc(w, 'tracks', t.id), { title: n }); } },
                 k > 0 ? { label: '上へ移動', fn: () => swapOrder(w, 'tracks', ts, k, -1) } : null,
                 k < ts.length - 1 ? { label: '下へ移動', fn: () => swapOrder(w, 'tracks', ts, k, 1) } : null,
-                ds.length > 1 ? { label: `最新の稿（第${latest.no}稿）だけ削除`, danger: true, fn: async () => { if (await confirmBox(`第${latest.no}稿を削除しますか？`, { ok: '削除', danger: true })) await deleteDraft(w, latest.id); } } : null,
+                ds.length > 1 ? { label: `最新稿（${draftName(latest)}）だけ削除`, danger: true, fn: async () => { if (await confirmBox(`${draftName(latest)}を削除しますか？`, { ok: '削除', danger: true })) await deleteDraft(w, latest.id); } } : null,
                 { label: 'このトラックを削除', danger: true, fn: async () => { if (await confirmBox(`「${t.title}」をすべての稿ごと削除しますか？`, { ok: '削除', danger: true })) await deleteTrack(w, t.id); } },
               ])));
         })));
@@ -124,8 +134,181 @@ export function WorkView() {
           const t = await askName('話を追加', '話の名前', `${eps.length + 1}話`, '追加');
           if (t) await createEpisode(w, t, eps.length + 1);
         },
-      }, '＋ 話を追加')) : null,
+      }, '＋ 話を追加'),
+      h('button', { class: 'btn', disabled: !!S.ui.importing, onclick: () => importFlow(w, work, eps) }, S.ui.importing || '読み込む'),
+      isAdmin() ? h('button', { class: 'btn ghost', onclick: startCapture }, '（調査）クリップボードを保存') : null) : null,
+    edit ? h('p', { class: 'muted small' }, '「読み込む」で、コピーしたGoogleドキュメントか、図解のPDFを取り込めます。Googleドキュメントで Ctrl+A → Ctrl+C してから、このページで Ctrl+V しても取り込めます。') : null,
   );
+}
+
+// ---------- 図解PDFの取り込み ----------
+async function importFlow(w, work, eps) {
+  const r = await ask({
+    title: '読み込む', ok: '次へ',
+    fields: [{
+      key: 'from', label: '読み込むもの', type: 'select', value: 'clip',
+      options: [['clip', 'クリップボード（コピーしたGoogleドキュメント）'], ['pdf', '図解のPDF']],
+      hint: 'Googleドキュメントからは、図形描画の図も編集できる図として取り込めます。',
+    }],
+  });
+  if (!r) return;
+  if (r.from === 'pdf') return importPdfFlow(w, work, eps);
+  return pasteDocFlow(w, work, eps);
+}
+
+async function importPdfFlow(w, work, eps) {
+  const f = await pickFile('application/pdf,.pdf');
+  if (!f) return;
+  const setMsg = (m) => { S.ui.importing = m; rerender(); };
+  let result;
+  try {
+    setMsg('PDFを読み込んでいます…');
+    result = await readZukaiPdf(f, (d, t) => setMsg(`PDFを読み込んでいます…（${d}／${t}ページ）`));
+  } catch (e) {
+    setMsg('');
+    toast('PDFを読み込めませんでした: ' + (e.message || e), 'error', 8000);
+    return;
+  } finally { if (S.ui.importing && !result) setMsg(''); }
+  setMsg('');
+  if (!result.tracks.length) {
+    toast('図解として読み取れる文字が見つかりませんでした。文字の入っていないPDF（写真や、このツールで書き出したPDFなど）は取り込めません。', 'error', 9000);
+    return;
+  }
+  await finishImport(w, work, eps, result, 'PDF');
+}
+
+// ---------- Googleドキュメントから（コピー＆貼り付け） ----------
+// ボタン：クリップボードを読む（許可が出ないときは、Ctrl+V で貼り付けてもらう）
+async function pasteDocFlow(w, work, eps) {
+  // 図形描画の場所は、Ctrl+V で貼り付けたときにしかわからないので、Ctrl+V を使ってもらう
+  void w; void work; void eps;
+  await ask({
+    title: 'コピーしたドキュメントを取り込む', ok: 'わかりました',
+    message: '1. Googleドキュメントで図解を開き、Ctrl+A（すべて選択）→ Ctrl+C（コピー）します。\n2. このページに戻って、Ctrl+V（貼り付け）を押します。',
+    detail: '図形描画の図も、動かせる図として取り込めます（はじめに Googleドライブの許可を求められます）。',
+    fields: [],
+  });
+}
+
+export async function importDocHtml(w, work, eps, html) {
+  if (S.ui.importing) return;
+  let result;
+  try { result = analyzeDocHtml(html); } catch (e) { toast('読み取れませんでした: ' + (e.message || e), 'error', 8000); return; }
+  if (!result.tracks.length) {
+    toast('コピーした内容に図解の表が見つかりませんでした。Googleドキュメントで Ctrl+A → Ctrl+C してから貼り付けてください。', 'error', 9000);
+    return;
+  }
+  const remoteImgs = (html.match(/<img\b[^>]*src="https?:/gi) || []).length;
+  await finishImport(w, work, eps, result, 'ドキュメント', remoteImgs && mode !== 'local'
+    ? `コピーした内容に図が${remoteImgs}個あります。図形描画はコピーでは取り込めないことがあります。Googleドキュメントの画面で Ctrl+A → Ctrl+C してから貼り付けると、図形描画も取り込めます。` : '');
+}
+
+// ライブラリーのページで Ctrl+V したら、Googleドキュメントの図解として取り込む
+// 調査用：クリップボードに入っている全部の形式を、ファイルに保存する（管理者だけ）
+let capturing = false;
+function startCapture() { capturing = true; toast('Googleドキュメントやスライドでコピーしてから、このページで Ctrl+V を押してください', 'info', 15000); }
+document.addEventListener('paste', (e) => {
+  if (!capturing) return;
+  capturing = false;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  const dt = e.clipboardData;
+  const out = { at: new Date().toISOString(), types: [...(dt ? dt.types : [])], data: {} };
+  for (const t of out.types) { try { out.data[t] = dt.getData(t); } catch (er) { out.data[t] = '(読めませんでした) ' + er; } }
+  // 図形描画の中身を、Googleから取ってこられるか試す
+  probeDrawings(out).catch((er) => toast('調べられませんでした: ' + (er.message || er), 'error', 8000));
+}, true);
+function saveJson(obj, name) {
+  const blob = new Blob([JSON.stringify(obj, null, 1)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+async function probeDrawings(out) {
+  let slice = null;
+  try { slice = JSON.parse(JSON.parse(out.data['application/x-vnd.google-docs-document-slice-clip+wrapped']).data).resolved; } catch (e) { /* なし */ }
+  const docId = (/documents\/([\w-]{20,})\//.exec(out.data['application/x-vnd.google-docs-image-clip+wrapped'] || '') || [])[1] || '';
+  const res = { docId, drawings: [], tries: [] };
+  if (slice) {
+    const toks = slice.dsl_drawingrevisionaccesstokenmap || {};
+    for (const [k, v] of Object.entries(slice.dsl_entitymap || {})) {
+      const e = v && v.ee_eo;
+      if (e && e.d_id) res.drawings.push({ key: k, id: e.d_id, rev: e.d_revision, tok: toks[k] || '', w: e.i_wth, h: e.i_ht });
+    }
+  }
+  if (!res.drawings.length) { saveJson({ ...res, raw: out }, 'clipboard.json'); toast('コピーした内容を clipboard.json に保存しました', 'info', 8000); return; }
+  toast('Googleドライブの許可を求めます（調査用）', 'info', 5000);
+  let token = '';
+  try { token = await auth.driveToken(true); } catch (e) { res.tokenError = String(e.message || e); }
+  // 図形描画を SVG で取り出して、全部保存する
+  res.svgs = [];
+  for (const d of res.drawings) {
+    try {
+      const r = await fetch(`https://docs.google.com/drawings/d/${d.id}/export/svg`, { headers: { Authorization: 'Bearer ' + token } });
+      res.svgs.push({ key: d.key, w: d.w, h: d.h, status: r.status, svg: await r.text() });
+    } catch (er) { res.svgs.push({ key: d.key, error: String(er.message || er) }); }
+  }
+  res.drawings = res.drawings.map((x) => ({ ...x, tok: x.tok ? '（あり）' : '' }));
+  saveJson(res, 'drawings.json');
+  toast(`図形描画 ${res.svgs.length} 個を drawings.json に保存しました`, 'info', 8000);
+}
+const isAdmin = () => ADMIN_EMAILS.includes(String((S.user && S.user.email) || '').toLowerCase());
+
+document.addEventListener('paste', (e) => {
+  if (!S.route || S.route.name !== 'work' || !S.d.work || !canEdit(S.d.work)) return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  let html = e.clipboardData && e.clipboardData.getData('text/html');
+  // Googleドキュメントからのコピーなら、図形描画の場所もわかる形式を使う
+  const slice = e.clipboardData && e.clipboardData.getData(SLICE_TYPE);
+  if (slice) { const h2 = sliceToHtml(slice, html); if (h2 && /<table/i.test(h2)) html = h2; }
+  if (!html || !/<table/i.test(html)) return;
+  e.preventDefault();
+  const eps = (S.d.episodes || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+  importDocHtml(S.route.params.w, S.d.work, eps, html);
+});
+
+const trackTitleOf = (t) => String(t || '').replace(/^トラ(?!ック)/, 'トラック');
+async function finishImport(w, work, eps, result, src, note = '') {
+  const setMsg = (m) => { S.ui.importing = m; rerender(); };
+  const epGuess = result.tracks[0].ep || '';
+  const same = eps.find((e) => e.title === epGuess);
+  const castN = result.cast ? result.cast.split('\n').filter(Boolean).length : 0;
+  const named = (work.cast || []).filter((c) => c.name).length;
+  const list = result.tracks.map((t) => { const figs = t.blocks.reduce((a, b) => a + b.items.filter((i) => i.kind === 'figure').length, 0); return `${t.track || 'トラック'}（第${t.draftNo}稿・タイミング${t.blocks.filter((b) => b.cue).length}個${figs ? `・図${figs}枚` : ''}）`; }).join('、');
+  const r = await ask({
+    title: src === 'PDF' ? '図解PDFを取り込む' : 'Googleドキュメントから取り込む', ok: '取り込む',
+    message: `見つかったトラック：${list}`,
+    detail: (note ? note + '\n' : '') + 'テーマ活動の友・タイミング・メモを、トラックごとに取り込みます。既にある話を選ぶと、その話にトラックが追加されます。図は写真として入るので、必要なら図を描き直してください。取り込んだあとで、タイミングの位置や改行を確かめてください。',
+    fields: [
+      { key: 'ep', label: '取り込む先の話', type: 'select', value: same ? same.id : 'new', options: [...eps.map((e) => [e.id, e.title]), ['new', `新しい話「${epGuess || '取り込んだ話'}」を作る`]] },
+      result.tracks.length === 1 ? { key: 'tname', label: 'トラックの名前', value: trackTitleOf(result.tracks[0].track) || 'トラック1', hint: '取り込む先の話に同じ名前のトラックがあるときは、下の「同じ名前のトラックがあるとき」に従います。' } : null,
+      { key: 'vec', label: '図形描画の図', type: 'select', value: 'diagram', options: [['diagram', '図解メーカーの図に直す（人や形を動かせる）'], ['photo', '写真のまま入れる']] },
+      { key: 'mode', label: '同じ名前のトラックがあるとき', type: 'select', value: 'new', options: [['new', '新しいトラックとして追加する'], ['next', 'そのトラックの次の稿にする']] },
+      castN ? { key: 'cast', label: `メンバー一覧（${src}には${castN}人）`, type: 'select', value: named ? 'keep' : 'replace', options: [['keep', '今の一覧のままにする'], ['replace', `${src}の一覧で置き換える`]] } : null,
+    ].filter(Boolean),
+  });
+  if (!r) return;
+  // Googleの図形描画があれば、取り出すために Googleドライブの許可をもらう
+  const hasDrawing = result.tracks.some((T) => T.blocks.some((b) => b.items.some((i) => i.fig && i.fig.drawing)));
+  let driveToken = null;
+  if (hasDrawing) {
+    try { driveToken = await auth.driveToken(true); } catch (e) { toast('Googleドライブの許可がないので、図形描画は取り込めません', 'error', 8000); }
+  }
+  try {
+    setMsg('取り込んでいます…');
+    const out = await importZukai(w, result, {
+      epId: r.ep === 'new' ? null : r.ep, epTitle: epGuess, replaceCast: r.cast === 'replace',
+      asNewTrack: r.mode !== 'next', trackName: result.tracks.length === 1 ? r.tname : null,
+      existingEpisodes: eps, tracks: S.d.tracks || [], drafts: S.d.drafts || [], user: S.user, cast: work.cast || [], vectorize: r.vec !== 'photo', driveToken,
+    }, (d, t) => setMsg(`取り込んでいます…（${d}／${t}トラック）`));
+    setMsg('');
+    toast(`${out.made.length}トラックを取り込みました`, 'info', 5000);
+    if (out.made[0]) go(`#/w/${w}/d/${out.made[0].draftId}`);
+  } catch (e) {
+    setMsg('');
+    toast('取り込めませんでした: ' + (e.message || e), 'error', 8000);
+  }
 }
 
 // ---------- メンバー一覧 ----------
@@ -189,10 +372,10 @@ export function CastView() {
   if (!work) return h('main', { class: 'page' }, h('p', { class: 'muted' }, '読み込み中…'));
   if (!canEdit(work)) {
     return h('main', { class: 'page narrow' },
-      h('div', { class: 'page-head' }, h('h1', null, 'メンバー一覧'), h('div', { class: 'actions' }, h('a', { class: 'btn', href: `#/w/${w}` }, '作品に戻る'))),
+      h('div', { class: 'page-head' }, h('h1', null, 'メンバー一覧'), h('div', { class: 'actions' }, h('a', { class: 'btn', href: `#/w/${w}` }, 'ライブラリーに戻る'))),
       h('p', { class: 'muted small' }, '閲覧のみで共有されているため、変更はできません。'),
       CastTable(work.cast),
-      work.labelRules ? h('section', { class: 'panel' }, h('h2', null, '図解での表記のルール'), h('div', { class: 'rules-body' }, work.labelRules)) : null);
+      work.labelRules ? h('section', { class: 'panel' }, h('h2', null, 'キャラクターの表記のルール'), h('div', { class: 'rules-body' }, work.labelRules)) : null);
   }
   let cast = S.ui.cast || work.cast || [];
   const fixed = ensureCastIds(cast);
@@ -210,24 +393,26 @@ export function CastView() {
   const dragging = S.ui.castDrag;
   return h('main', { class: 'page narrow' },
     h('div', { class: 'page-head' }, h('h1', null, 'メンバー一覧'),
-      h('div', { class: 'actions' }, h('a', { class: 'btn', href: `#/w/${w}` }, '作品に戻る'))),
+      h('div', { class: 'actions' }, h('a', { class: 'btn', href: `#/w/${w}` }, 'ライブラリーに戻る'))),
     h('p', { class: 'muted small' },
-      '番号は上から順に自動で付きます。左のつまみ（⠿）をドラッグすると順番を入れ替えられ、すべてのトラックの舞台図の番号も一緒に変わります。1人が複数の役をするときは「＋ 兼役」で役を追加してください。CD係は、この一覧とPDFの表にだけ載り、舞台図には出ません。'),
+      '番号は上から順に自動で付きます。左のつまみ（⠿）をドラッグすると順番を入れ替えられ、すべてのトラックの図の番号も一緒に変わります。1人が複数の役をするときは、役の欄の右の「＋」で兼役を追加できます。CD係は、この一覧とPDFの表にだけ載り、図には出ません。'),
     h('div', { class: 'cast-scroll' }, h('table', { class: 'cast-edit' + (dragging ? ' dragging' : '') },
-      h('thead', null, h('tr', null, h('th', null, ''), h('th', null, '番号'), h('th', null, '名前'), h('th', null, '役 ／ 図解での表記'), h('th', null, ''))),
+      h('thead', null, h('tr', null, h('th', null, ''), h('th', null, '番号'), h('th', null, '名前'), h('th', null, '役 ／ キャラクターの表記'), h('th', null, ''))),
       h('tbody', null, cast.map((c, i) => h('tr', { key: c.id || 'c' + i, style: rowStyle(i), class: dragging && dragging.from === i ? 'drag-row' : null },
         h('td', { class: 'grip-cell' }, h('span', { class: 'grip', title: 'ドラッグで並べ替え', onpointerdown: (e) => startDrag(e, w, cast, i) }, '⠿')),
         h('td', { class: 'no' },
           h('span', { class: 'auto-no' + (c.tag ? ' tag-no' : '') }, numbered[i].no)),
         h('td', null, h('input', { value: c.name, oninput: (e) => upd(i, 'name', e.target.value), 'aria-label': '名前' })),
         h('td', { class: 'roles-cell' },
-          (rolesOf(c).length ? rolesOf(c) : [{ name: '', label: '' }]).map((r, k) => h('div', { key: 'r' + k, class: 'role-line' },
-            h('input', { value: r.name, placeholder: k ? '兼役' : '（なし）', 'aria-label': k ? '兼役' : '役', oninput: (e) => setRoles(i, (rs) => { rs[k].name = e.target.value; return rs; }) }),
-            h('input', { class: 'lbl-in', value: r.label, placeholder: '表記 例：ルー', 'aria-label': '図解での表記', oninput: (e) => setRoles(i, (rs) => { rs[k].label = e.target.value; return rs; }) }),
-            k > 0 ? h('button', { class: 'icon-btn', title: 'この兼役を削除', onclick: () => setRoles(i, (rs) => rs.filter((_, x) => x !== k)) }, '×') : h('span', { class: 'icon-sp' }))),
-          h('button', { class: 'add-role', onclick: () => setRoles(i, (rs) => [...rs, { name: '', label: '' }]) }, '＋ 兼役')),
+          c.tag ? h('span', { class: 'muted staff-note' }, '図には出ません')
+            : (rolesOf(c).length ? rolesOf(c) : [{ name: '', label: '' }]).map((r, k, all) => h('div', { key: 'r' + k, class: 'role-line' },
+              h('input', { value: r.name, placeholder: k ? '兼役' : '（なし）', 'aria-label': k ? '兼役' : '役', oninput: (e) => setRoles(i, (rs) => { rs[k].name = e.target.value; return rs; }) }),
+              h('input', { class: 'lbl-in', value: r.label, placeholder: '表記 例：ルー', 'aria-label': 'キャラクターの表記', oninput: (e) => setRoles(i, (rs) => { rs[k].label = e.target.value; return rs; }) }),
+              k > 0 ? h('button', { class: 'icon-btn', title: 'この兼役を削除', onclick: () => setRoles(i, (rs) => rs.filter((_, x) => x !== k)) }, '×')
+                : all.length === 1 ? h('button', { class: 'add-role', title: '兼役を追加', 'aria-label': '兼役を追加', onclick: () => setRoles(i, (rs) => [...rs, { name: '', label: '' }]) }, '＋')
+                  : h('span', { class: 'icon-sp' })))),
         h('td', { class: 'row-btns' },
-          h('button', { class: 'icon-btn trash', title: 'この人を削除', 'aria-label': 'この人を削除', onclick: async () => { if (await confirmBox(`「${c.name || '名前なし'}」を一覧から削除しますか？\n舞台図に置いた人は番号なしになります。`, { ok: '削除', danger: true })) editCast(w, cast.filter((_, j) => j !== i)); } },
+          h('button', { class: 'icon-btn trash', title: 'この人を削除', 'aria-label': 'この人を削除', onclick: async () => { if (await confirmBox(`「${c.name || '名前なし'}」を一覧から削除しますか？\n図に置いた人は番号なしになります。`, { ok: '削除', danger: true })) editCast(w, cast.filter((_, j) => j !== i)); } },
             h('svg', { viewBox: '0 0 24 24', width: 18, height: 18, 'aria-hidden': 'true' },
               h('path', { d: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.8, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }))))))))),
     h('div', { class: 'actions' },
@@ -240,21 +425,21 @@ export function CastView() {
         editCast(w, ensureCastIds(a).cast);
       } }, '＋ 1人追加')),
     h('section', { class: 'panel' },
-      h('h2', null, '図解での表記のルール'),
-      h('p', { class: 'muted small' }, '役名を舞台図に書くときの決まりをメモしておけます（舞台図の編集画面からも見られます）。上の表の「図解での表記」に入れた文字が、舞台図の人の横に表示されます。'),
+      h('h2', null, 'キャラクターの表記のルール'),
+      h('p', { class: 'muted small' }, '役名を図に書くときの決まりをメモしておけます（図の編集画面からも見られます）。上の表の「キャラクターの表記」に入れた文字が、図の人の横に表示されます。'),
       h('textarea', {
         rows: 4, value: work.labelRules || '', placeholder: '例：役名は〇の中ではなく横に書く。フォントはArial 9。ルーシィ→ルー、エドマンド→エド…',
         oninput: (e) => saveLater(P.work(w), { labelRules: e.target.value, updatedAt: Date.now() }),
       })),
     h('section', { class: 'panel' },
       h('h2', null, 'まとめて貼り付け'),
-      h('p', { class: 'muted small' }, '1行に1人ずつ。「ぐっち（ビーヴァー奥さん）」や、表計算ソフトからコピーした「名前・役・図解での表記」の列に対応しています。兼役は「役A/役B」のように「/」で区切ります。行頭の番号は無視され、上から順に番号が付きます。'),
+      h('p', { class: 'muted small' }, '1行に1人ずつ。「ぐっち（ビーヴァー奥さん）」や、表計算ソフトからコピーした「名前・役・キャラクターの表記」の列に対応しています。兼役は「役A/役B」のように「/」で区切ります。行頭の番号は無視され、上から順に番号が付きます。'),
       h('textarea', { rows: 8, value: S.ui.castPaste || '', oninput: (e) => { S.ui.castPaste = e.target.value; }, placeholder: 'ぐっち（ビーヴァー奥さん）\nまお（ルーシィ）\nもえ' }),
       h('div', { class: 'actions' },
         h('button', {
           class: 'btn primary', onclick: async () => {
             const add = parseCast(S.ui.castPaste); if (!add.length) return;
-            if (cast.length && !(await confirmBox('今の一覧を貼り付けた内容で置き換えますか？\n舞台図に置いた人は番号なしになります。', { ok: '置き換える', danger: true }))) return;
+            if (cast.length && !(await confirmBox('今の一覧を貼り付けた内容で置き換えますか？\n図に置いた人は番号なしになります。', { ok: '置き換える', danger: true }))) return;
             const staff = add.some((c) => c.tag) ? [] : cast.filter((c) => c.tag);
             editCast(w, [...add, ...staff]); S.ui.castPaste = ''; toast(`${add.length}人を読み込みました`);
           },
@@ -324,16 +509,6 @@ async function changeRole(w, work, email, role) {
   try { await saveRoles(w, roles); } catch (e) { toast(e.message, 'error'); rerender(); }
 }
 
-async function leaveWork(w, work) {
-  if (!(await confirmBox('この作品の共有から抜けますか？\n抜けると、この作品を見られなくなります。', { ok: '抜ける', danger: true }))) return;
-  const me = S.user.email;
-  await db.update(P.work(w), {
-    participants: (work.participants || []).filter((e) => e !== me),
-    viewers: (work.viewers || []).filter((e) => e !== me),
-  });
-  go('#/');
-}
-
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); toast('リンクをコピーしました'); } catch (e) {
     await ask({ title: 'リンク', message: 'コピーできなかったので、下の文字を選んでコピーしてください。', fields: [{ key: 'v', label: 'リンク', value: text }], cancel: false, ok: '閉じる' });
@@ -344,7 +519,7 @@ export function ShareView() {
   const w = S.route.params.w;
   const work = S.d.work;
   if (work === undefined) return h('main', { class: 'page' }, h('p', { class: 'muted' }, '読み込み中…'));
-  if (work === null) return h('main', { class: 'page' }, h('p', null, 'この作品は見つからないか、あなたに共有されていません。'), h('a', { href: '#/' }, '作品一覧へ'));
+  if (work === null) return h('main', { class: 'page' }, h('p', null, 'このライブラリーは見つからないか、あなたに共有されていません。'), h('a', { href: '#/' }, 'ライブラリー一覧へ'));
   const me = S.user.email;
   const owner = isOwner(work);
   const roles = rolesOfWork(work);
@@ -354,8 +529,8 @@ export function ShareView() {
   const nameOf = (e) => (e === me ? S.user.name : profileName(e, rerender));
 
   return h('main', { class: 'page narrow' },
-    h('div', { class: 'page-head' }, h('h1', null, `「${work.title || '無題の作品'}」を共有`),
-      h('div', { class: 'actions' }, h('a', { class: 'btn', href: `#/w/${w}` }, '作品に戻る'))),
+    h('div', { class: 'page-head' }, h('h1', null, `「${work.title || '無題のライブラリー'}」を共有`),
+      h('div', { class: 'actions' }, h('a', { class: 'btn', href: `#/w/${w}` }, 'ライブラリーに戻る'))),
 
     owner ? h('section', { class: 'panel' },
       h('h2', null, 'ユーザーやグループを追加'),
@@ -383,7 +558,7 @@ export function ShareView() {
           value: roles[e], 'aria-label': '権限',
           onchange: async (ev) => {
             const v = ev.target.value;
-            if (e === me && v !== 'owner' && !(await confirmBox(v === 'remove' ? '自分をこの作品から外しますか？\n外すと、この作品を見られなくなります。' : '自分をオーナーから外しますか？\nあとで戻すには、ほかのオーナーに頼む必要があります。', { ok: 'はい', danger: true }))) { rerender(); return; }
+            if (e === me && v !== 'owner' && !(await confirmBox(v === 'remove' ? '自分をこのライブラリーから外しますか？\n外すと、このライブラリーを見られなくなります。' : '自分をオーナーから外しますか？\nあとで戻すには、ほかのオーナーに頼む必要があります。', { ok: 'はい', danger: true }))) { rerender(); return; }
             await changeRole(w, work, e, v);
             if (e === me && v === 'remove') go('#/');
           },
@@ -391,7 +566,7 @@ export function ShareView() {
           : h('span', { class: 'badge role-' + roles[e] }, ROLE_LABEL[roles[e]])))),
       !owner ? h('div', { class: 'actions' },
         h('span', { class: 'muted small grow' }, '共有の設定を変えられるのはオーナーだけです。'),
-        h('button', { class: 'btn small danger', onclick: () => leaveWork(w, work) }, '共有から抜ける')) : null),
+        h('button', { class: 'btn small danger', onclick: () => confirmLeaveWork(w, work) }, '共有を解除')) : null),
 
     h('section', { class: 'panel' },
       h('h2', null, '一般的なアクセス'),
@@ -404,7 +579,7 @@ export function ShareView() {
           }, h('option', { value: 'off' }, '制限付き'), h('option', { value: 'link' }, 'リンクを知っている全員')) : h('b', null, link === 'off' ? '制限付き' : 'リンクを知っている全員'),
           h('div', { class: 'muted small' }, link === 'off'
             ? '追加されたユーザーだけが開けます。'
-            : 'このリンクを開いてGoogleでログインした人は、だれでもこの作品に参加できます。')),
+            : 'このリンクを開いてGoogleでログインした人は、だれでもこのライブラリーに参加できます。')),
         link !== 'off' ? (owner ? h('select', {
           value: link, 'aria-label': 'リンクの権限',
           onchange: (e) => db.update(P.work(w), { linkRole: e.target.value, updatedAt: Date.now() }),

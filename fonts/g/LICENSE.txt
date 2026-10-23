@@ -1,0 +1,6 @@
+このフォルダの字形データ（PDFの文字用）は、次のフォントの字形を変換したものです。
+どちらも SIL Open Font License 1.1 で配布されています（https://openfontlicense.org）。
+
+- jp4 / jp7 : Noto Sans CJK JP Regular / Bold  — Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'.
+- la4 / la7 : Liberation Sans Regular / Bold — Copyright (c) 2012 Red Hat, Inc. Liberation is a trademark of Red Hat, Inc.
+- dot       : ZukaiDot（このサイト用に作った●）

@@ -8,57 +8,85 @@
   position: sticky; top: 0; z-index: 10; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
   padding: 10px max(14px, env(safe-area-inset-left)); background: #fff; border-bottom: 1px solid var(--line, #ddd);
 }
-.print-root { padding: 24px 12px 80px; display: flex; flex-direction: column; align-items: center; gap: 24px; }
+.print-src { position: absolute; left: -10000px; top: 0; visibility: hidden; pointer-events: none; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 
-.sheet {
-  width: 186mm; max-width: 100%; border-collapse: collapse; table-layout: fixed; background: #fff;
-  font-family: Arial, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Noto Sans CJK JP", "Yu Gothic", Meiryo, sans-serif;
-  color: #000; box-shadow: 0 0 0 12mm #fff, 0 6px 30px 12mm rgba(30, 25, 60, .12);
+/* PDFの文字は Arial（ない端末は同じ文字幅の Arimo）、日本語は Noto Sans JP */
+.sheet, .pg {
+  font-family: ZukaiDot, Arial, Arimo, "Noto Sans JP", sans-serif;
+  color: #000;
 }
-.sheet col.c-script { width: 36.5%; }
-.sheet col.c-notes { width: 63.5%; }
-.sheet-title { text-align: left; font-weight: 400; font-size: 10.5pt; padding: 0 0 4mm; }
-.sheet .info > td { padding: 0 0 2mm; border: 0; }
-.info-line { font-size: 10.5pt; line-height: 1.3; }
-.sheet .cast-table { font-size: 9.2pt; margin: 1mm 0 3mm; }
-.sheet .cast-table td { height: 7mm; padding: 1.2mm 1.5mm; }
-.sheet .cast-table .cno { min-width: 2.6em; padding-left: 1mm; }
-.sheet .legend { font-size: 9.5pt; padding: 0 2mm; gap: 3mm; }
+.sheet { width: 190.5mm; background: #fff; }
+
+/* できあがったページ（画面ではA4の紙のように並べる） */
+#print-pages { --fit: 1; display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 16px 8px 80px; }
+.pg-wrap { width: calc(210mm * var(--fit)); height: calc(297mm * var(--fit)); flex: none; }
+.pg {
+  width: 210mm; height: 297mm; padding: 10mm 9.75mm 9mm; box-sizing: border-box; overflow: hidden; background: #fff;
+  transform: scale(var(--fit)); transform-origin: top left; box-shadow: 0 4px 24px rgba(30, 25, 60, .16);
+}
+.pg-title { height: 8mm; font-size: 10pt; line-height: 1.2; overflow: hidden; white-space: nowrap; }
+.p-clip { position: relative; overflow: hidden; }
+.p-col { position: absolute; overflow: hidden; }
+.p-col > .p-table { position: absolute; }
+.info { padding: 0 0 2mm; }
+.info-line { font-size: 10pt; line-height: 1.15; }
+.info .cast-table { font-size: 10pt; margin: 1mm 0 3mm; }
+.info .cast-table td { height: 7.8mm; padding: 1.5mm 1.5mm 1.5mm 1.9mm; }
+.info .cast-table .cno { min-width: 2.2em; padding-left: 0; }
+.info .legend { font-size: 10pt; padding: 0 2mm; gap: 3mm; }
+/* 台本と図解の枠：ページをまたいでも、各ページで上下の線と余白がつく */
+.p-box {
+  position: relative; border: 1px solid #444; border-left: 2.5px solid #000; padding: 2mm 0;
+}
+/* 台本と図解のあいだの線（ほかの線と同じく実線で描く） */
+.print-src .p-box::before, .pg .p-div { content: ""; position: absolute; top: 0; bottom: 0; left: calc(36.5% - 1.25px); border-left: 2.5px solid #000; }
+/* 台本の列の上下は太い線（ページをまたいでも各ページで描く） */
+.print-src .p-box::after, .pg .p-thick {
+  content: ""; position: absolute; top: -1px; bottom: -1px; left: -2.5px; width: calc(36.5% + 2.5px);
+  border-top: 2.5px solid #000; border-bottom: 2.5px solid #000; pointer-events: none;
+}
+.p-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.p-table col.c-script { width: 36.5%; }
+.p-table col.c-notes { width: 63.5%; }
 .p-row > td { vertical-align: top; }
-.p-script { border: 2.5px solid #000; padding: 2mm 2.4mm; font-size: 9pt; line-height: 1.42; }
-.p-notes { border: 1px solid #444; padding: 2mm 2.4mm; font-size: 9.6pt; line-height: 1.4; color: #333; }
+.p-script { padding: 0 2.6mm 0 2.4mm; font-size: 10pt; line-height: 1.15; }
+.p-notes { padding: 0 2.4mm 0 2.8mm; font-size: 10.5pt; line-height: 1.13; color: #000; }
 .p-script .sline { padding: 0; cursor: default; break-inside: avoid; }
 .p-script .sline.indent { padding-left: 3.5mm; }
-.p-script .sline.blank { min-height: 1.42em; }
-.p-script .spk { color: #bdbdbd; }
+.p-script .sline.blank { min-height: 1.15em; }
+.p-script .spk { color: #d9d9d9; }
+/* 手で付けた灰色の文字は、キャラ名と同じ色 */
+.sheet, .pg { --label-gray: #d9d9d9; }
 .p-script .hl { background: #c4c4c4; font-weight: 700; }
 .p-block { margin-bottom: 4mm; }
 .p-block:last-child { margin-bottom: 0; }
 .cue { font-weight: 400; margin: 0 0 .4mm; }
 .cue mark { background: #c4c4c4; color: #000; font-weight: 700; padding: 0 .3mm; }
 .nline { break-inside: avoid; }
-.nline.blank { min-height: 1.4em; }
+.nline.blank { min-height: 1.13em; }
 .p-fig { margin: 2mm 0; break-inside: avoid; }
-.p-fig figcaption { font-size: 9.6pt; margin-bottom: .6mm; }
+.p-fig figcaption { font-size: 10.5pt; margin-bottom: .6mm; }
 .p-stage { display: block; width: 100%; height: auto; }
 .p-photo img { display: block; max-width: 100%; }
 .p-photo.size-s img { width: 40%; }
 .p-photo.size-m img { width: 68%; }
 .p-photo.size-l img { width: 100%; }
 
-@media screen and (max-width: 760px) {
-  .print-root { padding: 12px 6px 60px; }
-  .sheet { box-shadow: none; }
-}
-
-@page { size: A4 portrait; margin: 13mm 12mm 14mm; }
+@page { size: A4 portrait; margin: 0; }
 @media print {
-  body { background: #fff !important; }
-  .no-print, .topbar, #toasts, #modal, .selbar { display: none !important; }
-  .print-root { padding: 0; display: block; }
-  .sheet { width: 100%; box-shadow: none; }
-  .sheet.newpage { break-before: page; page-break-before: always; }
-  .sheet thead { display: table-header-group; }
-  .p-row { break-inside: auto; }
+  html, body { background: #fff !important; margin: 0; padding: 0; }
+  body > :not(#print-pages) { display: none !important; }
+  #print-pages { display: block; padding: 0; gap: 0; }
+  .pg-wrap { width: auto; height: auto; }
+  /* 高さは中身に合わせる（ブラウザが独自の余白を足しても、1ページが2枚に分かれないように） */
+  .pg { transform: none; box-shadow: none; height: auto; padding-bottom: 0; break-after: page; page-break-after: always; }
+  .pg-wrap:last-child .pg { break-after: auto; page-break-after: auto; }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+
+/* 稿の更新箇所（青字） */
+.upd, .p-notes .upd { color: #0000ff; }
+.cue.upd { color: inherit; }
+.cue.upd mark { color: #0000ff; }
+.fixed-mark { margin: 0; }

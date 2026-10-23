@@ -1,8 +1,8 @@
-// 舞台図の並び順と、メンバーの割り当て（最小ストレッチ）の計算
+// 図の並び順と、メンバーの割り当て（最小ストレッチ）の計算
 import { S } from './state.js';
 import { buildRows } from './script.js';
 
-// この稿の舞台図を、表示される順に並べる
+// この稿の図を、表示される順に並べる
 export function diagramSequence() {
   const d = (S.d.drafts || []).find((x) => x.id === S.route.params.d);
   if (!d) return [];
@@ -17,7 +17,7 @@ export function diagramSequence() {
   return out;
 }
 
-// ひとつ前の舞台図（なければ null）
+// ひとつ前の図（なければ null）
 export function previousShapes(diagramId) {
   const seq = diagramSequence();
   const i = seq.indexOf(diagramId);

@@ -1,4 +1,4 @@
-// 作品の共有（Googleドライブと同じ考え方）
+// ライブラリーの共有（Googleドライブと同じ考え方）
 // participants：共有されている全員 / owners：オーナー / viewers：閲覧者 / それ以外は編集者
 // linkRole：'off' | 'viewer' | 'editor'（リンクを知っている全員） / linkKey：リンク用の合言葉
 import { db, newId } from './db.js';
@@ -10,7 +10,7 @@ export const ROLE_LABEL = { owner: 'オーナー', editor: '編集者', viewer: 
 
 export function roleIn(work, email) {
   if (!work) return null;
-  if (!Array.isArray(work.participants)) return 'owner'; // 共有の仕組みより前に作ったデモの作品
+  if (!Array.isArray(work.participants)) return 'owner'; // 共有の仕組みより前に作ったデモのライブラリー
   if (!work.participants.includes(email)) return null;
   const owners = work.owners || work.admins || [];
   if (owners.includes(email)) return 'owner';
@@ -55,12 +55,12 @@ export function joinUrl(w, work) {
 // ---------- 名前の表示（ログインしたことのある人のプロフィール） ----------
 const profileCache = {};
 export async function saveMyProfile(user) {
-  try { await db.set('profiles/' + user.email, { name: user.name || '', photo: user.photo || '', at: Date.now() }); } catch (e) { /* 表示用なので失敗しても続ける */ }
+  try { await db.setQuiet('profiles/' + user.email, { name: user.name || '', photo: user.photo || '', at: Date.now() }); } catch (e) { /* 表示用なので失敗しても続ける */ }
 }
 export function profileName(email, onLoad) {
   if (email in profileCache) return profileCache[email];
   profileCache[email] = '';
-  db.get('profiles/' + email).then((p) => { profileCache[email] = (p && p.name) || ''; if (p && p.name && onLoad) onLoad(); }).catch(() => {});
+  db.getQuiet('profiles/' + email).then((p) => { profileCache[email] = (p && p.name) || ''; if (p && p.name && onLoad) onLoad(); }).catch(() => {});
   return '';
 }
 
@@ -117,7 +117,7 @@ export function handleGroupResult(hash) {
     localStorage.setItem(RESULT_KEY, JSON.stringify({ n: data.n, groups: data.groups || {}, at: Date.now() }));
   } catch (e) { /* 壊れたデータは無視 */ }
   document.title = 'グループの確認';
-  document.body.innerHTML = '<div style="font-family:sans-serif;padding:32px;text-align:center;line-height:1.7">'
+  document.body.innerHTML = '<div style="font-family:Arial,sans-serif;padding:32px;text-align:center;line-height:1.7">'
     + '<h2 style="font-size:18px">グループの確認が終わりました</h2>'
     + '<p>元の画面に戻ると、メンバーが追加されています。<br>このウィンドウは閉じてかまいません。</p>'
     + '<button onclick="window.close()" style="font-size:15px;padding:8px 18px">閉じる</button></div>';

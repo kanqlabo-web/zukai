@@ -29,7 +29,8 @@ function createEl(v, svg) {
   v.el = el;
   setProps(el, {}, v.props, svg);
   const childSvg = svg && v.tag !== 'foreignObject';
-  for (const c of v.children) el.appendChild(createEl(c, childSvg));
+  // manual：中身はその要素が自分で管理する（文字の直接編集など）
+  if (!v.props.manual) for (const c of v.children) el.appendChild(createEl(c, childSvg));
   if (v.tag === 'select' && 'value' in v.props) el.value = v.props.value == null ? '' : String(v.props.value);
   if (typeof v.props.ref === 'function') queueMicrotask(() => v.props.ref(el));
   return el;
@@ -48,7 +49,7 @@ function patch(old, v, svg) {
   }
   svg = svg || v.tag === 'svg';
   setProps(v.el, old.props, v.props, svg);
-  patchChildren(v.el, old.children, v.children, svg && v.tag !== 'foreignObject');
+  if (!v.props.manual) patchChildren(v.el, old.children, v.children, svg && v.tag !== 'foreignObject');
   if (v.tag === 'select' && 'value' in v.props && document.activeElement !== v.el) v.el.value = v.props.value == null ? '' : String(v.props.value);
   if (typeof v.props.update === 'function') v.props.update(v.el);
 }
@@ -99,7 +100,7 @@ function setProps(el, oldP, newP, svg) {
 }
 
 function setProp(el, k, oldV, v, svg) {
-  if (k === 'key' || k === 'ref' || k === 'update') return;
+  if (k === 'key' || k === 'ref' || k === 'update' || k === 'manual') return;
   if (k.startsWith('on')) {
     const name = k.slice(2).toLowerCase();
     el._h = el._h || {};

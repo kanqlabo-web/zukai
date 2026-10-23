@@ -1,5 +1,5 @@
 /**
- * 舞台図解メーカー：Googleグループのメンバー一覧を読み取るウェブアプリ
+ * 図解メーカー：Googleグループのメンバー一覧を読み取るウェブアプリ
  *
  * 共有画面で「〇〇@googlegroups.com」を追加したときに、小さなウィンドウでこのページが開きます。
  * 開いた本人のGoogleアカウントの権限でグループのメンバー一覧を読み、サイトに戻して渡します。
@@ -8,8 +8,8 @@
  * デプロイ方法は README.md の「手順6」を見てください。
  */
 
-// ▼ サイトのアドレス（https:// から .io まで。最後の / や /zukai は付けない）
-const ALLOWED_ORIGIN = 'https://kanqlabo-web.github.io';
+// ▼ サイトのアドレス（最後の / や /zukai は付けない）。GitHub Pages と Firebase Hosting の両方に対応
+const ALLOWED_ORIGINS = ['https://kanqlabo-web.github.io', 'https://zukai-8a392.web.app', 'https://zukai-8a392.firebaseapp.com'];
 // ▲
 
 function doGet(e) {
@@ -17,8 +17,8 @@ function doGet(e) {
   const back = String(p.r || '');
   const nonce = String(p.n || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 40);
   // 決めたサイト以外には結果を渡さない
-  if (back.indexOf(ALLOWED_ORIGIN + '/') !== 0) {
-    return HtmlService.createHtmlOutput('<p>このページは舞台図解メーカーの共有画面から開いてください。</p>');
+  if (!ALLOWED_ORIGINS.some(function (o) { return back.indexOf(o + '/') === 0; })) {
+    return HtmlService.createHtmlOutput('<p>このページは図解メーカーの共有画面から開いてください。</p>');
   }
   const groups = String(p.g || '').split(',')
     .map(function (s) { return s.trim().toLowerCase(); })

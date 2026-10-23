@@ -1,5 +1,6 @@
-// 作品・話・トラ・稿・タイミング・図・写真のデータ操作
+// ライブラリー・話・トラ・稿・タイミング・図・写真のデータ操作
 import { db, newId } from './db.js';
+import { makeOrig, blockUpdates } from './update.js';
 import { resolveAnchor } from './script.js';
 
 export const P = {
@@ -12,9 +13,20 @@ const now = () => Date.now();
 // 画面では「トラック」、PDFのタイトルなど細かい所では「トラ」と表記する
 export function shortTrack(title) { return String(title || '').replace(/トラック/g, 'トラ'); }
 
+// 稿の呼び名（「第3稿」「最終稿」「2.5稿」など。自由に付けた名前があればそれ）
+export function draftName(draft) {
+  if (draft && draft.label) return draft.label;
+  return `第${draft && draft.no != null ? draft.no : 1}稿`;
+}
+// 入力された稿の名前を整える（数字だけなら「第〇稿」にする）
+export function normalizeDraftName(v) {
+  const t = String(v || '').trim();
+  if (/^[0-9０-９]+([.．][0-9０-９]+)?$/.test(t)) return `第${t}稿`;
+  return t;
+}
 export function draftTitle(work, ep, track, draft) {
   const prefix = work && work.prefix != null ? work.prefix : '【表現活動】';
-  return `${prefix}${ep ? ep.title : ''}図解_${track ? shortTrack(track.title) : ''}_第${draft ? draft.no : 1}稿`;
+  return `${prefix}${ep ? ep.title : ''}図解_${track ? shortTrack(track.title) : ''}_${draftName(draft)}`;
 }
 
 export async function createWork(title, user) {
@@ -44,13 +56,21 @@ export function emptyDraft(trackId, no, user) {
 }
 
 // 稿を複製して新しい稿を作る（タイミング・図・写真ごと）
-export async function copyDraft(w, draftId, user) {
+// opts.label：新しい稿の名前（なければ「第〇稿」）
+// opts.keepBlue：青字をそのままにする（前の稿で青だったところを、新しい稿でも青のままにする）。
+//   しないときは、前の稿の青字（自動の青字・手で付けた青）は黒になる。ピンク・赤・灰色・太字・塗りはそのまま
+export async function copyDraft(w, draftId, user, opts = {}) {
   const src = await db.get(P.doc(w, 'drafts', draftId));
   if (!src) throw new Error('元の稿が見つかりません');
   const all = await db.list(P.col(w, 'drafts'), ['trackId', src.trackId]);
   const no = Math.max(0, ...all.map((d) => d.no || 0)) + 1;
   const nd = newId();
-  const ops = [{ op: 'set', path: P.doc(w, 'drafts', nd), data: { ...src, no, createdAt: now(), updatedAt: now(), updatedBy: user.name, copiedFrom: draftId } }];
+  const label = opts.label && opts.label !== `第${no}稿` ? opts.label : '';
+  const noBlue = (marks) => (marks || []).filter((m) => !(m.k === 'c' && m.v === 'blue'));
+  const ops = [{ op: 'set', path: P.doc(w, 'drafts', nd), data: {
+    ...src, no, label, createdAt: now(), updatedAt: now(), updatedBy: user.name, copiedFrom: draftId, updMark: true, updShow: true,
+    scriptMarks: opts.keepBlue ? (src.scriptMarks || []) : noBlue(src.scriptMarks),
+  } }];
   const [blocks, diagrams, images] = await Promise.all([
     db.list(P.col(w, 'blocks'), ['draftId', draftId]),
     db.list(P.col(w, 'diagrams'), ['draftId', draftId]),
@@ -67,10 +87,41 @@ export async function copyDraft(w, draftId, user) {
     const { id: _, ...rest } = im;
     ops.push({ op: 'set', path: P.doc(w, 'images', id), data: { ...rest, draftId: nd } });
   }
+  const byId = Object.fromEntries(diagrams.map((g) => [g.id, g]));
   for (const b of blocks) {
-    const { id: _, ...rest } = b;
+    const { id: _, orig: _o, cueBlue: _cb, ...rest } = b;
+    const u = opts.keepBlue ? blockUpdates(src, b, byId) : null; // 前の稿での青字
+    rest.orig = makeOrig(b, byId); // 更新箇所を青字にするための控え
+    if (u && (u.cue || b.cueBlue) && b.cue) rest.cueBlue = true;
     const items = {};
-    for (const [k, it] of Object.entries(b.items || {})) items[k] = it.refId ? { ...it, refId: map[it.refId] || it.refId } : it;
+    for (const [k, it] of Object.entries(b.items || {})) {
+      items[k] = it.refId ? { ...it, refId: map[it.refId] || it.refId } : it;
+      if (it.kind === 'text') {
+        let marks = opts.keepBlue ? (it.marks || []) : noBlue(it.marks);
+        if (u) {
+          // 自動で青だった行に、青い色を付けておく（手で色を付けた文字はそのまま）
+          const text = it.text || '';
+          const colored = new Set();
+          for (const m of marks) if (m.k === 'c') for (let i = m.s; i < m.e; i++) colored.add(i);
+          let pos = 0;
+          for (const ln of text.split('\n')) {
+            const st = pos; pos += ln.length + 1;
+            if (!u.line(k, ln)) continue;
+            let i = st;
+            while (i < st + ln.length) {
+              if (colored.has(i)) { i++; continue; }
+              let j = i;
+              while (j < st + ln.length && !colored.has(j)) j++;
+              marks = [...marks, { s: i, e: j, k: 'c', v: 'blue' }];
+              i = j;
+            }
+          }
+        }
+        items[k] = { ...items[k], marks };
+      }
+      // 前の稿で「図解修正済み」だった図は、新しい稿でもそのまま
+      if (u && it.kind === 'diagram' && u.diagram(k, it.refId)) rest.orig.dias[k] = 'changed';
+    }
     ops.push({ op: 'set', path: P.doc(w, 'blocks', newId()), data: { ...rest, items, draftId: nd } });
   }
   await db.batch(ops);
@@ -103,6 +154,17 @@ export async function deleteEpisode(w, epId) {
   await db.remove(P.doc(w, 'episodes', epId));
 }
 
+// ライブラリーを丸ごと1つのファイル（JSON）にする（「サンプル用に書き出す」）
+export const LIB_COLS = ['episodes', 'tracks', 'drafts', 'blocks', 'diagrams', 'images'];
+export async function exportWork(w) {
+  const work = await db.get(P.work(w));
+  const out = { format: 'zukai-library', version: 1, exportedAt: now(), work: {}, cols: {} };
+  for (const k of ['title', 'prefix', 'cast', 'labelRules']) if (work && work[k] !== undefined) out.work[k] = work[k];
+  // 更新日時・更新した人は書き出さない（サンプルに名前が残らないように）
+  for (const c of LIB_COLS) out.cols[c] = (await db.list(P.col(w, c))).map(({ updatedAt, updatedBy, createdBy, lastJoin, ...rest }) => rest);
+  return out;
+}
+
 export async function deleteWork(w) {
   const ops = [];
   for (const c of ['episodes', 'tracks', 'drafts', 'blocks', 'diagrams', 'images']) {
@@ -113,7 +175,7 @@ export async function deleteWork(w) {
   await db.batch(ops);
 }
 
-// 台本を保存し、タイミングの位置を付け直す
+// テーマ活動の友を保存し、タイミングの位置を付け直す
 export async function saveScript(w, draftId, script, blocks, user) {
   const ops = [{ op: 'update', path: P.doc(w, 'drafts', draftId), data: { script, updatedAt: now(), updatedBy: user.name } }];
   for (const b of blocks) {
@@ -123,7 +185,7 @@ export async function saveScript(w, draftId, script, blocks, user) {
   await db.batch(ops);
 }
 
-// 図解（《タイミング》＋動きの文章＋舞台図）を作る。舞台図は必ず1枚つける
+// 図解（《タイミング》＋動きの文章＋図）を作る。図は必ず1枚つける
 export async function createBlock(w, draftId, { cue, offset, anchorText, shapes }) {
   const id = newId();
   const itemId = newId(8);
