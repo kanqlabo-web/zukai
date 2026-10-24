@@ -5,7 +5,7 @@
 //   [2, id, [子のid…], [a,b,c,d,tx,ty], ページ]             グループ（子の行列にかける）
 //   [15, id, null, 位置, 文字]                               図形の中の文字
 //   [17, id, null, 始め, 終わり, [], [4, 文字の色, 6, 文字の大きさ(pt)]] 文字の書式
-// ・形：8 楕円、6 四角、108 テキストボックス、153 線、4 フリーハンド（属性 12 に点の並び）、太い矢印は ARROWS
+// ・形：8 楕円、6 四角、7 角丸四角、98 三角、108 テキストボックス、153 線、4 フリーハンド（属性 12 に点の並び）、太い矢印は ARROWS
 //   知らない形は、同じ大きさの四角にする
 // ・属性：14 塗りのあり（0 ＝なし）、15 塗りの色、19 線の色、22 線の太さ（25 EMU 単位）
 //   12 フリーハンドの線：[[閉じる?, ?, [命令, 数の個数, …], [x, y, …], …]]（命令 0 ＝移動、1 ＝直線）
@@ -16,7 +16,7 @@ export const SLIDES_TYPE = 'application/x-vnd.google-docs-drawings-object+wrappe
 const BASE = 120000;
 const SLIDE_W = 365760; // 16:9 のスライドの横幅（25 EMU 単位）
 const PERSON_D = 40; // 図解メーカーの人の直径
-const KIND = { 8: 'ellipse', 6: 'rect', 108: 'text', 153: 'line', 4: 'free', 72: 'arrow', 45: 'arrow', 102: 'arrow', 24: 'arrow' };
+const KIND = { 8: 'ellipse', 6: 'rect', 7: 'round', 98: 'tri', 108: 'text', 153: 'line', 4: 'free', 72: 'arrow', 45: 'arrow', 102: 'arrow', 24: 'arrow' };
 // 太い矢印：もとの枠（0〜1）の中の中心線と、軸の太さ（枠の短い辺に対する割合）
 // 72 右矢印、45 左矢印吹き出し、102 U ターン矢印、24 曲線矢印（くるりと回る）
 const ARROWS = {
@@ -88,6 +88,7 @@ export function parseSlidesClip(raw) {
     if (KIND[s.kind] === 'line') pts = [P(0, 0), P(BASE, BASE)];
     const arrow = ARROWS[s.kind];
     if (arrow) pts = arrow.pts.map(([u, v]) => P(u * BASE, v * BASE));
+    if (KIND[s.kind] === 'tri') { pts = [[0.5, 0], [1, 1], [0, 1]].map(([u, v]) => P(u * BASE, v * BASE)); closed = true; }
     // 線の先：28 始点、29 終点（0 ＝なし）
     const hs = !!s.props[28], he = !!s.props[29];
     out.push({
@@ -101,6 +102,8 @@ export function parseSlidesClip(raw) {
   }
   return out;
 }
+
+const base0 = (s) => ({ ...(s.fill ? { fill: areaFill(s.fill) } : {}), ...(s.line ? {} : { noline: true }) });
 
 // 図形の並び → 舞台の図形（at を中心に置く）。人の大きさを図解メーカーの人にそろえる
 export function slidesToShapes(list, at) {
@@ -144,6 +147,10 @@ export function slidesToShapes(list, at) {
       else out.push({ t: 'line', style: 'block', head: 'end', width: w, mode: 'smooth', pts: q, seq: seq++ });
       continue;
     }
+    if (kind === 'tri') {
+      out.push({ t: 'blob', sharp: true, pts: s.pts.map((v) => [X(v[0]), Y(v[1])]), ...base0(s), seq: seq++ });
+      continue;
+    }
     if (kind === 'line' || kind === 'free') {
       const pts = [];
       for (const q of s.pts || []) {
@@ -162,7 +169,7 @@ export function slidesToShapes(list, at) {
     if (!s.line) base.noline = true;
     const rot = Math.round(s.rot * 10) / 10;
     if (kind === 'ellipse') out.push({ t: 'ellipse', x: X(s.cx), y: Y(s.cy), rx: Math.round(s.w * k * 5) / 10, ry: Math.round(s.h * k * 5) / 10, rot, ...base });
-    else out.push({ t: 'rect', x: Math.round(X(s.cx)), y: Math.round(Y(s.cy)), w: Math.round(s.w * k), h: Math.round(s.h * k), rot, ...base });
+    else out.push({ t: 'rect', x: Math.round(X(s.cx)), y: Math.round(Y(s.cy)), w: Math.round(Math.abs(s.w) * k), h: Math.round(Math.abs(s.h) * k), rot, ...(kind === 'round' ? { round: true } : {}), ...base });
     // 図形の中の文字は、文字として置く（あとで図形の名前にする）
     if (t) out.push({ t: 'text', text: t, x: Math.round(X(s.cx)), y: Math.round(Y(s.cy)), size: 20, rot: 0, seq: seq++ });
   }

@@ -5,7 +5,6 @@ import { S, rerender, toast } from './state.js';
 import { P } from './model.js';
 import { textInRegion } from './drawimport.js';
 import { shapesFromClipboard, MARK } from './clippaste.js';
-import { ADMIN_EMAILS } from './settings.js';
 import { W, H, stageFrame, shapeNode, sortShapes, moveShape, shapeCenter, shapeBBox, simplify, LAYER, layoutLabels, isRegion, isFillable, canName, insideShape, linePoints } from './stage.js';
 import { fillWeight, pointsFor } from './fill.js';
 import { castIndex, personCast, personNo, rolesOf, roleText, roleVisible, roleKey } from './cast.js';
@@ -637,23 +636,7 @@ function copySel() {
   }
 }
 // ほかのアプリ（Googleドキュメント・スライドなど）からの貼り付け
-// 調査用（管理者だけ）：Google の独自形式が入っていたら、中身を clipboard.json に保存する
-function saveClipForStudy(dt) {
-  try {
-    const email = String((S.user && S.user.email) || '').toLowerCase();
-    if (!ADMIN_EMAILS.includes(email)) return;
-    const types = [...dt.types];
-    if (!types.some((t) => t !== 'text/plain' && t !== 'Files')) return;
-    const data = {};
-    for (const t of types) { try { data[t] = dt.getData(t); } catch (e) { data[t] = String(e); } }
-    const blob = new Blob([JSON.stringify({ at: new Date().toISOString(), types, data }, null, 1)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = 'clipboard.json';
-    document.body.appendChild(a); a.click(); a.remove();
-  } catch (e) { /* noop */ }
-}
 async function pasteExternal(dt) {
-  saveClipForStudy(dt);
   const at = [W / 2, H / 2];
   let busy = setTimeout(() => toast('貼り付けています…'), 400);
   let list;
