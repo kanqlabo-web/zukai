@@ -436,9 +436,10 @@ export function CommentsPanel() {
     h('p', null, 'テマ友や図解の文章をなぞって選ぶと出るボタンか、右クリック、', h('kbd', null, 'Ctrl+Alt+M'), ' でコメントできます。')) : null;
   // 広い画面：本文の右の余白。カードの高さは、描いたあとに layoutSide で付けた所にそろえる
   // （未解決のものだけ。解決済みは上の「コメント」ボタンの一覧で見る）
-  if (side) return h('aside', { class: 'cmt-side-col', 'aria-label': 'コメント' }, compose, open.map(Card));
+  if (side) return h('aside', { key: 'cmt-side', class: 'cmt-side-col', 'aria-label': 'コメント' }, compose, open.map(Card));
   // コメントの一覧：未解決を上に、解決済みをその下に
-  return h('aside', { class: 'cmt-panel', 'aria-label': 'コメントの一覧' }, head,
+  // 右のカードの列とは別の要素にする（同じ要素を使い回すと、列に付けた位置・高さが残って一覧が潰れる）
+  return h('aside', { key: 'cmt-list', class: 'cmt-panel', 'aria-label': 'コメントの一覧' }, head,
     h('div', { class: 'cmt-list' }, compose, empty, open.map(Card),
       done.length ? h('div', { class: 'cmt-done-title muted small' }, `解決済み（${done.length}件）`) : null, done.map(Card)),
     h('div', { class: 'cmt-foot' },

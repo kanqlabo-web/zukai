@@ -308,3 +308,6 @@
 .cmt-done-box summary { cursor: pointer; padding: 2px; }
 .cmt-done-box > .cmt-card { margin-top: 8px; }
 .track > .cmt-chip { margin-left: 0; margin-right: 6px; align-self: center; }
+/* 「…」のメニューを開いたカードは次のカードより手前に（解決済みの薄さも外してメニューを読みやすく） */
+.cmt-card:has(.cmt-menu[open]) { position: relative; z-index: 5; opacity: 1; }
+.cmt-side-col > .cmt-card:has(.cmt-menu[open]) { position: absolute; }
