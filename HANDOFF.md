@@ -37,7 +37,7 @@
 - 自作の仮想 DOM（`js/vdom.js` の `h()` / `render()`）。状態は `js/state.js` の `S`（`S.d` データ、`S.ui` 画面の状態、`S.route`）。`rerender()` で描き直し（rAF でまとめる）。
 - `js/firebase-config.js` の `apiKey` を空にすると「デモモード」（データはブラウザの localStorage）。手元の動作確認はこれで行う。**コミット前に apiKey を必ず戻す**（`AIzaSyDFBoS_DMNN9EB7ohza1ijwHpDzFD93WBA`）。
 - Firestore の構造：`works/{w}`（ライブラリー。cast＝メンバー一覧、participants / owners / viewers、linkRole / linkKey）と、その下の `episodes`（話）・`tracks`（トラック）・`drafts`（稿。script＝テマ友）・`blocks`（タイミングの段。anchor＝{offset, text}、items＝説明・図・写真）・`diagrams`（図。shapes）・`images`（写真）・`presence`（同時編集の表示。Realtime Database が使えないときだけ）。ルールは `firestore.rules`。
-- 同時編集の表示（1.6.0〜）：Realtime Database の `presence/{w}_{presenceKey}/{uid}`。`presenceKey` は作品（`works/{w}`）にあり、編集できる人が最初に作る（履歴には残さない）。接続が切れたら onDisconnect で消える。書けない・10秒つながらないときは、その回は Firestore の `works/{w}/presence` に切り替える。ルールは `database.rules.json`（コンソールの Realtime Database → ルールに貼る）。図の編集画面のマウスの位置（1.7.0〜）は `ptr: {g, x, y}`（舞台の座標）を 0.07 秒ごとに `update` で送り、受け取った側は画面全体を描き直さず `paintPointers` で矢印だけ動かす。
+- 同時編集の表示（1.6.0〜）：Realtime Database の `presence/{w}_{presenceKey}/{uid}`。`presenceKey` は作品（`works/{w}`）にあり、編集できる人が最初に作る（履歴には残さない）。接続が切れたら onDisconnect で消える。書けない・10秒つながらないときは、その回は Firestore の `works/{w}/presence` に切り替える。ルールは `database.rules.json`（コンソールの Realtime Database → ルールに貼る）。図の編集画面のマウスの位置（1.9.0〜）は `ptr: {g, x, y}`（舞台の座標）を 0.07 秒ごとに `update` で送り、受け取った側は画面全体を描き直さず `paintPointers` で矢印だけ動かす。ほかのページ（1.10.0〜）は `ptr: {h: ページの hash, a: data-pkey などの属性, k: その値, fx, fy}`（欄の中の割合。欄がなければ #app の幅の割合と上からの px）。
 
 ### 主なファイル
 | ファイル | 役割 |

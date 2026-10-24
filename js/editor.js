@@ -1658,11 +1658,11 @@ export function PresenceMarks(shapes, here, upx) {
       if (!s) continue;
       const [x1, y1, x2, y2] = presBox(s);
       // 自分が選んだときと同じ、形に沿った点線（色はその人の色）
-      out.push(h('g', { key: p.email + id, class: 'pres-sel', style: { '--sel': c } }, shapeNode(s, { selected: true, idx: idx() })));
+      out.push(h('g', { key: p.pid + id, class: 'pres-sel', style: { '--sel': c } }, shapeNode(s, { selected: true, idx: idx() })));
       if (first) {
         const fs = 13 / upx;
         const tw = [...String(p.name)].length * fs * 0.95 + 8 / upx;
-        out.push(h('g', { key: p.email + id + 'n', 'pointer-events': 'none' },
+        out.push(h('g', { key: p.pid + id + 'n', 'pointer-events': 'none' },
           h('rect', { x: x1, y: y1 - fs - 6 / upx, width: tw, height: fs + 6 / upx, rx: 3 / upx, fill: c }),
           h('text', { x: x1 + 4 / upx, y: y1 - 4 / upx, 'font-size': fs, fill: '#fff', 'font-weight': 700 }, p.name)));
         first = false;
@@ -1761,7 +1761,7 @@ export function EditorView() {
     h('header', { class: 'ed-top' },
       h('button', { class: 'btn primary', onclick: () => closeEditor() }, '完了'),
       h('div', { class: 'ed-title' }, '図の編集'),
-      here.length ? h('div', { class: 'pres-tags in-editor', title: 'この図を開いている人' }, here.map((p) => h('span', { key: p.email, class: 'pres-tag', style: { background: colorOf(p.email) } }, p.name))) : null,
+      here.length ? h('div', { class: 'pres-tags in-editor', title: 'この図を開いている人' }, here.map((p) => h('span', { key: p.pid, class: 'pres-tag', style: { background: colorOf(p.email) } }, p.name))) : null,
       CountChip(shapes, ix),
       h('label', { class: 'prop-toggle', title: 'この図で直したこと（動かす・足す・消す・色・キャラ名の表示など）を、あとの図にも反映します。図を開くたびにオフに戻ります' },
         h('input', { type: 'checkbox', checked: E.propagate, onchange: (e) => setPropPref(e.target.checked) }),

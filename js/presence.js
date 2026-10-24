@@ -107,12 +107,13 @@ function sendSoon() {
   } else timer = setTimeout(() => send(false), 250);
 }
 
-// ---------- マウスの位置（図の編集画面。Realtime Database のときだけ） ----------
-// 図の中の座標（舞台 1000×470）で送るので、画面の大きさや拡大率が違っても同じ所を指す
+// ---------- マウスの位置（Realtime Database のときだけ） ----------
+// 図の編集画面：図の中の座標（舞台 1000×470）で送るので、画面の大きさや拡大率が違っても同じ所を指す
+// ほかのページ：マウスの下にある行・欄（data-pkey など）からの割合で送る。なければページ全体の幅の割合と上からの距離
 let myPtr = null, ptrTimer = null, ptrSent = 0;
-export function sharePointer(g, xy) {
+function setPtr(v) {
   if (!room || !room.rt) return;
-  myPtr = xy ? { g, x: Math.round(xy[0]), y: Math.round(xy[1]) } : null;
+  myPtr = v;
   if (ptrTimer) return;
   const wait = Math.max(0, 70 - (Date.now() - ptrSent));
   ptrTimer = setTimeout(() => {
@@ -120,6 +121,47 @@ export function sharePointer(g, xy) {
     ptrSent = Date.now();
     if (room && room.rt) db.room.patch(room.path, { ptr: myPtr }).catch(() => {});
   }, wait);
+}
+export function sharePointer(g, xy) {
+  setPtr(xy ? { g, x: Math.round(xy[0]), y: Math.round(xy[1]) } : null);
+}
+const ANCH = ['data-pkey', 'data-prow', 'data-pblock'];
+const r3 = (v) => Math.round(v * 1000) / 1000;
+document.addEventListener('pointermove', (e) => {
+  if (!room || !room.rt || S.ui.editDiagram || e.pointerType === 'touch') return;
+  const t = e.target && e.target.closest ? e.target : null;
+  let a = '', el = null;
+  for (const x of ANCH) { el = t && t.closest(`[${x}]`); if (el) { a = x; break; } }
+  if (!el) el = document.getElementById('app');
+  const r = el.getBoundingClientRect();
+  const fx = r.width ? (e.clientX - r.left) / r.width : 0;
+  const fy = a ? (r.height ? (e.clientY - r.top) / r.height : 0) : e.clientY - r.top;
+  setPtr({ h: location.hash, a, k: a ? el.getAttribute(a) : '', fx: r3(fx), fy: a ? r3(fy) : Math.round(fy) });
+});
+document.addEventListener('mouseout', (e) => { if (!e.relatedTarget && !S.ui.editDiagram) setPtr(null); });
+// 送られてきた位置を、この画面の上の位置（左上からの px）に直す
+function ptrPlace(p) {
+  const q = p.ptr;
+  const g = S.ui.editDiagram;
+  if (g) {
+    if (q.g !== g || p.g !== g) return null;
+    const svg = document.getElementById('ed-svg');
+    const m = svg && svg.getScreenCTM();
+    if (!m) return null;
+    const x = m.a * q.x + m.c * q.y + m.e, y = m.b * q.x + m.d * q.y + m.f;
+    const box = svg.closest('.ed-canvas-wrap');
+    const c = box && box.getBoundingClientRect();
+    if (c && (x < c.left || x > c.right || y < c.top || y > c.bottom)) return null;
+    return [x, y];
+  }
+  if (q.g || p.g || q.h !== location.hash) return null;
+  const el = q.a ? document.querySelector(`[${q.a}="${CSS.escape(String(q.k))}"]`) : document.getElementById('app');
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  const x = r.left + q.fx * r.width;
+  const y = r.top + (q.a ? q.fy * r.height : q.fy);
+  if (y < 0 || y > window.innerHeight) return null;
+  return [x, y];
 }
 const noPtr = (a) => JSON.stringify(a.map((p) => ({ ...p, ptr: null })));
 const sameButPtr = (a, b) => a.length === b.length && noPtr(a) === noPtr(b);
@@ -132,35 +174,26 @@ export function paintPointers() {
     ptrLayer.className = 'pres-ptrs';
     document.body.appendChild(ptrLayer);
   }
-  const g = S.ui.editDiagram;
-  const svg = g && document.getElementById('ed-svg');
-  const m = svg && svg.getScreenCTM();
-  const box = svg && svg.closest('.ed-canvas-wrap');
-  const clip = box ? box.getBoundingClientRect() : null;
   const seen = new Set();
-  if (m) {
-    for (const p of others()) {
-      if (!p.ptr || p.ptr.g !== g || p.g !== g) continue;
-      const x = m.a * p.ptr.x + m.c * p.ptr.y + m.e, y = m.b * p.ptr.x + m.d * p.ptr.y + m.f;
-      const out = clip && (x < clip.left || x > clip.right || y < clip.top || y > clip.bottom);
-      let el = ptrLayer.querySelector(`[data-ptr="${CSS.escape(p.email)}"]`);
-      if (!el) {
-        const c = p.color || colorOf(p.email);
-        el = document.createElement('div');
-        el.className = 'pp';
-        el.setAttribute('data-ptr', p.email);
-        const name = document.createElement('span');
-        name.className = 'pp-name';
-        name.style.background = c;
-        name.textContent = p.name || '';
-        el.innerHTML = ARROW(c);
-        el.appendChild(name);
-        ptrLayer.appendChild(el);
-      }
-      el.style.transform = `translate(${x}px, ${y}px)`;
-      el.style.display = out ? 'none' : '';
-      seen.add(p.email);
+  for (const p of others()) {
+    const at = p.ptr && ptrPlace(p);
+    if (!at) continue;
+    let el = ptrLayer.querySelector(`[data-ptr="${CSS.escape(p.pid)}"]`);
+    if (!el) {
+      const c = p.color || colorOf(p.email);
+      el = document.createElement('div');
+      el.className = 'pp';
+      el.setAttribute('data-ptr', p.pid);
+      const name = document.createElement('span');
+      name.className = 'pp-name';
+      name.style.background = c;
+      name.textContent = p.name || '';
+      el.innerHTML = ARROW(c);
+      el.appendChild(name);
+      ptrLayer.appendChild(el);
     }
+    el.style.transform = `translate(${at[0]}px, ${at[1]}px)`;
+    seen.add(p.pid);
   }
   for (const el of [...ptrLayer.children]) if (!seen.has(el.getAttribute('data-ptr'))) el.remove();
 }
@@ -211,7 +244,8 @@ export function others() {
   const now = Date.now();
   const mine = S.user && S.user.email;
   return list.filter((p) => p.email && p.email !== mine && now - (p.at || 0) < TTL)
-    .sort((a, b) => String(a.email).localeCompare(String(b.email)));
+    .map((p) => ({ ...p, pid: p.id || p.email }))
+    .sort((a, b) => String(a.pid).localeCompare(String(b.pid)));
 }
 
 export function placeOf(p) {
@@ -234,7 +268,7 @@ export function PresenceBar() {
   if (!list.length) return null;
   const w = S.route.params && S.route.params.w;
   return h('div', { class: 'presence-bar' }, list.slice(0, 6).map((p) => h('button', {
-    key: p.email, class: 'pres-face', title: `${p.name}：${placeOf(p)}`,
+    key: p.pid, class: 'pres-face', title: `${p.name}：${placeOf(p)}`,
     onclick: () => { if (w && p.d) go(`#/w/${w}/d/${p.d}`); else if (w) go(`#/w/${w}`); },
   }, face(p, 'pav'))), list.length > 6 ? h('span', { class: 'pres-more', title: list.slice(6).map((p) => p.name).join('、') }, `+${list.length - 6}`) : null);
 }
@@ -245,7 +279,7 @@ export function NameTag(p, extra) {
 }
 export function NameTags(list, cls) {
   // 人がいなくても空の枠を置く（前後の要素が作り直されないように）
-  return h('div', { class: 'pres-tags ' + (cls || '') + (list.length ? '' : ' empty') }, list.map((p) => h('span', { key: p.email, class: 'pres-tag', style: { background: p.color || colorOf(p.email) } }, p.name)));
+  return h('div', { class: 'pres-tags ' + (cls || '') + (list.length ? '' : ' empty') }, list.map((p) => h('span', { key: p.pid, class: 'pres-tag', style: { background: p.color || colorOf(p.email) } }, p.name)));
 }
 // 枠の色（いちばん目の人の色）
 export const ringStyle = (list) => (list.length ? { boxShadow: `0 0 0 2px ${list[0].color || colorOf(list[0].email)}` } : null);
