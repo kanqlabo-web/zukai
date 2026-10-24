@@ -6,7 +6,7 @@ import { S, rerender, setRenderers, toast, go, adminMsg } from './state.js';
 import { HomeView, createSampleWork } from './views-home.js';
 import { WorkView, CastView, ShareView } from './views-work.js';
 import { DraftView, SelectionBar } from './views-draft.js';
-import { EditorView, closeEditor, isEditorOpen } from './editor.js';
+import { EditorView, closeEditor, isEditorOpen, openPendingEditor } from './editor.js';
 import { PrintView, loadPrint, layoutPages, clearPages, autoExport } from './print.js';
 import { P } from './model.js';
 import { DialogView, isDialogOpen, closeDialog } from './dialog.js';
@@ -41,7 +41,7 @@ function parseRoute() {
 }
 
 function watch(key, fn) {
-  subs.push(fn((v) => { S.d[key] = v; rerender(); }));
+  subs.push(fn((v) => { S.d[key] = v; rerender(); openPendingEditor(); }));
 }
 
 function onRoute() {

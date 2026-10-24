@@ -15,6 +15,7 @@ import { icon } from './icons.js';
 import { MenuBar, ContextMenu, openContextMenu, closeMenus, menuOpen, openMenu, MOD } from './menubar.js';
 import { ask } from './dialog.js';
 import { previousShapes, minCostAssign, diagramSequence } from './assign.js';
+import { neighborDrafts, loadNeighbor, edgeDiagram } from './neighbors.js';
 import { setPresence, others, colorOf, sharePointer } from './presence.js';
 
 let E = null;
@@ -30,6 +31,7 @@ export function openEditor(w, id) {
     zoom: 1, undo: [], redo: [], personCid: null, personRid: null, personFill: 'white', personRing: false, multi: false, lastTap: null,
     filter: 'all', roleVis: {}, focusText: null, fillCount: '', fillMode: null, hmode: null, inline: null, poly: null,
     propagate: false, linkPeople: false, // 図を開くたびに、どちらもオフから始める
+    ghost: ghostPref(),
   };
   S.ui.editDiagram = id;
   fingers.clear();
@@ -51,7 +53,33 @@ export function openEditor(w, id) {
   window.addEventListener('keydown', onKey);
   // ブラウザの「戻る」（スマホの戻るジェスチャー）で、ページではなく図の編集だけを閉じるよう、履歴を1つ足す
   if (!(window.history.state && window.history.state.zukaiEditor)) window.history.pushState({ zukaiEditor: id }, '');
+  // 前後のトラックの図を読む（左の一覧と、前の図の重ね表示・最小ストレッチに使う）
+  const nb = neighborDrafts(S.route.params.d);
+  for (const k of ['prev', 'next']) if (nb[k]) loadNeighbor(w, nb[k].draft, draw);
   rerender();
+}
+
+// 前の図を薄く重ねるか（この端末で覚えておく。はじめは重ねる）
+function ghostPref() { try { return localStorage.getItem('zukai.ghost') !== '0'; } catch (e) { return true; } }
+function setGhost(v) { E.ghost = v; try { localStorage.setItem('zukai.ghost', v ? '1' : '0'); } catch (e) { /* noop */ } draw(); }
+
+// 別のトラック（稿）の図を開く：そのトラックのページに移ってから、図の編集を開く
+let pending = null;
+function openOther(draftId, gid) {
+  const w = E.w;
+  closeEditor(true);
+  pending = { w, d: draftId, g: gid };
+  location.replace(`#/w/${w}/d/${draftId}`); // 図の編集のために足した履歴を、移った先のページに置き換える
+}
+// ページのデータが届いたら、待っていた図を開く
+export function openPendingEditor() {
+  if (!pending || E) return;
+  const { w, d, g } = pending;
+  if (S.route.name !== 'draft' || S.route.params.d !== d) { if (S.route.params.d !== d) pending = null; return; }
+  if (!S.d.blocks || !S.d.drafts || !(S.d.diagrams || []).some((x) => x.id === g)) return;
+  pending = null;
+  openEditor(w, g);
+  requestAnimationFrame(() => { const el = document.querySelector('.strip-item.on'); if (el) el.scrollIntoView({ block: 'nearest' }); });
 }
 
 export const isEditorOpen = () => !!E;
@@ -984,8 +1012,13 @@ function onKey(e) {
   if (!mod && (e.key === 'PageDown' || e.key === 'PageUp')) {
     e.preventDefault();
     const seq = diagramSequence().filter((id) => (S.d.diagrams || []).some((g) => g.id === id));
-    const to = seq[seq.indexOf(E.id) + (e.key === 'PageDown' ? 1 : -1)];
+    const i = seq.indexOf(E.id);
+    const to = seq[i + (e.key === 'PageDown' ? 1 : -1)];
     if (to) switchDiagram(to);
+    else if (i >= 0) {
+      const edge = edgeDiagram(e.key === 'PageDown' ? 'next' : 'prev', S.route.params.d);
+      if (edge && edge.diagram) openOther(edge.draft.id, edge.diagram.id);
+    }
     return;
   }
   // ボタンや欄を選んでいるときの Tab・Enter は、そのボタンや欄に任せる
@@ -1807,7 +1840,7 @@ function SelPanel() {
           h('button', { class: 'btn small', onclick: startHeight }, '身長順'),
           h('button', { class: 'btn small', disabled: !hasPrev, onclick: reassignStretch }, '最小ストレッチ')),
         h('div', { class: 'muted small' }, hasPrev
-          ? '立ち位置はそのままで番号を入れ替えます。最小ストレッチは、ひとつ前の図からの移動がいちばん少なくなる並びにします。'
+          ? '立ち位置はそのままで番号を入れ替えます。最小ストレッチは、ひとつ前の図（トラックの最初の図なら、前のトラックの最後の図）からの移動がいちばん少なくなる並びにします。'
           : '立ち位置はそのままで番号を入れ替えます。最小ストレッチは、ひとつ前の図があるときに使えます。')));
     }
   }
@@ -2147,6 +2180,7 @@ function editorMenus(setTool, zoomIn, zoomOut) {
       { label: '100%', checked: Math.abs(E.zoom - 1) < 0.01, onclick: () => { E.zoom = 1; draw(); } },
       '-',
       { label: '下絵を表示', checked: !!(E.trace && !E.traceHidden), disabled: !E.trace, onclick: () => { E.traceHidden = !E.traceHidden; draw(); } },
+      { label: '前の図を薄く重ねる（移動を点線で）', checked: E.ghost, onclick: () => setGhost(!E.ghost) },
       { label: 'スクロール（手のひら）', checked: E.tool === 'pan', onclick: () => setTool('pan') },
     ] },
     { label: '挿入', items: [
@@ -2199,19 +2233,59 @@ function onContext(e) {
 }
 
 // 左の一覧：このトラックの図を順番に並べ、押すとその図に切り替える（スライドの一覧と同じ）
+// いちばん上に前のトラックの最後の図、いちばん下に次のトラックの最初の図を薄く出し、押すとその図を開く
 function Filmstrip(seq, ix) {
   const byId = {};
   for (const g of S.d.diagrams || []) byId[g.id] = g;
-  return h('nav', { class: 'ed-strip', 'aria-label': 'このトラックの図' }, seq.map((id, i) => {
-    const g = byId[id];
-    const now = id === E.id;
+  const other = (side) => {
+    const e = edgeDiagram(side, S.route.params.d);
+    if (!e || !e.diagram) return h('span', { key: 'other-' + side, class: 'strip-empty' });
+    const where = side === 'prev' ? '前' : '次';
+    const label = `${where}のトラック（${e.track.title || ''}）の${side === 'prev' ? '最後' : '最初'}の図`;
     return h('button', {
-      key: id, class: 'strip-item' + (now ? ' on' : ''), 'aria-current': now ? 'true' : null, title: `${i + 1}枚目の図`,
-      onclick: () => { if (!now) switchDiagram(id); },
+      key: 'other-' + side, class: 'strip-item strip-other ' + side, title: `${label}を開く`, 'aria-label': `${label}を開く`,
+      onclick: () => openOther(e.draft.id, e.diagram.id),
     },
-      h('span', { class: 'strip-no' }, String(i + 1)),
-      h('span', { class: 'strip-thumb' }, StageSVG(now ? merged() : (g.shapes || {}), { cls: 'stage', idx: ix, roleVis: (now ? E.roleVis : g.roleVis) || {} })));
-  }));
+      h('span', { class: 'strip-no' }, ''),
+      h('span', { class: 'strip-other-box' },
+        h('span', { class: 'strip-cap' }, `${where}：${e.track.title || 'トラック'}`),
+        h('span', { class: 'strip-thumb' }, StageSVG(e.diagram.shapes || {}, { cls: 'stage', idx: ix, roleVis: e.diagram.roleVis || {} }))));
+  };
+  return h('nav', { class: 'ed-strip', 'aria-label': 'このトラックの図' },
+    other('prev'),
+    seq.map((id, i) => {
+      const g = byId[id];
+      const now = id === E.id;
+      return h('button', {
+        key: id, class: 'strip-item' + (now ? ' on' : ''), 'aria-current': now ? 'true' : null, title: `${i + 1}枚目の図`,
+        onclick: () => { if (!now) switchDiagram(id); },
+      },
+        h('span', { class: 'strip-no' }, String(i + 1)),
+        h('span', { class: 'strip-thumb' }, StageSVG(now ? merged() : (g.shapes || {}), { cls: 'stage', idx: ix, roleVis: (now ? E.roleVis : g.roleVis) || {} })));
+    }),
+    other('next'));
+}
+
+// 前の図を薄く重ね、同じ人の前の位置から今の位置までを点線で結ぶ
+const personKey = (s, ix) => { const c = personCast(s, ix); return c && c.id ? 'c:' + c.id : s.rid ? 'r:' + s.rid : s.no != null && s.no !== '' ? 'n:' + s.no : null; };
+function GhostLayer(shapes, ix, upx) {
+  const prev = E.ghost ? previousShapes(E.id) : null;
+  if (!prev) return h('g', { class: 'ghost-layer' });
+  const before = {};
+  for (const s of Object.values(prev)) if (s && s.t === 'person') { const k = personKey(s, ix); if (k && !before[k]) before[k] = [s.x, s.y]; }
+  const lines = [];
+  for (const s of Object.values(shapes)) {
+    if (!s || s.t !== 'person') continue;
+    const k = personKey(s, ix);
+    const o = k && before[k];
+    if (!o || Math.hypot(o[0] - s.x, o[1] - s.y) < 6) continue;
+    lines.push(h('line', { key: s.id, x1: o[0], y1: o[1], x2: s.x, y2: s.y, class: 'ghost-move', 'stroke-width': 2 / upx, 'stroke-dasharray': `${7 / upx} ${5 / upx}` }));
+    lines.push(h('circle', { key: s.id + '-o', cx: o[0], cy: o[1], r: 3.5 / upx, class: 'ghost-from' }));
+  }
+  const list = sortShapes(prev).filter((s) => !s.ink);
+  return h('g', { class: 'ghost-layer', 'pointer-events': 'none' },
+    h('g', { class: 'ghost-shapes', opacity: 0.22 }, list.map((s) => shapeNode({ ...s, id: 'ghost-' + s.id }, { idx: ix }))),
+    h('g', null, lines));
 }
 function switchDiagram(id) {
   const w = E.w, zoom = E.zoom, tool = E.tool;
@@ -2240,6 +2314,9 @@ export function EditorView() {
   const zoomOut = [...ZOOMS].reverse().find((z) => z < E.zoom - 0.01);
   const zoomIn = ZOOMS.find((z) => z > E.zoom + 0.01);
   const seq = diagramSequence().filter((id) => (S.d.diagrams || []).some((g) => g.id === id));
+  const nbs = neighborDrafts(S.route.params.d);
+  const strip = seq.length > 1 || !!(nbs.prev || nbs.next);
+  const prevNote = E.ghost && seq.indexOf(E.id) === 0 && edgeDiagram('prev', S.route.params.d) ? `前のトラック（${edgeDiagram('prev', S.route.params.d).track.title || ''}）の最後の図を薄く重ねています` : '';
   return h('div', { class: 'ed-root', role: 'dialog', 'aria-label': '図の編集' },
     // Googleスライドのように、上に名前とメニューバー（編集・表示・挿入・配置・ヘルプ）、その下に道具バー
     h('header', { class: 'ed-top' },
@@ -2275,7 +2352,17 @@ export function EditorView() {
             h('rect', { x: 3, y: 5, width: 18, height: 14, rx: 2 }),
             h('path', { d: 'M3 16l5-5 4 4 3-3 6 6' }),
             h('circle', { cx: 16, cy: 9, r: 1.6 })),
-          h('span', null, '下絵'))),
+          h('span', null, '下絵')),
+        // 前の図を薄く重ね、移動を点線で見せる
+        h('button', {
+          class: 'tool' + (E.ghost ? ' on' : ''), 'data-tip': '前の図を薄く重ねる（移動を点線で）', 'aria-label': '前の図を重ねる', 'aria-pressed': E.ghost ? 'true' : 'false',
+          onclick: () => setGhost(!E.ghost),
+        },
+          h('svg', { viewBox: '0 0 24 24', width: 24, height: 24, 'aria-hidden': 'true', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.8 },
+            h('circle', { cx: 7, cy: 15, r: 3.5, opacity: 0.45 }),
+            h('circle', { cx: 17, cy: 8, r: 3.5 }),
+            h('path', { d: 'M9.8 13l4.4-3', 'stroke-dasharray': '2 2' })),
+          h('span', null, '前の図'))),
       h('div', { class: 'ed-bar-end' },
         h('span', { class: 'sep' }),
         h('label', { class: 'prop-toggle', title: 'この図で直したこと（動かす・足す・消す・色・キャラ名の表示など）を、あとの図にも反映します。図を開くたびにオフに戻ります' },
@@ -2284,8 +2371,8 @@ export function EditorView() {
         h('label', { class: 'prop-toggle', title: '楕円・四角・囲み・線を動かすと、その中（線ならそば）にいる人も一緒に動きます' },
           h('input', { type: 'checkbox', checked: E.linkPeople, onchange: (e) => { E.linkPeople = e.target.checked; draw(); } }),
           h('span', null, '図と人を連動')))),
-    h('div', { class: 'ed-body' + (seq.length > 1 ? ' has-strip' : '') + (E.hidePanel ? ' no-panel' : '') },
-      seq.length > 1 ? Filmstrip(seq, ix) : null,
+    h('div', { class: 'ed-body' + (strip ? ' has-strip' : '') + (E.hidePanel ? ' no-panel' : '') },
+      strip ? Filmstrip(seq, ix) : null,
       h('div', { class: 'ed-canvas-wrap' + (E.tool === 'pan' ? ' panning' : '') },
         !E.loaded ? h('div', { class: 'muted pad' }, '読み込み中…') : null,
         h('svg', {
@@ -2300,13 +2387,15 @@ export function EditorView() {
           // 下絵（なぞるための写真。書き出しには出ない）
           h('g', { class: 'trace-layer', 'pointer-events': 'none' }, E.trace && E.traceSrc && !E.traceHidden
             ? h('image', { href: E.traceSrc, x: 0, y: 0, width: W, height: H, preserveAspectRatio: 'none', opacity: E.trace.op == null ? 0.5 : E.trace.op }) : null),
+          GhostLayer(shapes, ix, upx),
           h('g', null, list.map((s) => shapeNode(s, { selected: E.sel.has(s.id), interactive: true, idx: ix }))),
           h('g', null, layoutLabels(list, ix, E.roleVis, E.tool === 'select')),
           h('g', { class: 'pres-marks' }, PresenceMarks(shapes, here, upx)),
           single ? h('g', { class: 'handles' }, handlesFor(single, upx)) : null,
           marquee,
           E.hmode ? HeightArrow(upx) : null),
-        E.inline ? InlineBox() : null),
+        E.inline ? InlineBox() : null,
+        prevNote ? h('div', { class: 'ghost-note' }, prevNote) : null),
       h('aside', { class: 'ed-panel' + (E.hidePanel ? ' is-hidden' : '') },
         h('div', { class: 'rotate-hint' }, '2本指で広げると拡大、2本指で動かすとスクロールします。横向きにすると大きく編集できます。'),
         E.hmode ? HeightPanel() : E.tool === 'person' ? PersonPanel(shapes) : ['line', 'curve', 'carrow', 'cblock'].includes(E.tool) ? PolyPanel() : E.tool === 'block' ? BlockToolPanel() : SelPanel())),

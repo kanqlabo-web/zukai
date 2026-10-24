@@ -1,27 +1,19 @@
 // 図の並び順と、メンバーの割り当て（最小ストレッチ）の計算
 import { S } from './state.js';
-import { buildRows } from './script.js';
+import { sequenceOf, edgeDiagram } from './neighbors.js';
 
 // この稿の図を、表示される順に並べる
 export function diagramSequence() {
   const d = (S.d.drafts || []).find((x) => x.id === S.route.params.d);
-  if (!d) return [];
-  const rows = buildRows(d.script || '', S.d.blocks || [], d.spkFix);
-  const out = [];
-  for (const row of rows) {
-    for (const { b } of row.blocks) {
-      const items = Object.values(b.items || {}).sort((x, y) => (x.order || 0) - (y.order || 0));
-      for (const it of items) if (it.kind === 'diagram' && it.refId) out.push(it.refId);
-    }
-  }
-  return out;
+  return sequenceOf(d, S.d.blocks);
 }
 
-// ひとつ前の図（なければ null）
+// ひとつ前の図（このトラックの最初の図なら、前のトラックの最後の図。なければ null）
 export function previousShapes(diagramId) {
   const seq = diagramSequence();
   const i = seq.indexOf(diagramId);
-  if (i <= 0) return null;
+  if (i < 0) return null;
+  if (i === 0) { const e = edgeDiagram('prev', S.route.params.d); return e && e.diagram ? e.diagram.shapes || {} : null; }
   const g = (S.d.diagrams || []).find((x) => x.id === seq[i - 1]);
   return g ? g.shapes || {} : null;
 }
