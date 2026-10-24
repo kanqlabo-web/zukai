@@ -12,7 +12,7 @@ import { castIndex, personCast, personNo, rolesOf, roleText, roleVisible, roleKe
 import { isDialogOpen } from './dialog.js';
 import { UndoButtons, undoAll, redoAll } from './undo.js';
 import { previousShapes, minCostAssign, diagramSequence } from './assign.js';
-import { setPresence, others, colorOf } from './presence.js';
+import { setPresence, others, colorOf, sharePointer } from './presence.js';
 
 let E = null;
 let unsub = null;
@@ -1800,7 +1800,9 @@ export function EditorView() {
         h('svg', {
           id: 'ed-svg', class: 'ed-svg tool-' + E.tool, viewBox: `0 0 ${W} ${H}`, xmlns: 'http://www.w3.org/2000/svg',
           style: { width: `${E.zoom * 100}%` },
-          onpointerdown: down, onpointermove: move, onpointerup: up, onpointercancel: up,
+          onpointerdown: down, onpointerup: up, onpointercancel: up,
+          onpointermove: (e) => { sharePointer(E.id, svgPt(e)); move(e); },
+          onpointerleave: () => sharePointer(E.id, null),
           oncontextmenu: (e) => e.preventDefault(),
         },
           stageFrame(),

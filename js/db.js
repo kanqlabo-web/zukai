@@ -48,6 +48,7 @@ export const db = {
   room: {
     available: () => !!(impl.hasRoom && impl.hasRoom()),
     set: (path, data) => impl.roomSet(path, clean(data)),
+    patch: (path, data) => impl.roomPatch(path, clean(data)),
     remove: (path) => impl.roomRemove(path),
     watch: (path, cb, onErr) => impl.roomWatch(path, cb, onErr || (() => {})),
   },

@@ -490,6 +490,11 @@ textarea { resize: vertical; line-height: 1.55; }
 .pres-carets .pc { position: absolute; width: 2px; margin-left: -1px; }
 .pres-carets .pc-name { position: absolute; left: -1px; bottom: 100%; color: #fff; font-size: 11px; font-weight: 700; line-height: 1; padding: 3px 5px; border-radius: 3px 3px 3px 0; white-space: nowrap; }
 body.modal-open .pres-carets { display: none; }
+/* 図の編集画面の、ほかの人のマウスの位置（0.07秒ごとに届くので、その間をなめらかにつなぐ） */
+.pres-ptrs { position: fixed; left: 0; top: 0; width: 0; height: 0; pointer-events: none; z-index: 90; }
+.pres-ptrs .pp { position: absolute; left: 0; top: 0; margin: -2px 0 0 -2px; transition: transform 0.09s linear; will-change: transform; }
+.pres-ptrs .pp svg { display: block; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3)); }
+.pres-ptrs .pp-name { position: absolute; left: 14px; top: 16px; color: #fff; font-size: 11px; font-weight: 700; line-height: 1; padding: 3px 5px; border-radius: 3px; white-space: nowrap; }
 /* ほかの人が選んでいる図形：形に沿った点線だけを、その人の色で */
 .pres-sel { pointer-events: none; }
 .pres-sel .shape > :not(.sel-ring) { display: none; }

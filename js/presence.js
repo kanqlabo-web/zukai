@@ -53,11 +53,17 @@ async function enterRoom(w) {
     r = { rt: false, base: `works/${w}/presence`, path: docPath(w, S.user.email) };
   }
   room = r;
-  const got = (v) => { list = v; rerender(); };
+  const got = (v) => {
+    // マウスの位置が変わっただけなら、画面全体は描き直さず、矢印だけ動かす
+    const quiet = sameButPtr(list, v);
+    list = v;
+    if (quiet) paintPointers(); else rerender();
+  };
   unwatch = r.rt ? db.room.watch(r.base, got) : db.watchList(r.base, null, got, () => {});
   send(false);
 }
 function leaveRoom() {
+  myPtr = null;
   if (unwatch) unwatch();
   unwatch = null;
   if (room) send(true);
@@ -84,16 +90,82 @@ function send(leave) {
   const u = S.user;
   const data = { ...me, email: u.email, name: u.name || u.email, photo: u.photo || '', at: leave ? 0 : Date.now() };
   if (room.rt) {
+    if (myPtr) data.ptr = myPtr;
     if (leave) db.room.remove(room.path).catch(() => {});
     else putRT(room, data);
   } else {
     db.setQuiet(room.path, data).catch(() => { /* 閲覧者などは書けない */ });
   }
 }
+// Realtime Database のときは、続けて動いていても 0.1 秒ごとに送る（Firestore のときは、止まってから 0.25 秒後にまとめて）
+let lastSent = 0;
 function sendSoon() {
   clearTimeout(timer);
-  timer = setTimeout(() => send(false), 250);
+  if (room && room.rt) {
+    const wait = Math.max(0, 100 - (Date.now() - lastSent));
+    timer = setTimeout(() => { lastSent = Date.now(); send(false); }, wait);
+  } else timer = setTimeout(() => send(false), 250);
 }
+
+// ---------- マウスの位置（図の編集画面。Realtime Database のときだけ） ----------
+// 図の中の座標（舞台 1000×470）で送るので、画面の大きさや拡大率が違っても同じ所を指す
+let myPtr = null, ptrTimer = null, ptrSent = 0;
+export function sharePointer(g, xy) {
+  if (!room || !room.rt) return;
+  myPtr = xy ? { g, x: Math.round(xy[0]), y: Math.round(xy[1]) } : null;
+  if (ptrTimer) return;
+  const wait = Math.max(0, 70 - (Date.now() - ptrSent));
+  ptrTimer = setTimeout(() => {
+    ptrTimer = null;
+    ptrSent = Date.now();
+    if (room && room.rt) db.room.patch(room.path, { ptr: myPtr }).catch(() => {});
+  }, wait);
+}
+const noPtr = (a) => JSON.stringify(a.map((p) => ({ ...p, ptr: null })));
+const sameButPtr = (a, b) => a.length === b.length && noPtr(a) === noPtr(b);
+
+let ptrLayer = null;
+const ARROW = (c) => `<svg width="18" height="20" viewBox="0 0 18 20"><path d="M2 1.5 L2 16 L6 12.3 L8.8 18.5 L11.4 17.3 L8.7 11.3 L14 11 Z" fill="${c}" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>`;
+export function paintPointers() {
+  if (!ptrLayer) {
+    ptrLayer = document.createElement('div');
+    ptrLayer.className = 'pres-ptrs';
+    document.body.appendChild(ptrLayer);
+  }
+  const g = S.ui.editDiagram;
+  const svg = g && document.getElementById('ed-svg');
+  const m = svg && svg.getScreenCTM();
+  const box = svg && svg.closest('.ed-canvas-wrap');
+  const clip = box ? box.getBoundingClientRect() : null;
+  const seen = new Set();
+  if (m) {
+    for (const p of others()) {
+      if (!p.ptr || p.ptr.g !== g || p.g !== g) continue;
+      const x = m.a * p.ptr.x + m.c * p.ptr.y + m.e, y = m.b * p.ptr.x + m.d * p.ptr.y + m.f;
+      const out = clip && (x < clip.left || x > clip.right || y < clip.top || y > clip.bottom);
+      let el = ptrLayer.querySelector(`[data-ptr="${CSS.escape(p.email)}"]`);
+      if (!el) {
+        const c = p.color || colorOf(p.email);
+        el = document.createElement('div');
+        el.className = 'pp';
+        el.setAttribute('data-ptr', p.email);
+        const name = document.createElement('span');
+        name.className = 'pp-name';
+        name.style.background = c;
+        name.textContent = p.name || '';
+        el.innerHTML = ARROW(c);
+        el.appendChild(name);
+        ptrLayer.appendChild(el);
+      }
+      el.style.transform = `translate(${x}px, ${y}px)`;
+      el.style.display = out ? 'none' : '';
+      seen.add(p.email);
+    }
+  }
+  for (const el of [...ptrLayer.children]) if (!seen.has(el.getAttribute('data-ptr'))) el.remove();
+}
+window.addEventListener('resize', () => requestAnimationFrame(paintPointers));
+document.addEventListener('scroll', () => requestAnimationFrame(paintPointers), true);
 
 // いまの場所を知らせる（w が変わったら、前のライブラリーからは抜ける）
 export function setPresence(w, patch) {

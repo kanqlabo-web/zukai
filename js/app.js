@@ -11,7 +11,7 @@ import { PrintView, loadPrint, layoutPages, clearPages, autoExport } from './pri
 import { P } from './model.js';
 import { DialogView, isDialogOpen, closeDialog } from './dialog.js';
 import { saveMyProfile, handleGroupResult } from './access.js';
-import { setPresence, PresenceBar, paintCarets } from './presence.js';
+import { setPresence, PresenceBar, paintCarets, paintPointers } from './presence.js';
 import { ShowView, afterShow } from './show.js';
 import { versionLabel, CHANGELOG_URL, watchForUpdate, reloadToLatest } from './version.js';
 
@@ -223,9 +223,10 @@ function renderPage() {
   render($app, PageView());
   if (S.route.name === 'print' && S.phase === 'ready') { if (S.d.print) requestAnimationFrame(() => layoutPages()); } else clearPages();
   requestAnimationFrame(paintCarets);
+  requestAnimationFrame(paintPointers);
   afterShow(); // 描いた直後に（次のフレームまで待つと、図が一瞬新しい位置に出てしまう）
 }
-export function renderModal() { render($modal, S.ui.editDiagram ? EditorView() : []); }
+export function renderModal() { render($modal, S.ui.editDiagram ? EditorView() : []); requestAnimationFrame(paintPointers); }
 function renderToasts() {
   render($toasts, S.toasts.map((t) => h('div', { key: 't' + t.id, class: 'toast ' + t.kind }, t.msg)));
 }

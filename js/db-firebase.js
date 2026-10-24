@@ -156,6 +156,12 @@ export async function roomSet(path, d) {
   mine = { path, data: d };
   await R.set(r, d);
 }
+// 一部だけ書き換える（マウスの位置など、こまめに送るもの）
+export async function roomPatch(path, d) {
+  await rt();
+  if (mine && mine.path === path) mine.data = { ...mine.data, ...d };
+  await R.update(R.ref(rdb, path), d);
+}
 export async function roomRemove(path) {
   await rt();
   if (mine && mine.path === path) mine = null;
