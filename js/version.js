@@ -1,7 +1,7 @@
 // アプリのバージョン
 // main に push するたびに VERSION と DATE を上げ、CHANGELOG.md に1行足す。
 // 開いている人のブラウザは、サーバーのこのファイルと比べて「新しい版があります」を出す。
-export const VERSION = '2.23.1';
+export const VERSION = '2.24.0';
 export const DATE = '2026-10-24';
 
 export const CHANGELOG_URL = 'https://github.com/kanqlabo-web/zukai/blob/main/CHANGELOG.md';
