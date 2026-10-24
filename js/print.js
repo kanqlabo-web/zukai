@@ -7,7 +7,7 @@ import { ask } from './dialog.js';
 import { buildPdf, deliverPdf } from './pdf.js';
 import { buildVectorPdf } from './pdfvec.js';
 import { buildDocx, deliverFile } from './docx.js';
-import { P, draftTitle, draftName, shortTrack } from './model.js';
+import { P, draftTitle, draftName, shortTrack, photoWidth } from './model.js';
 import { castIndex } from './cast.js';
 import { buildRows, highlightRanges } from './script.js';
 import { blockUpdates, showUpdates, DIAGRAM_FIXED } from './update.js';
@@ -74,7 +74,7 @@ function NoteBlock(t, b, idx) {
         const im = t.images[it.refId];
         return h('figure', { key: it.id, class: 'p-fig p-photo size-' + (it.size || 'm') },
           it.caption ? h('figcaption', null, it.caption) : null,
-          im ? h('img', { src: im.data, alt: it.caption || '参考写真' }) : null);
+          im ? h('img', { src: im.data, alt: it.caption || '参考写真', style: { width: photoWidth(it) + '%' } }) : null);
       }
       return null;
     }));

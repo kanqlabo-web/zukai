@@ -2,7 +2,7 @@
 // Googleドキュメントで開いても同じように見えるよう、Arial（日本語は Noto Sans JP）・同じ文字の大きさにする。
 import { h, render } from './vdom.js';
 import { S, toast } from './state.js';
-import { draftTitle } from './model.js';
+import { draftTitle, photoWidth } from './model.js';
 import { castIndex, numberCast, roleText } from './cast.js';
 import { buildRows, highlightRanges, lineSegments } from './script.js';
 import { blockUpdates, showUpdates, DIAGRAM_FIXED } from './update.js';
@@ -194,7 +194,7 @@ async function notesParas(t, row, idx, ids) {
         if (d) {
           const m = addMedia(d.bytes, d.ext);
           const [iw, ih] = imageSize(d.bytes, d.ext);
-          const wmm = (NOTES_W - CELL_PAD * 2) * ({ s: 0.4, m: 0.68, l: 1 }[it.size || 'm'] || 0.68);
+          const wmm = (NOTES_W - CELL_PAD * 2) * (photoWidth(it) / 100);
           out.push(para(imageXml(m, wmm, wmm * (ih / iw || 0.75), ++ids.n)));
         }
       }

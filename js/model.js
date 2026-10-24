@@ -185,24 +185,28 @@ export async function saveScript(w, draftId, script, blocks, user) {
   await db.batch(ops);
 }
 
-// 図解（《タイミング》＋動きの文章＋図）を作る。図は必ず1枚つける
-export async function createBlock(w, draftId, { cue, offset, anchorText, shapes }) {
+// 図解（《タイミング》のページ）を作る。はじめは文章だけ（図や写真は、ツールバーの「足す」でカーソルの位置に入れる）
+export async function createBlock(w, draftId, { cue, offset, anchorText }) {
   const id = newId();
   const itemId = newId(8);
-  const diaItem = newId(8);
-  const gid = newId();
   await db.batch([
-    { op: 'set', path: P.doc(w, 'diagrams', gid), data: { draftId, shapes: shapes || {}, createdAt: now() } },
     {
       op: 'set', path: P.doc(w, 'blocks', id), data: {
         draftId, cue: cue || '', anchor: { offset, text: anchorText || '' }, newRow: true, createdAt: now(),
-        items: { [itemId]: { order: 1, kind: 'text', text: '● ' }, [diaItem]: { order: 2, kind: 'diagram', refId: gid, caption: '' } },
+        items: { [itemId]: { order: 1, kind: 'text', text: '● ' } },
       },
     },
     // テマ友がなくても図解がある稿だと分かるように（ライブラリーのページで、空の稿のボタンを押せなくするため）
     { op: 'update', path: P.doc(w, 'drafts', draftId), data: { figs: true } },
   ]);
-  return { id, itemId, diagramId: gid };
+  return { id, itemId };
+}
+
+// 写真の幅（ページの幅に対する %）。2.1.0 より前の「小・中・大」はそれぞれ 40・68・100
+export function photoWidth(it) {
+  const v = Number(it && it.w);
+  if (v > 0) return Math.max(10, Math.min(100, v));
+  return { s: 40, m: 68, l: 100 }[(it && it.size) || 'm'] || 68;
 }
 
 export async function createDiagram(w, draftId, shapes = {}) {
