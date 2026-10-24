@@ -58,6 +58,7 @@ function saveScriptLocal(w, d, text, marks) {
     for (const b of blocks) {
       const r = resolveAnchor(text, b.anchor);
       if (r.ok && r.offset !== b.anchor.offset) ops.push({ op: 'update', path: P.doc(w, 'blocks', b.id), data: { 'anchor.offset': r.offset } });
+      if (b.cueEnd && b.anchorEnd && b.anchorEnd.text) { const e = resolveAnchor(text, b.anchorEnd); if (e.ok && e.offset !== b.anchorEnd.offset) ops.push({ op: 'update', path: P.doc(w, 'blocks', b.id), data: { 'anchorEnd.offset': e.offset } }); }
     }
     if (ops.length) await db.batch(ops);
     if (S.ui.scriptLocal && S.ui.scriptLocal.text === text) S.ui.scriptLocal.saved = true;
@@ -261,7 +262,7 @@ export function autoTiming(text, line) {
 }
 
 function clearSel() {
-  S.ui.sel = null; S.ui.lineSel = null; S.ui.reanchor = null;
+  S.ui.sel = null; S.ui.lineSel = null; S.ui.reanchor = null; S.ui.reanchorEnd = false; S.ui.rangeStart = null;
   const s = window.getSelection();
   if (s) s.removeAllRanges();
   rerender();
@@ -303,11 +304,62 @@ async function reanchorTo(blockId) {
   const { w, d } = ctx();
   const pick = reanchorPick();
   if (!pick) return;
+  if (S.ui.reanchorEnd) return reanchorEndTo(blockId, pick);
+  // 範囲の図解は、始まりが終わりより後ろにならないようにする
+  const b = (S.d.blocks || []).find((x) => x.id === blockId);
+  const end = b && b.cueEnd && b.anchorEnd && b.anchorEnd.text ? resolveAnchor(scriptOf(ctx().draft).text, b.anchorEnd) : null;
+  if (end && end.ok && pick.a >= end.offset) { toast('始まりは、終わりのタイミングより前を選んでください', 'info', 3000); return; }
   // 位置を付け替えたら、タイミングの文字も選んだテマ友の文章にする
   await db.update(P.doc(w, 'blocks', blockId), { anchor: { offset: pick.a, text: pick.text }, cue: cueOf(pick.text) });
   touch(w, d);
   clearSel();
   toast('タイミングを付け替えました');
+}
+// 《A》～《B》の終わりのタイミングを付ける・付け替える（始まりより後ろだけ）
+async function reanchorEndTo(blockId, pick) {
+  const { w, d, draft } = ctx();
+  const b = (S.d.blocks || []).find((x) => x.id === blockId);
+  if (!b) return;
+  const start = resolveAnchor(scriptOf(draft).text, b.anchor);
+  if (pick.a <= (start.ok ? start.offset : b.anchor.offset)) { toast('終わりは、始まりのタイミングより後ろを選んでください', 'info', 3000); return; }
+  await db.update(P.doc(w, 'blocks', blockId), { anchorEnd: { offset: pick.a, text: pick.text }, cueEnd: cueOf(pick.text) });
+  touch(w, d);
+  clearSel();
+  toast('終わりのタイミングを付けました');
+}
+async function clearCueEnd(blockId) {
+  const { w, d } = ctx();
+  await db.update(P.doc(w, 'blocks', blockId), { cueEnd: DEL, anchorEnd: DEL });
+  touch(w, d);
+  clearSel();
+}
+// タイミングの付け替えを始める（end=true なら終わりのタイミング）
+function startReanchor(blockId, end) {
+  S.ui.reanchor = blockId; S.ui.reanchorEnd = !!end; S.ui.rangeStart = null;
+  S.ui.sel = null; S.ui.lineSel = null;
+  rerender();
+}
+// 範囲（《A》～《B》）で図解を作る：選んだ語句を始まりにして、終わりを選んでもらう
+function startRange() {
+  const pick = reanchorPick();
+  if (!pick) return;
+  S.ui.rangeStart = { a: pick.a, text: pick.text };
+  S.ui.sel = null; S.ui.lineSel = null;
+  const s = window.getSelection();
+  if (s) s.removeAllRanges();
+  rerender();
+}
+async function makeRangeBlock() {
+  const { w, d } = ctx();
+  const st = S.ui.rangeStart, pick = reanchorPick();
+  if (!st || !pick) return;
+  if (pick.a <= st.a) { toast('終わりは、始まりのタイミングより後ろを選んでください', 'info', 3000); return; }
+  const { id, itemId } = await createBlock(w, d, { cue: cueOf(st.text), offset: st.a, anchorText: st.text });
+  await db.update(P.doc(w, 'blocks', id), { anchorEnd: { offset: pick.a, text: pick.text }, cueEnd: cueOf(pick.text) });
+  S.ui.focusItem = itemId;
+  S.ui.activeBlock = id;
+  touch(w, d);
+  clearSel();
 }
 async function clearCue(blockId) {
   const { w, d } = ctx();
@@ -367,10 +419,28 @@ function LineFixButtons() {
 
 export function SelectionBar() {
   if (S.route.name !== 'draft') return null;
-  const { sel, lineSel, reanchor } = S.ui;
-  if (!sel && lineSel == null && !reanchor) return null;
+  const { sel, lineSel, reanchor, rangeStart } = S.ui;
+  if (!sel && lineSel == null && !reanchor && !rangeStart) return null;
   const preview = (t) => { t = (t || '').replace(/\s+/g, ' '); return t.length > 28 ? t.slice(0, 28) + '…' : t; };
   const keep = (e) => e.preventDefault();
+  if (rangeStart) {
+    const pick = reanchorPick();
+    return h('div', { class: 'selbar' },
+      h('div', { class: 'selbar-text' }, pick ? `タイミング：《${preview(rangeStart.text)}》～《${preview(pick.text)}》` : `《${preview(rangeStart.text)}》～ の終わりを、行をタップするか語句をなぞって選んでください`),
+      h('div', { class: 'selbar-btns' },
+        pick ? h('button', { class: 'btn primary', onpointerdown: keep, onclick: makeRangeBlock }, 'この範囲で図解を追加') : null,
+        h('button', { class: 'btn ghost', onpointerdown: keep, onclick: clearSel }, 'やめる')));
+  }
+  if (reanchor && S.ui.reanchorEnd) {
+    const pick = reanchorPick();
+    const b = (S.d.blocks || []).find((x) => x.id === reanchor);
+    return h('div', { class: 'selbar' },
+      h('div', { class: 'selbar-text' }, pick ? `終わりのタイミングを《${preview(pick.text)}》にします` : '終わりのタイミングを、左のテーマ活動の友で行をタップするか、語句をなぞって選んでください'),
+      h('div', { class: 'selbar-btns' },
+        pick ? h('button', { class: 'btn primary', onpointerdown: keep, onclick: () => reanchorTo(reanchor) }, 'ここを終わりにする') : null,
+        !pick && b && b.cueEnd ? h('button', { class: 'btn', onpointerdown: keep, onclick: () => clearCueEnd(reanchor) }, '終わりのタイミングを外す') : null,
+        h('button', { class: 'btn ghost', onpointerdown: keep, onclick: clearSel }, 'やめる')));
+  }
   if (reanchor) {
     const pick = reanchorPick();
     return h('div', { class: 'selbar' },
@@ -384,6 +454,7 @@ export function SelectionBar() {
     h('div', { class: 'selbar-text' }, sel ? `タイミング：《${preview(sel.text)}》` : S.ui.lineAuto ? `タイミング：《${preview(S.ui.lineAuto.text)}》` : 'この行（空行）'),
     h('div', { class: 'selbar-btns' },
       h('button', { class: 'btn primary', onpointerdown: keep, onclick: () => makeBlock(true) }, sel ? '選んだ語句で図解を追加' : 'この行に図解を追加'),
+      reanchorPick() ? h('button', { class: 'btn', onpointerdown: keep, onclick: startRange, title: 'ここを始まりにして、次に終わりのタイミングを選びます' }, 'ここから範囲で追加') : null,
       LineFixButtons(),
       lineSel != null && S.ui.lineRow != null && touchOnly() ? h('button', { class: 'btn', onpointerdown: keep, onclick: startScriptTyping }, '文字を直す') : null,
       h('button', { class: 'btn ghost selbar-close', onpointerdown: keep, onclick: clearSel, 'aria-label': '閉じる', title: '閉じる' }, icon('close', 20))));
@@ -926,18 +997,24 @@ function BlockCard(w, d, b, r, rowIndex, indexInRow, rows) {
         h('span', { class: 'cue-br' }, '《'),
         h('button', {
           type: 'button', 'aria-label': 'タイミング（押すとテマ友での位置を付け替えます）', title: '押すと、テマ友での位置を付け替えます',
-          class: 'cue-btn' + (b._u && b._u.cue && b.cue ? ' upd' : '') + (S.ui.reanchor === b.id ? ' picking' : '') + (b.cue ? '' : ' empty'),
-          onclick: () => { if (S.ui.justPicked === b.id) { S.ui.justPicked = null; return; } if (!hasScript) { toast('テマ友を貼り付けると、タイミングを付けられます'); return; } S.ui.reanchor = S.ui.reanchor === b.id ? null : b.id; S.ui.sel = null; S.ui.lineSel = null; rerender(); },
+          class: 'cue-btn' + (b._u && b._u.cue && b.cue ? ' upd' : '') + (S.ui.reanchor === b.id && !S.ui.reanchorEnd ? ' picking' : '') + (b.cue ? '' : ' empty'),
+          onclick: () => { if (S.ui.justPicked === b.id) { S.ui.justPicked = null; return; } if (!hasScript) { toast('テマ友を貼り付けると、タイミングを付けられます'); return; } startReanchor(S.ui.reanchor === b.id && !S.ui.reanchorEnd ? null : b.id); },
         }, cueText(b, r) || (hasScript ? 'タイミングなし（押して付ける）' : 'タイミングなし')),
         h('span', { class: 'cue-br' }, '》'),
         // 《A》～《B》の範囲で書いた図解：終わりのタイミング
-        b.cue && b.cueEnd ? [h('span', { class: 'cue-br' }, '～《'), h('span', { class: 'cue-end' }, b.cueEnd), h('span', { class: 'cue-br' }, '》')] : null),
+        // 押すと、終わりのタイミングを付け替えられる
+        b.cue && b.cueEnd ? [h('span', { class: 'cue-br' }, '～《'), h('button', {
+          type: 'button', title: '押すと、終わりのタイミングを付け替えます',
+          class: 'cue-end' + (S.ui.reanchor === b.id && S.ui.reanchorEnd ? ' picking' : ''),
+          onclick: () => { if (S.ui.justPicked === b.id) { S.ui.justPicked = null; return; } startReanchor(S.ui.reanchor === b.id && S.ui.reanchorEnd ? null : b.id, true); },
+        }, b.cueEnd), h('span', { class: 'cue-br' }, '》')] : null),
       h('details', { class: 'kebab' },
         h('summary', { title: 'その他の操作' }, icon('more')),
         h('div', { class: 'menu' },
           canMerge ? h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; db.update(blockPath(w, b), { newRow: false }); } }, '上の段とまとめる') : null,
           b.newRow === false ? h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; db.update(blockPath(w, b), { newRow: true }); } }, 'この位置で段を分ける') : null,
-          h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; S.ui.reanchor = b.id; S.ui.sel = null; S.ui.lineSel = null; rerender(); } }, 'タイミング（テマ友での位置）を付け替える'),
+          h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; startReanchor(b.id); } }, 'タイミング（テマ友での位置）を付け替える'),
+          b.cue && hasScript ? h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; startReanchor(b.id, true); } }, b.cueEnd ? '終わりのタイミング（～《》）を付け替える' : '終わりのタイミング（～《》）を付ける') : null,
           b.cueEnd ? h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; db.update(blockPath(w, b), { cueEnd: DEL, anchorEnd: DEL }); } }, '終わりのタイミング（～《》）を外す') : null,
           h('button', { class: 'linklike danger', onclick: (e) => { e.target.closest('details').open = false; removeBlock(w, d, b); } }, 'この図解を削除')))),
     !r.ok ? h('div', { class: 'warn small' }, 'テーマ活動の友の中にこの語句が見つかりません。「⋯」→「位置を付け替える」で直してください。') : null,

@@ -549,7 +549,9 @@ body.modal-open .pres-carets { display: none; }
 .cue-btn.empty { color: var(--ink-2); font-weight: 400; }
 .cue-btn.picking { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .cue-field:has(.cue-end) .cue-btn { flex: 0 1 auto; }
-.cue-end { font-weight: 700; background: #ececec; padding: 3px 8px; border-radius: 4px; min-height: 30px; display: inline-flex; align-items: center; }
+.cue-end { font-weight: 700; background: #ececec; padding: 3px 8px; border-radius: 4px; min-height: 30px; display: inline-flex; font: inherit; font-weight: 700; color: inherit; border: 1px solid transparent; cursor: pointer; text-align: left; align-items: center; }
+button.cue-end:hover { border-color: var(--line-2); }
+.cue-end.picking { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 
 /* ---------- 閲覧モード ---------- */
 body.is-show { overflow: hidden; }

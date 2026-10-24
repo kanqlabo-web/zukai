@@ -181,6 +181,7 @@ export async function saveScript(w, draftId, script, blocks, user) {
   for (const b of blocks) {
     const r = resolveAnchor(script, b.anchor);
     if (r.ok && r.offset !== b.anchor.offset) ops.push({ op: 'update', path: P.doc(w, 'blocks', b.id), data: { 'anchor.offset': r.offset } });
+    if (b.cueEnd && b.anchorEnd && b.anchorEnd.text) { const e = resolveAnchor(script, b.anchorEnd); if (e.ok && e.offset !== b.anchorEnd.offset) ops.push({ op: 'update', path: P.doc(w, 'blocks', b.id), data: { 'anchorEnd.offset': e.offset } }); }
   }
   await db.batch(ops);
 }
