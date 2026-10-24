@@ -548,6 +548,8 @@ body.modal-open .pres-carets { display: none; }
 .cue-btn.upd { color: #0000ff; }
 .cue-btn.empty { color: var(--ink-2); font-weight: 400; }
 .cue-btn.picking { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.cue-field:has(.cue-end) .cue-btn { flex: 0 1 auto; }
+.cue-end { font-weight: 700; background: #ececec; padding: 3px 8px; border-radius: 4px; min-height: 30px; display: inline-flex; align-items: center; }
 
 /* ---------- 閲覧モード ---------- */
 body.is-show { overflow: hidden; }

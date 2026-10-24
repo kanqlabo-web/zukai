@@ -161,7 +161,8 @@ async function notesParas(t, row, idx, ids) {
   for (const { b } of row.blocks) {
     const u = blockUpdates(t.draft, b, t.diagrams);
     if (b._bi > 0) out.push(emptyPara(21));
-    if (b.cue) out.push(para(run('《', NOTE) + run(b.cue, { size: 21, bold: true, shade: 'C4C4C4', color: u && u.cue ? '0000FF' : undefined }) + run('》', NOTE)));
+    if (b.cue) out.push(para(run('《', NOTE) + run(b.cue, { size: 21, bold: true, shade: 'C4C4C4', color: u && u.cue ? '0000FF' : undefined }) + run('》', NOTE)
+      + (b.cueEnd ? run('～《', NOTE) + run(b.cueEnd, { size: 21, bold: true, shade: 'C4C4C4' }) + run('》', NOTE) : '')));
     const items = Object.entries(b.items || {}).map(([id, it]) => ({ id, ...it })).sort(byOrder);
     for (const it of items) {
       if (it.kind === 'text') {

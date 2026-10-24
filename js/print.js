@@ -60,7 +60,7 @@ function NoteBlock(t, b, idx) {
   const items = Object.entries(b.items || {}).map(([id, it]) => ({ id, ...it })).sort(byOrder);
   const u = blockUpdates(t.draft, b, t.diagrams);
   return h('div', { key: b.id, class: 'p-block' },
-    b.cue ? CueTitle(b.cue, u && u.cue) : null,
+    b.cue ? CueTitle(b.cue, u && u.cue, b.cueEnd) : null,
     items.map((it) => {
       if (it.kind === 'text') return h('div', { key: it.id, class: 'p-text' }, DotText(it.text, u ? (ln) => u.line(it.id, ln) : null, it.marks));
       if (it.kind === 'diagram') {

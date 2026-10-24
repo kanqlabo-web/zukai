@@ -2,7 +2,7 @@ import { db, newId } from './db.js';
 import { P, parseCast, emptyDraft } from './model.js';
 import { compressImage } from './state.js';
 import { readPdf } from './pdfread.js';
-import { findCue } from './script.js';
+import { findCue, cueRangeEnd } from './script.js';
 import { diagramFromPdf, diagramFromSvg, svgToPng, isStageFig } from './drawimport.js';
 // 図解PDF（Googleドキュメントやこのツールで作ったもの）から、テーマ活動の友・タイミング・メモ・メンバーを組み立て直す。
 // 文字の位置から「タイトル」「メンバー表」「左のテーマ活動の友」「右のタイミングとメモ」を見分ける。
@@ -200,9 +200,10 @@ function buildTrack(t) {
     const cue = L.fig ? null : /^[《≪«]\s*(.*?)\s*[》≫»](.*)$/.exec(L.text);
     const newRow = !L.fig && paraStart(L) && (!prev || (prev.page === L.page ? gap > L.size * 2.2 : true));
     if (!blk || cue || (newRow && !(blk.parts.length === 0 && blk.text.length === 0))) {
-      blk = { cue: cue ? cue[1].trim() : '', page: L.page, y: L.y, parts: [], text: [] };
+      const R = cue ? cueRangeEnd(cue[2]) : null;
+      blk = { cue: cue ? cue[1].trim() : '', cueEnd: R ? R.end : '', page: L.page, y: L.y, parts: [], text: [] };
       blocks.push(blk);
-      if (cue) { if (cue[2].trim()) blk.text.push({ L, t: cue[2].trim() }); prev = L; continue; }
+      if (cue) { const rest = R ? R.rest : cue[2]; if (rest.trim()) blk.text.push({ L, t: rest.trim() }); prev = L; continue; }
     }
     if (L.fig) {
       if (blk.text.length) blk.parts.push({ kind: 'text', lines: blk.text });
@@ -241,7 +242,13 @@ function buildTrack(t) {
       const f = findCue(script, b.cue, { from: lastOff, near: near ? near.off : 0, end: near ? near.end : Infinity });
       if (f) { off = f.i; anchorText = f.text; lastOff = off; }
     }
-    out.push({ cue: anchorText || b.cue, offset: off, near: near ? near.off : 0, anchorText, items });
+    const o = { cue: anchorText || b.cue, offset: off, near: near ? near.off : 0, anchorText, items };
+    if (b.cueEnd) {
+      const f = script && anchorText ? findCue(script, b.cueEnd, { from: off + 1, near: off }) : null;
+      o.cueEnd = f ? f.text : b.cueEnd;
+      if (f) { o.endOffset = f.i; o.endText = f.text; }
+    }
+    out.push(o);
   }
   // 語句のない段（図だけなど）：同じ高さの段落の位置。ただし前後の段を追い越さない
   let lo = 0;
@@ -413,7 +420,7 @@ export async function importZukai(w, result, { epId, epTitle, replaceCast, exist
         }
       }
       if (!k) items[newId(8)] = { order: 1, kind: 'text', text: '● ' };
-      ops.push({ op: 'set', path: P.doc(w, 'blocks', newId()), data: { draftId, cue: b.cue || '', anchor: { offset: (b.offset || 0) + shift, text: b.anchorText || '' }, newRow: true, createdAt: t0 + bi, items } });
+      ops.push({ op: 'set', path: P.doc(w, 'blocks', newId()), data: { draftId, cue: b.cue || '', anchor: { offset: (b.offset || 0) + shift, text: b.anchorText || '' }, ...(b.cueEnd ? { cueEnd: b.cueEnd, anchorEnd: { offset: (b.endOffset != null ? b.endOffset : b.offset || 0) + shift, text: b.endText || '' } } : {}), newRow: true, createdAt: t0 + bi, items } });
     }
     await (replace && toDraftId ? db.batchUndoable(ops) : db.batch(ops));
     made.push({ trackId, draftId, title, no });

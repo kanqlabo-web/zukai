@@ -42,8 +42,8 @@ export function DotText(text, isNew, marks) {
   });
 }
 
-export function CueTitle(cue, upd) {
-  return h('div', { class: 'cue' + (upd ? ' upd' : '') }, '《', h('mark', null, cue), '》');
+export function CueTitle(cue, upd, end = '') {
+  return h('div', { class: 'cue' + (upd ? ' upd' : '') }, '《', h('mark', null, cue), '》', end ? ['～《', h('mark', null, end), '》'] : null);
 }
 
 export function ScriptLines(text, lines, highlights, opts = {}) {

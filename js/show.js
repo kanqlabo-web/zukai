@@ -135,7 +135,7 @@ export function ShowView() {
         V.i < list.length - 1 ? h('div', { class: 'show-arrow right' }, '›') : null),
       h('div', { class: 'show-side-pane' },
         h('div', { class: 'show-notes' },
-          s.b && s.b.cue ? CueTitle(s.b.cue) : h('div', { class: 'cue muted' }, s.b ? '（タイミングの語句なし）' : ''),
+          s.b && s.b.cue ? CueTitle(s.b.cue, false, s.b.cueEnd) : h('div', { class: 'cue muted' }, s.b ? '（タイミングの語句なし）' : ''),
           (s.texts || []).map((it) => h('div', { key: it.id, class: 'p-text' }, DotText(it.text, null, it.marks))),
           (s.imgs || []).length ? h('div', { class: 'show-photos' }, s.imgs.map((it) => {
             const im = t.images[it.refId];

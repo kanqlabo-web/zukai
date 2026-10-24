@@ -1,4 +1,4 @@
-import { findCue } from './script.js';
+import { findCue, cueRangeEnd } from './script.js';
 // Googleドキュメントの図解を、コピー＆貼り付けで取り込む
 // ドキュメントで「すべて選択 → コピー」したときのクリップボード（HTML）から、
 // タイトル・図解っ子・表現したいこと・メンバー表・テーマ活動の友・タイミング・メモ・図を読み取る。
@@ -198,7 +198,7 @@ function buildTrack(t) {
     // 右：《タイミング》ごとの説明と図
     const blocks = [];
     let blk = null;
-    const start = (cue) => { blk = { cue, parts: [], text: [] }; blocks.push(blk); };
+    const start = (cue, cueEnd = '') => { blk = { cue, cueEnd, parts: [], text: [] }; blocks.push(blk); };
     const flush = () => { if (blk && blk.text.length) { blk.parts.push({ kind: 'text', text: blk.text.join('\n') }); blk.text = []; } };
     for (const it of row.right) {
       if (it.type === 'img') {
@@ -211,7 +211,7 @@ function buildTrack(t) {
       if (it.type !== 'p') continue;
       for (const ln of it.text.split('\n')) {
         const m = CUE_RE.exec(ln.trim());
-        if (m) { flush(); start(m[1].trim()); if (m[2].trim()) blk.text.push(m[2].trim()); continue; }
+        if (m) { const R = cueRangeEnd(m[2]); flush(); start(m[1].trim(), R ? R.end : ''); const rest = R ? R.rest : m[2]; if (rest.trim()) blk.text.push(rest.trim()); continue; }
         if (!blk) { if (!ln.trim()) continue; start(''); }
         blk.text.push(ln);
       }
@@ -228,7 +228,14 @@ function buildTrack(t) {
       }
       if (off < lastOff) { off = lastOff; anchorText = ''; }
       lastOff = off;
-      out.push({ cue: anchorText || b.cue, offset: off, anchorText, items });
+      const o = { cue: anchorText || b.cue, offset: off, anchorText, items };
+      // 範囲の終わり：始まりより後ろから探す
+      if (b.cueEnd) {
+        const f = script && anchorText ? findCue(script, b.cueEnd, { from: off + 1, near: off, end: rowEnd }) : null;
+        o.cueEnd = f ? f.text : b.cueEnd;
+        if (f) { o.endOffset = f.i; o.endText = f.text; }
+      }
+      out.push(o);
     }
   }
   return { title: t.title, prefix: t.prefix, ep: t.ep, track: t.track, draftNo: t.draftNo, zukaikko: t.zukaikko, theme: t.theme, script, blocks: out };

@@ -890,13 +890,16 @@ function BlockCard(w, d, b, r, rowIndex, indexInRow, rows) {
           class: 'cue-btn' + (b._u && b._u.cue && b.cue ? ' upd' : '') + (S.ui.reanchor === b.id ? ' picking' : '') + (b.cue ? '' : ' empty'),
           onclick: () => { if (S.ui.justPicked === b.id) { S.ui.justPicked = null; return; } if (!hasScript) { toast('テマ友を貼り付けると、タイミングを付けられます'); return; } S.ui.reanchor = S.ui.reanchor === b.id ? null : b.id; S.ui.sel = null; S.ui.lineSel = null; rerender(); },
         }, cueText(b, r) || (hasScript ? 'タイミングなし（押して付ける）' : 'タイミングなし')),
-        h('span', { class: 'cue-br' }, '》')),
+        h('span', { class: 'cue-br' }, '》'),
+        // 《A》～《B》の範囲で書いた図解：終わりのタイミング
+        b.cue && b.cueEnd ? [h('span', { class: 'cue-br' }, '～《'), h('span', { class: 'cue-end' }, b.cueEnd), h('span', { class: 'cue-br' }, '》')] : null),
       h('details', { class: 'kebab' },
         h('summary', { title: 'その他の操作' }, icon('more')),
         h('div', { class: 'menu' },
           canMerge ? h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; db.update(blockPath(w, b), { newRow: false }); } }, '上の段とまとめる') : null,
           b.newRow === false ? h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; db.update(blockPath(w, b), { newRow: true }); } }, 'この位置で段を分ける') : null,
           h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; S.ui.reanchor = b.id; S.ui.sel = null; S.ui.lineSel = null; rerender(); } }, 'タイミング（テマ友での位置）を付け替える'),
+          b.cueEnd ? h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; db.update(blockPath(w, b), { cueEnd: DEL, anchorEnd: DEL }); } }, '終わりのタイミング（～《》）を外す') : null,
           h('button', { class: 'linklike danger', onclick: (e) => { e.target.closest('details').open = false; removeBlock(w, d, b); } }, 'この図解を削除')))),
     !r.ok ? h('div', { class: 'warn small' }, 'テーマ活動の友の中にこの語句が見つかりません。「⋯」→「位置を付け替える」で直してください。') : null,
     h('div', {

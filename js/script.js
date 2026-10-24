@@ -171,8 +171,20 @@ export function highlightRanges(text, blocks) {
     if (!b.cue || !b.anchor || !b.anchor.text) continue;
     const r = resolveAnchor(text, b.anchor);
     if (r.ok) out.push([r.offset, r.offset + b.anchor.text.length]);
+    // 《A》～《B》の終わりの語句も目立たせる
+    if (b.cueEnd && b.anchorEnd && b.anchorEnd.text) {
+      const e = resolveAnchor(text, b.anchorEnd);
+      if (e.ok) out.push([e.offset, e.offset + b.anchorEnd.text.length]);
+    }
   }
   return out;
+}
+
+// 《A》～《B》のように、タイミングが範囲で書いてあるとき：《A》のあとの「～《B》」を読む。
+// 返すのは { end: B, rest: そのあとの文 }。範囲でなければ null
+export function cueRangeEnd(rest) {
+  const m = /^\s*[～〜~\-－ー―]\s*[《≪«]\s*(.*?)\s*[》≫»](.*)$/.exec(String(rest || ''));
+  return m && m[1].trim() ? { end: m[1].trim(), rest: m[2] } : null;
 }
 
 // 取り込み：《タイミング》の語句をテーマ活動の友の中から探す。
