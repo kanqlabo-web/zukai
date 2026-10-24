@@ -13,11 +13,13 @@ import { DialogView, isDialogOpen } from './dialog.js';
 import { saveMyProfile, handleGroupResult } from './access.js';
 import { setPresence, PresenceBar, presenceCol, paintCarets } from './presence.js';
 import { ShowView, afterShow } from './show.js';
+import { versionLabel, CHANGELOG_URL, watchForUpdate, reloadToLatest } from './version.js';
 
 const $app = document.getElementById('app');
 const $modal = document.getElementById('modal');
 const $toasts = document.getElementById('toasts');
 const $dialog = document.getElementById('dialog');
+const $update = document.getElementById('update');
 
 let subs = [];
 function unsubAll() { for (const u of subs) { try { u(); } catch (e) { /* noop */ } } subs = []; }
@@ -162,14 +164,21 @@ function Header() {
         h('div', { class: 'menu' },
           h('div', { class: 'menu-who' }, S.user.name, h('small', null, S.user.email)),
           mode !== 'local' ? h('button', { class: 'linklike', onclick: () => auth.signOut() }, 'ログアウト') : null,
+          VersionLink('menu-version'),
         )) : null,
     ));
+}
+
+// バージョンと更新履歴へのリンク
+function VersionLink(cls) {
+  return h('a', { class: cls, href: CHANGELOG_URL, target: '_blank', rel: 'noopener', title: '更新履歴を見る' }, versionLabel());
 }
 
 function Gate(title, body) {
   return h('main', { class: 'gate' }, h('div', { class: 'gate-card' },
     h('div', { class: 'gate-mark' }, '図'),
-    h('h1', null, title), body));
+    h('h1', null, title), body,
+    VersionLink('gate-version')));
 }
 
 function PageView() {
@@ -215,7 +224,17 @@ function renderToasts() {
 }
 
 function renderDialog() { render($dialog, DialogView()); }
-setRenderers([renderPage, renderModal, renderDialog, renderToasts]);
+// 新しい版が公開されたときのお知らせ
+function renderUpdate() {
+  const v = S.newVersion;
+  render($update, v ? [h('div', { class: 'update-bar' },
+    h('span', null, `新しいバージョン ${v} が公開されました。`),
+    h('button', { class: 'btn primary', onclick: () => reloadToLatest() }, '読み込み直す'),
+    h('button', { class: 'icon-btn', title: 'あとで', 'aria-label': '閉じる', onclick: () => { S.newVersion = null; rerender(); } },
+      h('svg', { viewBox: '0 0 24 24', width: 18, height: 18 }, h('path', { d: 'M6 6l12 12M18 6L6 18', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round' }))))] : []);
+}
+setRenderers([renderPage, renderModal, renderDialog, renderToasts, renderUpdate]);
+watchForUpdate((v) => { S.newVersion = v; rerender(); });
 window.addEventListener('zukai-error', (e) => toast(e.detail, 'error', 8000));
 
 // 「⋯」やアカウントのメニューは、ほかの所を押したらすぐ閉じる

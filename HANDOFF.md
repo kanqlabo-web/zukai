@@ -20,7 +20,9 @@
 
 ### 更新のしかた（これから）
 - 直したら **GitHub の main に push するだけ**。Firebase への deploy はしない。
-- 利用者には「Ctrl+Shift+R で読み込み直してください」と伝える。
+- **push のたびにバージョンを上げる**：`js/version.js` の `VERSION`・`DATE` を上げ、`CHANGELOG.md` の先頭に追記する（付け方は CHANGELOG の冒頭）。
+- アプリを開いている人には、画面の下に「新しいバージョンが公開されました」と出る（`version.js` がサーバーの `version.js` と比べる。起動時・画面に戻ったとき・30分ごと）。「読み込み直す」で古い js / css を取り直してから再読み込みするので、Ctrl+Shift+R は要らない。
+- 今のバージョンは、右上のアカウントのメニューの一番下とログイン画面に出る。
 
 ### 報告のしかた（ユーザーの希望）
 - です／ます調の丁寧な日本語。最初に一文で結論、そのあと「ラベル：具体的な事実」の箇条書き。
@@ -53,6 +55,7 @@
 | `drawconv.js` / `drawimport.js` | Googleの図形描画（SVG）や PDF の図を、編集できる図形に直す（丸数字・文字の読み取り） |
 | `clippaste.js` | 図の編集画面への貼り付け（画像・Googleドキュメントの図形描画・文字） |
 | `gdrive.js` | Googleドライブ（フォルダ選択、PDF / ドキュメントの保存） |
+| `version.js` ＋ `CHANGELOG.md` | バージョン表示と新しい版のお知らせ、更新履歴 |
 | `sample.js` ＋ `sample/library.json` | 「サンプルを作る」の中身（管理者のライブラリーを書き出したもの） |
 | `fonts/g/` | PDF 用の字形データ（Noto Sans CJK JP / Liberation Sans から作成） |
 
