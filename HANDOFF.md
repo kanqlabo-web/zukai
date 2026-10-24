@@ -127,3 +127,5 @@
 - 書き出しへのリンクは `#/w/…/print/…?export`。開いたらすぐ `autoExport`（`print.js`）。キャンセルで `history.back()`。
 - 「使い方」の開閉は localStorage の `zukai.howtoViews`（3回まで開いておく。閉じたら 99）。
 - アイコンは `js/icons.js` の `icon(name)`。
+- スマホ（1.7.1〜）：`pointer: coarse` だけの端末では、テマ友の欄は `contenteditable=false`。`S.ui.scriptTyping`（段の先頭位置）の段だけ書き換えられる（`views-draft.js` の `touchOnly`・`startScriptTyping`）。図の編集の2本指の拡大・スクロールは `editor.js` の `fingers`・`pinchStart`・`pinchMove`。
+

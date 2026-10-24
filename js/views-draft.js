@@ -88,13 +88,18 @@ function FormatBar() {
 }
 
 // テマ友の段（行のまとまり）を、その場で書き換えられる欄にする
+// 指で使う端末では、テマ友の行を押すたびにキーボードが出ないよう、ふだんは書き換えられないようにしておく
+// （行を押して出る「文字を直す」で、その段だけ書き換えられる）
+const touchOnly = () => window.matchMedia && window.matchMedia('(pointer: coarse)').matches && !window.matchMedia('(any-pointer: fine)').matches;
+
 function ScriptEditor(w, d, draft, row, hls, allText, allMarks) {
   const lines = row.lines;
   const start = lines[0].start, end = lines[lines.length - 1].end;
   const at = attrsOf(allText, allMarks);
   const lineSel = S.ui.lineSel;
   return RichEdit({
-    key: 'se-' + row.start, cls: 'script-ed', pkey: 'script@' + start,
+    key: 'se-' + row.start, cls: 'script-ed' + (S.ui.scriptTyping === row.start ? ' typing' : ''), pkey: 'script@' + start,
+    editable: !touchOnly() || S.ui.scriptTyping === row.start,
     sig: allText.slice(start, end) + '|' + JSON.stringify(allMarks.filter((m) => m.e > start && m.s < end)) + '|' + JSON.stringify(hls) + '|' + lineSel + '|' + lines.map((l) => (l.indent ? 1 : 0) + (l.label ? 'L' + l.label.s + '-' + l.label.e : '')).join(','),
     lines: () => lines.map((l) => {
       const cls = 'rl sline' + (l.indent ? ' indent' : '') + (l.blank ? ' blank' : '') + (lineSel === l.start ? ' picked' : '');
@@ -191,6 +196,8 @@ function onLine(e, line) {
   const { draft } = ctx();
   const text = scriptOf(draft).text;
   S.ui.lineSel = line.start;
+  const rowEl = e.target.closest('.srow');
+  S.ui.lineRow = rowEl ? +rowEl.getAttribute('data-prow') : null;
   S.ui.lineText = text.slice(line.start, line.end);
   S.ui.lineAuto = autoTiming(text, line);
   S.ui.lineInfo = line;
@@ -345,8 +352,34 @@ export function SelectionBar() {
     h('div', { class: 'selbar-btns' },
       h('button', { class: 'btn primary', onpointerdown: keep, onclick: () => makeBlock(true) }, sel ? '選んだ語句で図解を追加' : 'この行に図解を追加'),
       LineFixButtons(),
-      h('button', { class: 'btn ghost', onpointerdown: keep, onclick: clearSel, 'aria-label': '閉じる' }, '×')));
+      lineSel != null && S.ui.lineRow != null && touchOnly() ? h('button', { class: 'btn', onpointerdown: keep, onclick: startScriptTyping }, '文字を直す') : null,
+      h('button', { class: 'btn ghost selbar-close', onpointerdown: keep, onclick: clearSel, 'aria-label': '閉じる', title: '閉じる' }, icon('close', 20))));
 }
+
+// 指で使う端末：押した行の段だけ書き換えられるようにして、行の終わりにカーソルを置く
+function startScriptTyping() {
+  const row = S.ui.lineRow, ls = S.ui.lineSel;
+  S.ui.scriptTyping = row;
+  clearSel();
+  requestAnimationFrame(() => {
+    const el = document.querySelector(`.srow[data-prow="${row}"] .script-ed`);
+    if (!el) return;
+    el.focus();
+    const line = el.querySelector(`[data-ls="${ls}"]`);
+    const r = document.createRange();
+    if (line) { r.selectNodeContents(line); r.collapse(false); const s = window.getSelection(); s.removeAllRanges(); s.addRange(r); }
+  });
+}
+// 書き換えている段から離れたら、また書き換えられない状態に戻す
+document.addEventListener('focusout', (e) => {
+  if (S.ui.scriptTyping == null || !e.target.closest || !e.target.closest('.script-ed')) return;
+  setTimeout(() => {
+    const a = document.activeElement;
+    if (a && a.closest && a.closest('.script-ed.typing, .format-bar')) return;
+    S.ui.scriptTyping = null;
+    rerender();
+  }, 200);
+});
 
 // 新しい図解の位置より前にある、最後の図（人の位置を引き継ぐため）
 function lastDiagramBefore(offset) {
@@ -570,7 +603,8 @@ function BlockCard(w, d, b, r, rowIndex, indexInRow, rows) {
   const here = others().filter((p) => p.d === d && p.block === b.id && !p.g && !p.caret);
   // ボタンは、選んでいる（押した）図解にだけ出す（CSS で隠す。作り直すと入力中の欄が外れるため）
   const active = S.ui.activeBlock === b.id;
-  const pick = () => { if (S.ui.activeBlock !== b.id) { S.ui.activeBlock = b.id; rerender(); } };
+  // 指で押したときは、選ばれていない段のタイミングを1回目に押しても、付け替えにはせず選ぶだけにする
+  const pick = (e) => { if (S.ui.activeBlock !== b.id) { S.ui.activeBlock = b.id; S.ui.justPicked = e && e.pointerType === 'touch' ? b.id : null; rerender(); } };
   return h('div', {
     key: b.id, class: 'block' + (b.cue ? '' : ' nocue') + (here.length ? ' has-pres' : '') + (active ? ' active' : ''), 'data-pblock': b.id, style: ringStyle(here),
     onpointerdown: pick, onfocusin: pick,
@@ -583,7 +617,7 @@ function BlockCard(w, d, b, r, rowIndex, indexInRow, rows) {
         h('button', {
           type: 'button', 'aria-label': 'タイミング（押すとテマ友での位置を付け替えます）', title: '押すと、テマ友での位置を付け替えます',
           class: 'cue-btn' + (b._u && b._u.cue && b.cue ? ' upd' : '') + (S.ui.reanchor === b.id ? ' picking' : '') + (b.cue ? '' : ' empty'),
-          onclick: () => { if (!hasScript) { toast('テマ友を貼り付けると、タイミングを付けられます'); return; } S.ui.reanchor = S.ui.reanchor === b.id ? null : b.id; S.ui.sel = null; S.ui.lineSel = null; rerender(); },
+          onclick: () => { if (S.ui.justPicked === b.id) { S.ui.justPicked = null; return; } if (!hasScript) { toast('テマ友を貼り付けると、タイミングを付けられます'); return; } S.ui.reanchor = S.ui.reanchor === b.id ? null : b.id; S.ui.sel = null; S.ui.lineSel = null; rerender(); },
         }, cueText(b, r) || (hasScript ? 'タイミングなし（押して付ける）' : 'タイミングなし')),
         h('span', { class: 'cue-br' }, '》')),
       h('details', { class: 'kebab' },
@@ -707,9 +741,11 @@ function HowTo(d) {
   h('ul', null,
     h('li', null, 'テマ友の行をタップすると、その行の最初の数語をタイミングにして図解を追加できます。語句をなぞって選ぶと、選んだ語句をタイミングにできます。'),
     h('li', null, '行をタップすると、キャラ名（薄い文字）や字下げも直せます。'),
-    h('li', null, 'テマ友と説明は、その場で書き換えられます。文字をなぞって選んでから、上の色のボタンを押してください。'),
+    touchOnly()
+      ? h('li', null, 'テマ友の文字を直すときは、行を押して出る「文字を直す」を押してください。説明はそのまま書き換えられます。')
+      : h('li', null, 'テマ友と説明は、その場で書き換えられます。文字をなぞって選んでから、上の色のボタンを押してください。'),
     h('li', null, '図解を押すと、その図解の「＋説明」「＋図」などのボタンが出ます。'),
-    h('li', null, 'Googleドキュメントの図解をコピーして、このページで Ctrl+V を押すと、このトラックに取り込めます。')));
+    touchOnly() ? null : h('li', null, 'Googleドキュメントの図解をコピーして、このページで Ctrl+V を押すと、このトラックに取り込めます。')));
 }
 
 // テマ友なしで図解を足す（図だけ先に描きたいとき）

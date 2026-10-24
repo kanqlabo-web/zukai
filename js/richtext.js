@@ -297,7 +297,7 @@ function focusEnd(el) {
 // opts: { key, cls, autofocus, lines, onChange, placeholder, sig（中身の目印。変わったときだけ描き直す） }
 export function RichEdit(opts) {
   return h('div', {
-    key: opts.key, class: 'rich ' + (opts.cls || ''), contenteditable: 'true', spellcheck: 'false', manual: true,
+    key: opts.key, class: 'rich ' + (opts.cls || ''), contenteditable: opts.editable === false ? 'false' : 'true', spellcheck: 'false', manual: true,
     'data-placeholder': opts.placeholder || null, 'data-pkey': opts.pkey || null,
     ref: (el) => { el._rt = opts; setup(el); paint(el, true); focusEnd(el); },
     update: (el) => { el._rt = opts; if (!el._composing) paint(el); focusEnd(el); },

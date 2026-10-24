@@ -28,6 +28,7 @@ export function openEditor(w, id) {
     propagate: false, linkPeople: false, // 図を開くたびに、どちらもオフから始める
   };
   S.ui.editDiagram = id;
+  fingers.clear();
   setPresence(w, { g: id, sel: [] });
   unsub = db.watchDoc(P.doc(w, 'diagrams', id), (g) => {
     if (!E) return;
@@ -761,8 +762,49 @@ function onKey(e) {
 }
 
 // ---------- ポインタ ----------
+function nearestPerson(p, range) {
+  let best = null, bd = Infinity;
+  for (const sh of Object.values(merged())) {
+    if (!isPerson(sh) || !passes(sh)) continue;
+    const d = Math.hypot(sh.x - p[0], sh.y - p[1]) - (sh.r || 20);
+    if (d < range && d < bd) { bd = d; best = sh.id; }
+  }
+  return best;
+}
+
+// 2本指：つまんで拡大・縮小、動かしてスクロール（スマホ・タブレット）
+const fingers = new Map();
+function pinchStart() {
+  const wrap = svgEl().parentElement;
+  const [a, b] = [...fingers.values()];
+  E.drag = null; E.temp = {};
+  E.pinch = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, z0: E.zoom, m0: [(a.x + b.x) / 2, (a.y + b.y) / 2], sl: wrap.scrollLeft, st: wrap.scrollTop };
+  draw();
+}
+function pinchMove() {
+  const svg = svgEl(), wrap = svg.parentElement, r = wrap.getBoundingClientRect();
+  const [a, b] = [...fingers.values()];
+  const P0 = E.pinch;
+  const z = Math.min(ZOOMS[ZOOMS.length - 1], Math.max(1, P0.z0 * Math.hypot(a.x - b.x, a.y - b.y) / P0.d0));
+  const m = [(a.x + b.x) / 2, (a.y + b.y) / 2];
+  // つまんだ所が指の下に残るよう、拡大した分だけスクロールを合わせる
+  const cx = (P0.sl + P0.m0[0] - r.left) / P0.z0, cy = (P0.st + P0.m0[1] - r.top) / P0.z0;
+  E.zoom = Math.round(z * 100) / 100;
+  svg.style.width = `${E.zoom * 100}%`;
+  wrap.scrollLeft = cx * E.zoom - (m[0] - r.left);
+  wrap.scrollTop = cy * E.zoom - (m[1] - r.top);
+  draw();
+}
+
 function down(e) {
-  if (!E || !E.loaded || E.tool === 'pan') return;
+  if (!E || !E.loaded) return;
+  if (e.pointerType === 'touch') {
+    fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (fingers.size === 1) E.selBefore = new Set(E.sel); // 2本目が来たら、1本目で変わった選択を戻す
+    if (fingers.size === 2) { e.preventDefault(); if (E.selBefore) E.sel = E.selBefore; pinchStart(); return; }
+    if (fingers.size > 2 || E.pinch) return;
+  }
+  if (E.tool === 'pan') return;
   if (e.button != null && e.button > 0) return;
   if (E.inline) { e.preventDefault(); endInline(true); return; }
   e.preventDefault();
@@ -800,6 +842,11 @@ function down(e) {
   const sEl = e.target.closest('[data-id]');
   let id = sEl && sEl.getAttribute('data-id');
   if (id && E.tool === 'select' && !passes(cur(id))) id = null;
+  // 指で押したとき：人は小さいので、指先の近く（画面で約22px）にいる人を優先してつかむ
+  if (E.tool === 'select' && e.pointerType === 'touch' && !isPerson(cur(id))) {
+    const near = nearestPerson(p, 22 * W / svg.getBoundingClientRect().width);
+    if (near) id = near;
+  }
   const additive = e.shiftKey || e.metaKey || e.ctrlKey || E.multi;
   const t = E.tool;
   if (t === 'select') {
@@ -859,6 +906,10 @@ function down(e) {
 }
 
 function move(e) {
+  if (E && e.pointerType === 'touch' && fingers.has(e.pointerId)) {
+    fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (E.pinch) { if (fingers.size >= 2) pinchMove(); return; }
+  }
   if (E && E.poly && !E.drag) { polyHover(svgPt(e)); return; }
   if (!E || !E.drag) return;
   const p = svgPt(e);
@@ -951,7 +1002,11 @@ function move(e) {
   draw();
 }
 
-function up() {
+function up(e) {
+  if (e && fingers.has(e.pointerId)) {
+    fingers.delete(e.pointerId);
+    if (E && E.pinch) { if (fingers.size === 0) { E.pinch = null; draw(); } return; }
+  }
   if (!E || !E.drag) return;
   const d = E.drag;
   E.drag = null;
@@ -1628,7 +1683,8 @@ export function EditorView() {
     marquee = h('rect', { x, y, width: Math.abs(d.p1[0] - d.p0[0]), height: Math.abs(d.p1[1] - d.p0[1]), class: 'marquee', 'stroke-width': 1.5 / upx });
   }
   const setTool = (t) => { if (E.poly) finishPoly(); E.tool = t; if (t !== 'select') E.sel = new Set(); draw(); };
-  const zi = ZOOMS.indexOf(E.zoom);
+  const zoomOut = [...ZOOMS].reverse().find((z) => z < E.zoom - 0.01);
+  const zoomIn = ZOOMS.find((z) => z > E.zoom + 0.01);
   return h('div', { class: 'ed-root', role: 'dialog', 'aria-label': '図の編集' },
     h('header', { class: 'ed-top' },
       h('button', { class: 'btn primary', onclick: () => closeEditor() }, '完了'),
@@ -1644,9 +1700,9 @@ export function EditorView() {
       h('div', { class: 'ed-top-btns' },
         UndoButtons('icon-btn lg'),
         h('span', { class: 'sep' }),
-        h('button', { class: 'icon-btn lg', title: '縮小', disabled: zi <= 0, onclick: () => { E.zoom = ZOOMS[Math.max(0, zi - 1)]; draw(); } }, '−'),
+        h('button', { class: 'icon-btn lg', title: '縮小', disabled: !zoomOut, onclick: () => { E.zoom = zoomOut; draw(); } }, '−'),
         h('span', { class: 'zoom-val' }, Math.round(E.zoom * 100) + '%'),
-        h('button', { class: 'icon-btn lg', title: '拡大', disabled: zi >= ZOOMS.length - 1, onclick: () => { E.zoom = ZOOMS[Math.min(ZOOMS.length - 1, zi + 1)]; draw(); } }, '＋'))),
+        h('button', { class: 'icon-btn lg', title: '拡大', disabled: !zoomIn, onclick: () => { E.zoom = zoomIn; draw(); } }, '＋'))),
     h('div', { class: 'ed-body' },
       h('nav', { class: 'ed-tools' },
         TOOLS.map(([t, label]) => h('button', {
@@ -1674,6 +1730,6 @@ export function EditorView() {
           E.hmode ? HeightArrow(upx) : null),
         E.inline ? InlineBox() : null),
       h('aside', { class: 'ed-panel' },
-        h('div', { class: 'rotate-hint' }, 'スマホは横向きにすると大きく編集できます。細かい所は右上の「＋」で拡大し、「スクロール」で移動してください。'),
+        h('div', { class: 'rotate-hint' }, '2本指で広げると拡大、2本指で動かすとスクロールします。横向きにすると大きく編集できます。'),
         E.hmode ? HeightPanel() : E.tool === 'person' ? PersonPanel(shapes) : ['line', 'curve', 'carrow', 'cblock'].includes(E.tool) ? PolyPanel() : E.tool === 'block' ? BlockToolPanel() : SelPanel())));
 }
