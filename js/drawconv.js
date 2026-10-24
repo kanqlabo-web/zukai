@@ -351,9 +351,6 @@ export async function convertDrawing(page, fig, { chars = '', frame = null, word
   for (const x of persons) {
     const [px, py] = M(x.c);
     const s = { t: 'person', x: Math.round(px), y: Math.round(py), no: x.no, seq: x.seq };
-    // 大きさ：ふつうの大きさ（半径20）に近ければそのまま。大きく描いた人は大きく
-    const r = (x.d / 2) * scale;
-    if (Math.abs(r - 20) > 3) s.r = Math.round(Math.max(10, Math.min(48, r)));
     personShape.set(x, s);
     if (x.ring) s.ring = true;
     if (x.fill !== 'white') s.fill = x.fill;
@@ -477,7 +474,7 @@ export async function convertDrawing(page, fig, { chars = '', frame = null, word
   }
 
   // 円の中の名前（上から、左から順につなぐ）
-  for (const x of persons) if (x.texts) { const s = personShape.get(x); s.label = x.texts.sort((a, b) => a.y - b.y || a.x - b.x).map((v) => v.t).join(''); s.labelIn = true; }
+  for (const x of persons) if (x.texts) personShape.get(x).label = x.texts.sort((a, b) => a.y - b.y || a.x - b.x).map((v) => v.t).join('');
 
   // そのほかの形
   const rest = vis.filter((p) => !used.has(p));
