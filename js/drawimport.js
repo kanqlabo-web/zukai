@@ -93,7 +93,11 @@ async function toDiagram(list, { cast = [], roleList = [] } = {}) {
       let c = s.no && byNo[s.no];
       const same = (v) => v && String(v).replace(/\s/g, '') === String(s.label).replace(/\s/g, '');
       // 円の中の文字が、役の一覧の役の表記（呼び方）や役名と同じなら、その役として置く（役者が決まっていればその人になる）
-      const role = !c && !s.no && s.label ? roleList.find((r) => same(r.label)) || roleList.find((r) => same(r.name)) : null;
+      // 読み取りで余計な字が付いたとき（「コン」が「コンまー」など）は、読んだ文字の頭が役の表記と同じ役（いちばん長いもの）にする
+      const norm = (v) => String(v || '').replace(/\s/g, '');
+      const head = () => roleList.filter((r) => norm(r.label).length >= 2 && norm(s.label).startsWith(norm(r.label)))
+        .sort((a, b) => norm(b.label).length - norm(a.label).length)[0] || null;
+      const role = !c && !s.no && s.label ? roleList.find((r) => same(r.label)) || roleList.find((r) => same(r.name)) || head() : null;
       // そうでなければ：メンバー一覧の表記・役名・名前と同じ（またはその頭）なら、その人
       if (!c && !role && s.label) {
         const L = s.label.replace(/\s/g, '');
