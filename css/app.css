@@ -822,3 +822,6 @@ body.is-show { overflow: hidden; }
 .cast-edit.role-list .lbl-in { width: 110px; }
 .role-paste { margin-top: 10px; }
 .role-paste summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+/* 説明の中の URL（押すと開く） */
+a.tlink { color: #1155cc; text-decoration: underline; word-break: break-all; }
+[contenteditable="true"] a.tlink { cursor: text; }

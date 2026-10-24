@@ -1,7 +1,7 @@
 // 図解シートの部品（編集画面とPDFで共通）
 import { h } from './vdom.js';
 import { lineSegments } from './script.js';
-import { attrsOf, runsOf, markStyle } from './richtext.js';
+import { attrsOf, runsOf, markStyle, linkify } from './richtext.js';
 import { numberCast, roleText } from './cast.js';
 
 export function CastTable(cast) {
@@ -37,7 +37,7 @@ export function DotText(text, isNew, marks) {
     const m = ln.match(/^(\s*)●\s?/);
     const from = m ? st + m[0].length : st;
     const runs = runsOf(from, st + ln.length, at).map((r) => (r.c || r.bg || r.b
-      ? h('span', { style: markStyle(r.c, r.bg, r.b) }, src.slice(r.s, r.e)) : src.slice(r.s, r.e)));
+      ? h('span', { style: markStyle(r.c, r.bg, r.b) }, linkify(src.slice(r.s, r.e))) : linkify(src.slice(r.s, r.e))));
     return h('div', { key: 'l' + i, class: 'nline' + upd }, m ? [m[1], h('i', { class: 'dot' })] : null, runs);
   });
 }

@@ -470,7 +470,36 @@ export async function convertDrawing(page, fig, { chars = '', frame = null, word
     const owner = persons.find((x) => x.circle && Math.hypot(x.c[0] - tc[0], x.c[1] - tc[1]) < x.d * 0.55);
     if (owner) { (owner.texts = owner.texts || []).push({ y: p.y0, x: p.x0, t: out.join('') }); continue; }
     const [tx, ty] = M(ctr(p));
-    shapes.push({ t: 'text', text: out.join('\n'), x: Math.round(tx), y: Math.round(ty), size: Math.max(10, Math.round(em * scale)), seq: p.seq, _c: ctr(p) });
+    shapes.push({ t: 'text', text: out.join('\n'), x: Math.round(tx), y: Math.round(ty), size: Math.max(10, Math.round(em * scale)), seq: p.seq, _c: ctr(p), _box: [p.x0, p.y0, p.x1, p.y1] });
+  }
+
+  // 円のすぐ隣に書いた名前（「兵A」「ダル」など）：番号も中の名前もない円の、その人の名前にする
+  // 文字の枠と円のふちのすきまが小さい組から順に、1つの円に1つの文字を結びつける
+  {
+    const free = persons.filter((x) => !x.no && !x.texts);
+    const pairs = [];
+    for (const t of shapes) {
+      if (t.t !== 'text' || !t._box || /\n/.test(t.text) || !t.text.trim() || [...t.text.trim()].length > 6) continue;
+      const [x0, y0, x1, y1] = t._box;
+      const em = Math.max(y1 - y0, 1);
+      for (const x of free) {
+        const r = x.d / 2;
+        const dx = Math.max(x0 - x.c[0], 0, x.c[0] - x1), dy = Math.max(y0 - x.c[1], 0, x.c[1] - y1);
+        const gap = Math.hypot(dx, dy) - r;
+        if (gap < Math.max(r * 0.8, em * 1.2)) pairs.push({ t, x, gap });
+      }
+    }
+    pairs.sort((a, b) => a.gap - b.gap);
+    const usedT = new Set(), usedX = new Set();
+    for (const { t, x } of pairs) {
+      if (usedT.has(t) || usedX.has(x)) continue;
+      usedT.add(t); usedX.add(x);
+      x.texts = [{ y: t._box[1], x: t._box[0], t: t.text.trim() }];
+      // 名前は、元の図と同じ側に置く（あとで動かせる）
+      const [cx, cy] = M(x.c), [tx, ty] = M(t._c);
+      personShape.get(x).labelOff = [Math.round(tx - cx), Math.round(ty - cy)];
+    }
+    for (let i = shapes.length - 1; i >= 0; i--) if (usedT.has(shapes[i])) shapes.splice(i, 1);
   }
 
   // 円の中の名前（上から、左から順につなぐ）
@@ -500,7 +529,7 @@ export async function convertDrawing(page, fig, { chars = '', frame = null, word
     if (s.t !== 'text') continue;
     const near = shapes.filter((x) => x.t === 'person').map((x) => ({ x, d: Math.hypot(x.x - s.x, x.y - s.y) })).sort((a, b) => a.d - b.d)[0];
     if (near && near.d < 75) s.nearNo = near.x.no;
-    delete s._c;
+    delete s._c; delete s._box;
   }
   return shapes;
 }

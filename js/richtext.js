@@ -58,8 +58,34 @@ export function markStyle(c, bg, b) {
 }
 // 1つの区間の span（data-* は、打ち直したときに読み直すため）
 export function runSpan(text, r, extra = {}) {
-  return h('span', { 'data-c': r.c || '', 'data-bg': r.bg || '', 'data-b': r.b || '', style: markStyle(r.c, r.bg, r.b), ...extra }, text.slice(r.s, r.e));
+  return h('span', { 'data-c': r.c || '', 'data-bg': r.bg || '', 'data-b': r.b || '', style: markStyle(r.c, r.bg, r.b), ...extra }, linkify(text.slice(r.s, r.e)));
 }
+
+// ---------- 文の中の URL（YouTube などのリンク）を、押せるリンクにする ----------
+// 書いてある文字はそのまま（URL の文字を <a> で包むだけ）。編集の欄の中では Ctrl（Mac は ⌘）を押しながらクリックで開く
+const URL_RE = /https?:\/\/[^\s<>"'）」』]+/g;
+export function linkify(str) {
+  str = String(str || '');
+  if (!/https?:\/\//.test(str)) return str;
+  const out = [];
+  let last = 0;
+  for (const m of str.matchAll(URL_RE)) {
+    if (m.index > last) out.push(str.slice(last, m.index));
+    out.push(h('a', { href: m[0], target: '_blank', rel: 'noopener noreferrer', class: 'tlink', title: 'Ctrl（Mac は ⌘）を押しながらクリックで開きます' }, m[0]));
+    last = m.index + m[0].length;
+  }
+  if (last < str.length) out.push(str.slice(last));
+  return out;
+}
+document.addEventListener('click', (e) => {
+  const a = e.target && e.target.closest && e.target.closest('a.tlink');
+  if (!a) return;
+  const editing = a.closest('[contenteditable="true"]');
+  // 編集の欄の中では、ふつうのクリックはカーソルを置くだけ
+  if (editing && !(e.ctrlKey || e.metaKey)) { e.preventDefault(); return; }
+  e.preventDefault();
+  window.open(a.href, '_blank', 'noopener');
+});
 
 // ---------- 画面の中身を読む ----------
 const BLOCK = new Set(['DIV', 'P', 'LI']);

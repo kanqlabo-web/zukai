@@ -27,6 +27,10 @@ function textOf(el) {
     if (n.tagName === 'BR') { s += '\n'; return; }
     if (n.tagName === 'IMG' || n.tagName === 'STYLE' || n.tagName === 'SCRIPT') return;
     for (const c of n.childNodes) walk(c);
+    // YouTube などのリンク（スマートチップ）：題名のあとに URL を残す（押すと開ける）
+    if (n.dataset && n.dataset.richLinks) {
+      try { const u = JSON.parse(n.dataset.richLinks)['fple-u']; if (u && !s.endsWith(u)) s += ' ' + u; } catch (e) { /* 読めなければ題名だけ */ }
+    }
   };
   walk(el);
   return clean(s).replace(/[ \t]+\n/g, '\n');
@@ -255,6 +259,14 @@ export function sliceToHtml(sliceText, html) {
   const inlineAt = {}, posAt = {};
   (pos.inline || []).forEach((v, i) => { if (v) inlineAt[i] = v; });
   (pos.positioned || []).forEach((v, i) => { if (v) posAt[i] = v; });
+  // YouTube などのリンク（スマートチップ）：その場所に「題名 URL」を書く
+  const chipAt = {};
+  (pos['first-party-link'] || []).forEach((v, i) => { if (v) chipAt[i] = v; });
+  const chipText = (key) => {
+    const e = em[key];
+    if (!e || !e['fple-u']) return '';
+    return esc(((e['fple-t'] || '').trim() ? e['fple-t'].trim() + ' ' : '') + e['fple-u']);
+  };
   // 写真（クリップボードの HTML に入っている順）
   const photos = [];
   if (html) for (const m of html.matchAll(/<img\b[^>]*>/gi)) photos.push(m[0]);
@@ -281,6 +293,7 @@ export function sliceToHtml(sliceText, html) {
     if (ch === '\x11') { const d = cellOpen.length - 1; if (para) flush(); if (cellOpen[d]) out += '</td>'; if (rowOpen[d]) out += '</tr>'; out += '</tbody></table>'; cellOpen.pop(); rowOpen.pop(); continue; }
     if (ch === '\n') { flush(); continue; }
     if (inlineAt[i]) { para += inlineAt[i].map(objHtml).join(''); continue; }
+    if (chipAt[i]) { para += chipAt[i].map(chipText).join(' '); continue; }
     para += esc(ch);
   }
   if (para || after.length) flush();
