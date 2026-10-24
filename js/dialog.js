@@ -5,6 +5,7 @@ import { rerender } from './state.js';
 let cur = null;
 
 // fields: [{ key, label, value, placeholder, type: 'text'|'textarea'|'select', options:[[v,label]] , hint }]
+// choices: [[値, ボタンの文字], …]：OK のかわりに並べるボタン。押したボタンの値が結果の choice に入る
 export function ask(opts) {
   return new Promise((resolve) => {
     const values = {};
@@ -27,8 +28,9 @@ function close(result) {
   r(result);
 }
 
-function submit() {
+function submit(choice) {
   if (!cur) return;
+  if (cur.opts.choices && choice === undefined) choice = cur.opts.choices[cur.opts.choices.length - 1][0];
   const { opts, values } = cur;
   for (const f of opts.fields || []) {
     if (f.required && !String(values[f.key] || '').trim()) { cur.error = `「${f.label}」を入力してください`; rerender(); return; }
@@ -39,6 +41,7 @@ function submit() {
   }
   const out = {};
   for (const k in values) out[k] = typeof values[k] === 'string' ? values[k].trim() : values[k];
+  if (choice !== undefined) out.choice = choice;
   close(out);
 }
 
@@ -80,5 +83,7 @@ export function DialogView() {
       cur.error ? h('div', { class: 'dlg-err' }, cur.error) : null,
       h('div', { class: 'actions end' },
         opts.cancel === false ? null : h('button', { type: 'button', class: 'btn ghost', onclick: () => close(null) }, opts.cancel || 'キャンセル'),
-        h('button', { type: 'submit', class: 'btn ' + (opts.danger ? 'danger-fill' : 'primary'), ref: fields.length ? null : (el) => el.focus() }, opts.ok || 'OK'))));
+        opts.choices
+          ? opts.choices.map(([v, label], i) => h('button', { key: 'c' + i, type: 'button', class: 'btn ' + (i === opts.choices.length - 1 ? 'primary' : ''), onclick: () => submit(v) }, label))
+          : h('button', { type: 'submit', class: 'btn ' + (opts.danger ? 'danger-fill' : 'primary'), ref: fields.length ? null : (el) => el.focus() }, opts.ok || 'OK'))));
 }

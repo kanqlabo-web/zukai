@@ -301,13 +301,13 @@ async function importDocIntoTrack(w, d, html) {
     r = await ask({
       title: `「${track.title}」に取り込む`, ok: '取り込む',
       message: result.tracks.length === 1 ? `見つかったトラック：${list[0][1]}` : `トラックが${result.tracks.length}個見つかりました。このトラックに入れるものを選んでください。`,
-      detail: (empty ? `この稿（${draftName(draft)}）に取り込みます。` : 'この稿にはもう中身があります。新しい稿を作るか、この稿の後ろに足すかを選んでください。') + '取り込んだあとで、タイミングの位置や改行を確かめてください。',
+      detail: (empty ? `この稿（${draftName(draft)}）に取り込みます。` : `この稿にはもう中身があります。「新しい稿に取り込む」は第${nextNo}稿を作って入れ、「この稿に取り込む」は${draftName(draft)}のテマ友の後ろに足します。`) + '取り込んだあとで、タイミングの位置や改行を確かめてください。',
       fields: [
         result.tracks.length > 1 ? { key: 'ti', label: '取り込むトラック', type: 'select', value: '0', options: list } : null,
-        empty ? null : { key: 'into', label: '入れる先', type: 'select', value: 'next', options: [['next', `新しい稿（第${nextNo}稿）を作る`], ['this', `この稿（${draftName(draft)}）の後ろに足す`]] },
       ].filter(Boolean),
+      ...(empty ? {} : { choices: [['this', 'この稿に取り込む'], ['next', '新しい稿に取り込む']] }),
     });
-    if (r && empty) r.into = 'this';
+    if (r) r.into = empty ? 'this' : r.choice;
   }
   if (!r) return;
   const T = result.tracks[+(r.ti || 0)] || result.tracks[0];
