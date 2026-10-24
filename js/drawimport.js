@@ -1,6 +1,6 @@
 // 取り込んだ図形描画（PDFのベクター）を、図解メーカーの図（diagram）として保存する形にする
 import { newId } from './db.js';
-import { LAYER, insideShape, shapeArea, textBox, isRegion } from './stage.js';
+import { LAYER, insideShape, shapeArea, textBox, isRegion, shapeCenter } from './stage.js';
 import { numberCast } from './cast.js';
 import { convertDrawing, frameOf, svgToPage } from './drawconv.js';
 
@@ -135,7 +135,8 @@ function nameRegions(list) {
   const regions = list.filter((s) => isRegion(s) && !s.name);
   const got = new Map();
   for (const s of list) {
-    if (s.t !== 'text' || s.drop || !String(s.text || '').trim()) continue;
+    // 斜めに書いた文字は、図形の名前にせず、傾いた文字のまま置く
+    if (s.t !== 'text' || s.drop || s.rot || !String(s.text || '').trim()) continue;
     const r = textInRegion(s, regions);
     if (!r) continue;
     // 囲んでいる図形のなかに、ほかの小さな図形が入っていたら（エリアの中の文字など）名前にしない
@@ -147,6 +148,10 @@ function nameRegions(list) {
     ts.sort((a, b) => a.y - b.y || a.x - b.x);
     r.name = ts.map((t) => String(t.text).replace(/\n/g, '')).join('');
     r.showName = true;
+    // 名前は、図形の中の元の文字の場所に置く（あとで動かせる）
+    const [ax, ay] = shapeCenter(r);
+    const mx = ts.reduce((a, t) => a + t.x, 0) / ts.length, my = ts.reduce((a, t) => a + t.y, 0) / ts.length;
+    r.nameOff = [Math.round(mx - ax), Math.round(my - ay)];
     for (const t of ts) t.drop = true;
   }
 }

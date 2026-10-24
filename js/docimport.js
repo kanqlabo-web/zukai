@@ -178,9 +178,14 @@ export function analyzeDocHtml(html) {
     // 図解の本体は2列の表（3列以上はメンバー表などなので使わない）
     if (Math.max(...rows.map((r) => r.length)) !== 2) continue;
     const T = cur || newTrack('');
+    // 右の列の幅（写真の大きさを、この幅に対する割合で再現するため）
+    const cols = [...it.el.querySelectorAll(':scope > colgroup > col')].map((c) => parseFloat(c.getAttribute('width')) || 0);
+    const colW = cols.length >= 2 ? cols[cols.length - 1] : 0;
     for (const r of rows) {
       if (r.length < 2) continue;
-      T.rows.push({ left: flatten(r[0]), right: flatten(r[r.length - 1]) });
+      const right = flatten(r[r.length - 1]);
+      if (colW) for (const x of right) if (x.type === 'img') x.colW = colW;
+      T.rows.push({ left: flatten(r[0]), right });
     }
   }
   return { cast: castText, tracks: tracks.filter((t) => t.rows.length).map(buildTrack) };
@@ -209,6 +214,7 @@ function buildTrack(t) {
         if (!blk) start('');
         flush();
         const f = figureOf(it.el);
+        if (f && it.colW && f.w && !f.drawing) f.pct = Math.round(Math.max(10, Math.min(100, (f.w / it.colW) * 100)));
         if (f) blk.parts.push({ kind: 'figure', fig: f });
         continue;
       }
@@ -279,6 +285,9 @@ export function sliceToHtml(sliceText, html) {
     const ph = photos[photoIdx++];
     return ph || '';
   };
+  // 表の列の幅（クリップボードの HTML の表に、同じ順で入っている）
+  const colgroups = html ? [...html.matchAll(/<colgroup\b[^>]*>[\s\S]*?<\/colgroup>/gi)].map((m) => m[0]) : [];
+  let tableIdx = 0;
   let out = '';
   let para = '';
   const after = [];
@@ -287,7 +296,7 @@ export function sliceToHtml(sliceText, html) {
   for (let i = 0; i < sp.length; i++) {
     const ch = sp[i];
     if (posAt[i]) for (const k of posAt[i]) after.push(`<p>${objHtml(k)}</p>`);
-    if (ch === '\x10') { out += '<table><tbody>'; cellOpen.push(false); rowOpen.push(false); continue; }
+    if (ch === '\x10') { out += '<table>' + (colgroups[tableIdx++] || '') + '<tbody>'; cellOpen.push(false); rowOpen.push(false); continue; }
     if (ch === '\x12') { const d = rowOpen.length - 1; if (cellOpen[d]) out += '</td>'; if (rowOpen[d]) out += '</tr>'; out += '<tr>'; rowOpen[d] = true; cellOpen[d] = false; continue; }
     if (ch === '\x1c') { const d = cellOpen.length - 1; if (cellOpen[d]) out += '</td>'; out += '<td>'; cellOpen[d] = true; continue; }
     if (ch === '\x11') { const d = cellOpen.length - 1; if (para) flush(); if (cellOpen[d]) out += '</td>'; if (rowOpen[d]) out += '</tr>'; out += '</tbody></table>'; cellOpen.pop(); rowOpen.pop(); continue; }

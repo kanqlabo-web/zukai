@@ -361,7 +361,17 @@ export async function convertDrawing(page, fig, { chars = '', frame = null, word
   // 文字：小さな、塗りだけの形（文字の線）
   // 文字は濃い色の塗りだけ。薄い塗りで同じ枠の線がある形（白抜きの小さな矢印など）は文字ではない
   const outlined = (p) => vis.some((q) => q !== p && q.stroke && Math.abs(q.x0 - p.x0) < 1.5 && Math.abs(q.x1 - p.x1) < 1.5 && Math.abs(q.y0 - p.y0) < 1.5 && Math.abs(q.y1 - p.y1) < 1.5);
-  const textPaths = vis.filter((p) => !used.has(p) && p.fill && !p.stroke && !isRed(p.fc) && gray(p.fc) < 0.6 && !outlined(p) && (p.y1 - p.y0) < 18 && (p.x1 - p.x0) < 160 && !isCircle(p) && p.path.length > 6);
+  // 斜めに書いた文字（「ドゥルソイ」を楕円に沿って傾けたものなど）は、まっすぐに戻してから読む（p._rot に傾きと、戻した形）
+  const slanted = (p) => {
+    if ((p.x1 - p.x0) >= 160 || (p.y1 - p.y0) >= 160) return false;
+    const a = slantOf(p);
+    if (!a) return false;
+    const q = rotatePath(p, -a);
+    if (q.y1 - q.y0 >= 18 || q.x1 - q.x0 >= 160) return false;
+    p._rot = { a, q };
+    return true;
+  };
+  const textPaths = vis.filter((p) => !used.has(p) && p.fill && !p.stroke && !isRed(p.fc) && gray(p.fc) < 0.6 && !outlined(p) && (((p.y1 - p.y0) < 18 && (p.x1 - p.x0) < 160) || slanted(p)) && !isCircle(p) && p.path.length > 6);
   const pool = [...new Set([...String(chars || '').normalize('NFKC'), ...COMMON, ...KANA, ...ASCII])].filter((ch) => /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}A-Za-z0-9ー々]/u.test(ch));
   // 図形描画を PDF でも取り出せたときは、PDF の中の本当の文字を使う（形から読むと、アニ→アユのように間違えることがある）
   const claimed = new Set();
@@ -369,9 +379,11 @@ export async function convertDrawing(page, fig, { chars = '', frame = null, word
     const T = page.texts;
     if (!T || !T.length) return null;
     const m = 3;
-    const gs = T.filter((g) => !claimed.has(g) && g.x + g.w / 2 >= p.x0 - m && g.x + g.w / 2 <= p.x1 + m && g.y - g.size * 0.35 >= p.y0 - m && g.y - g.size * 0.35 <= p.y1 + m);
+    let gs = T.filter((g) => !claimed.has(g) && g.x + g.w / 2 >= p.x0 - m && g.x + g.w / 2 <= p.x1 + m && g.y - g.size * 0.35 >= p.y0 - m && g.y - g.size * 0.35 <= p.y1 + m);
     if (!gs.length) return null;
     for (const g of gs) claimed.add(g);
+    // 斜めの文字：まっすぐに戻した位置で並べる
+    if (p._rot) { const c = ctr(p); gs = gs.map((g) => { const [x, y] = rotPt([g.x, g.y], c, -p._rot.a); return { ...g, x, y }; }); }
     const lines = [];
     for (const g of gs.slice().sort((a, b) => a.y - b.y || a.x - b.x)) {
       const L = lines[lines.length - 1];
@@ -390,7 +402,8 @@ export async function convertDrawing(page, fig, { chars = '', frame = null, word
   for (const p of textPaths) {
     used.add(p);
     const real = reals.get(p);
-    const sp = subpaths(p.path);
+    const q = p._rot ? p._rot.q : p;
+    const sp = subpaths(q.path);
     // 行に分ける（縦にはっきり空いているところで分ける。「森」のように上下に分かれた字は分けない）
     const maxH = Math.max(...sp.map((s) => s.y1 - s.y0));
     const lines = [];
@@ -401,7 +414,7 @@ export async function convertDrawing(page, fig, { chars = '', frame = null, word
     }
     lines.sort((a, b) => a.y0 - b.y0);
     // 「ニ」「こ」「三」のような横線だけの行は、本当の行ではない（となりの行とまとめる）
-    const PW = p.x1 - p.x0;
+    const PW = q.x1 - q.x0;
     for (let guard = 0; guard < 20 && lines.length > 1; guard++) {
       const k = lines.findIndex((l) => l.y1 - l.y0 < PW * 0.25);
       if (k < 0) break;
@@ -470,7 +483,7 @@ export async function convertDrawing(page, fig, { chars = '', frame = null, word
     const owner = persons.find((x) => x.circle && Math.hypot(x.c[0] - tc[0], x.c[1] - tc[1]) < x.d * 0.55);
     if (owner) { (owner.texts = owner.texts || []).push({ y: p.y0, x: p.x0, t: out.join('') }); continue; }
     const [tx, ty] = M(ctr(p));
-    shapes.push({ t: 'text', text: out.join('\n'), x: Math.round(tx), y: Math.round(ty), size: Math.max(10, Math.round(em * scale)), seq: p.seq, _c: ctr(p), _box: [p.x0, p.y0, p.x1, p.y1] });
+    shapes.push({ t: 'text', text: out.join('\n'), x: Math.round(tx), y: Math.round(ty), size: Math.max(10, Math.round(em * scale)), seq: p.seq, _c: ctr(p), _box: [p.x0, p.y0, p.x1, p.y1], ...(p._rot ? { rot: Math.round((p._rot.a * 180) / Math.PI) } : {}) });
   }
 
   // 円のすぐ隣に書いた名前（「兵A」「ダル」など）：番号も中の名前もない円の、その人の名前にする
@@ -570,6 +583,35 @@ function clipPoly(pts, [x0, y0, x1, y1]) {
   if (cur) out.push(cur);
   return out;
 }
+// 文字の形の傾き（字の並ぶ向き。ほぼ横なら 0）。字の中心をつないだ線の向きで決める
+function slantOf(p) {
+  const sp = subpaths(p.path, 4);
+  if (sp.length < 3) return 0;
+  const cs = sp.map((s) => [(s.x0 + s.x1) / 2, (s.y0 + s.y1) / 2]);
+  const mx = cs.reduce((a, c) => a + c[0], 0) / cs.length, my = cs.reduce((a, c) => a + c[1], 0) / cs.length;
+  let sxx = 0, syy = 0, sxy = 0;
+  for (const [x, y] of cs) { sxx += (x - mx) ** 2; syy += (y - my) ** 2; sxy += (x - mx) * (y - my); }
+  const a = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+  const tr = sxx + syy, det = sxx * syy - sxy * sxy, l1 = tr / 2 + Math.sqrt(Math.max(0, tr * tr / 4 - det)), l2 = tr - l1;
+  // 細長く並んでいて、はっきり傾いているときだけ
+  if (l1 < l2 * 6 || Math.abs(a) < (12 * Math.PI) / 180 || Math.abs(a) > (78 * Math.PI) / 180) return 0;
+  return a;
+}
+function rotPt(pt, c, a) {
+  const co = Math.cos(a), si = Math.sin(a), dx = pt[0] - c[0], dy = pt[1] - c[1];
+  return [c[0] + dx * co - dy * si, c[1] + dx * si + dy * co];
+}
+function rotatePath(p, a) {
+  const c = [(p.x0 + p.x1) / 2, (p.y0 + p.y1) / 2];
+  const path = p.path.map((cmd) => {
+    const out = [cmd[0]];
+    for (let j = 1; j + 1 < cmd.length; j += 2) out.push(...rotPt([cmd[j], cmd[j + 1]], c, a));
+    return out;
+  });
+  const xs = [], ys = [];
+  for (const cmd of path) for (let j = 1; j + 1 < cmd.length; j += 2) { xs.push(cmd[j]); ys.push(cmd[j + 1]); }
+  return { ...p, path, x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+}
 function shapeOf(p, M, scale, fc, noline) {
   const ops = p.path.map((c) => c[0]).join('');
   const sw = Math.max(1.5, Math.round((p.lw || 0.75) * scale * 10) / 10);
@@ -586,7 +628,13 @@ function shapeOf(p, M, scale, fc, noline) {
     const cx = (P[0][0] + P[1][0] + P[2][0] + P[3][0]) / 4, cy = (P[0][1] + P[1][1] + P[2][1] + P[3][1]) / 4;
     const ax = (P[0][0] - P[2][0]) / 2, ay = (P[0][1] - P[2][1]) / 2, bx = (P[1][0] - P[3][0]) / 2, by = (P[1][1] - P[3][1]) / 2;
     const rx = Math.hypot(ax, ay), ry = Math.hypot(bx, by);
-    if (rx > 2 && ry > 2) return { t: 'ellipse', x: Math.round(cx * 10) / 10, y: Math.round(cy * 10) / 10, rx: Math.round(rx * 10) / 10, ry: Math.round(ry * 10) / 10, rot: Math.round((Math.atan2(ay, ax) * 180) / Math.PI * 10) / 10, ...base };
+    // 本当に楕円か確かめる（三日月のように、4本の曲線でも楕円でない形は、下で輪郭どおりの囲みにする）
+    const ca = Math.atan2(ay, ax), cc = Math.cos(-ca), ss = Math.sin(-ca);
+    const onEllipse = subpaths(p.path, 8).every((q) => q.pts.every((pt) => {
+      const [X, Y] = M(pt), dx = X - cx, dy = Y - cy, u = dx * cc - dy * ss, v = dx * ss + dy * cc;
+      return Math.abs(Math.hypot(u / rx, v / ry) - 1) < 0.12;
+    }));
+    if (onEllipse && rx > 2 && ry > 2) return { t: 'ellipse', x: Math.round(cx * 10) / 10, y: Math.round(cy * 10) / 10, rx: Math.round(rx * 10) / 10, ry: Math.round(ry * 10) / 10, rot: Math.round((Math.atan2(ay, ax) * 180) / Math.PI * 10) / 10, ...base };
   }
   const sp = subpaths(p.path, 8);
   if (!sp.length) return null;
