@@ -108,8 +108,8 @@ function sendSoon() {
 }
 
 // ---------- マウスの位置（Realtime Database のときだけ） ----------
-// 図の編集画面：図の中の座標（舞台 1000×470）で送るので、画面の大きさや拡大率が違っても同じ所を指す
-// ほかのページ：マウスの下にある行・欄（data-pkey など）からの割合で送る。なければページ全体の幅の割合と上からの距離
+// 図の編集画面だけ。図の中の座標（舞台 1000×470）で送るので、画面の大きさや拡大率が違っても同じ所を指す
+// （ほかのページは、スマホとパソコンで見た目が違いすぎて位置が合わないので出さない）
 let myPtr = null, ptrTimer = null, ptrSent = 0;
 function setPtr(v) {
   if (!room || !room.rt) return;
@@ -125,20 +125,6 @@ function setPtr(v) {
 export function sharePointer(g, xy) {
   setPtr(xy ? { g, x: Math.round(xy[0]), y: Math.round(xy[1]) } : null);
 }
-const ANCH = ['data-pkey', 'data-prow', 'data-pblock'];
-const r3 = (v) => Math.round(v * 1000) / 1000;
-document.addEventListener('pointermove', (e) => {
-  if (!room || !room.rt || S.ui.editDiagram || e.pointerType === 'touch') return;
-  const t = e.target && e.target.closest ? e.target : null;
-  let a = '', el = null;
-  for (const x of ANCH) { el = t && t.closest(`[${x}]`); if (el) { a = x; break; } }
-  if (!el) el = document.getElementById('app');
-  const r = el.getBoundingClientRect();
-  const fx = r.width ? (e.clientX - r.left) / r.width : 0;
-  const fy = a ? (r.height ? (e.clientY - r.top) / r.height : 0) : e.clientY - r.top;
-  setPtr({ h: location.hash, a, k: a ? el.getAttribute(a) : '', fx: r3(fx), fy: a ? r3(fy) : Math.round(fy) });
-});
-document.addEventListener('mouseout', (e) => { if (!e.relatedTarget && !S.ui.editDiagram) setPtr(null); });
 // 送られてきた位置を、この画面の上の位置（左上からの px）に直す
 function ptrPlace(p) {
   const q = p.ptr;
@@ -154,14 +140,7 @@ function ptrPlace(p) {
     if (c && (x < c.left || x > c.right || y < c.top || y > c.bottom)) return null;
     return [x, y];
   }
-  if (q.g || p.g || q.h !== location.hash) return null;
-  const el = q.a ? document.querySelector(`[${q.a}="${CSS.escape(String(q.k))}"]`) : document.getElementById('app');
-  if (!el) return null;
-  const r = el.getBoundingClientRect();
-  const x = r.left + q.fx * r.width;
-  const y = r.top + (q.a ? q.fy * r.height : q.fy);
-  if (y < 0 || y > window.innerHeight) return null;
-  return [x, y];
+  return null;
 }
 const noPtr = (a) => JSON.stringify(a.map((p) => ({ ...p, ptr: null })));
 const sameButPtr = (a, b) => a.length === b.length && noPtr(a) === noPtr(b);
