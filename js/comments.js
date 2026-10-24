@@ -16,8 +16,8 @@ import { confirmBox } from './dialog.js';
 import { openContextMenu, MOD } from './menubar.js';
 
 // 画面の状態（ページを移ると閉じる）
-const C = { d: null, open: false, hidden: false, active: null, filter: 'open', compose: null, reply: {}, editing: null };
-function reset(d) { if (C.d !== d) Object.assign(C, { d, open: false, active: null, compose: null, reply: {}, editing: null }); }
+const C = { d: null, open: false, hidden: false, list: false, active: null, compose: null, reply: {}, editing: null };
+function reset(d) { if (C.d !== d) Object.assign(C, { d, open: false, list: false, active: null, compose: null, reply: {}, editing: null }); }
 // 広い画面では、コメントを本文の右に、付けた所の高さにそろえていつも出す（Googleドキュメントと同じ）。狭い画面では下に開く
 // パソコン（マウスで使う端末）は幅に関係なく右に。指だけの端末は、広い画面（タブレットの横向きなど）のときだけ右に
 const fine = () => !!(window.matchMedia && window.matchMedia('(any-pointer: fine)').matches);
@@ -137,10 +137,10 @@ function focusLater(sel) { requestAnimationFrame(() => requestAnimationFrame(() 
 
 export function toggleComments(v) {
   reset(S.route.params.d);
-  // 右に出しているときは隠さない。ボタンを押したら、最初の未解決のコメントへ移る
-  if (wide() && commentsOf().length) {
-    const first = sorted(commentsOf().filter((c) => !c.done))[0];
-    if (v !== false && first) goTo(first);
+  // 広い画面：右のカードはいつも出したまま。ボタンでコメントの一覧（解決済みも含む）を開け閉めする
+  if (wide()) {
+    C.list = v == null ? !C.list : v;
+    rerender();
     return;
   }
   const on = v == null ? !shown() : v;
@@ -148,7 +148,7 @@ export function toggleComments(v) {
   if (!on) { C.compose = null; C.active = null; }
   rerender();
 }
-export const commentsOpen = () => shown();
+export const commentsOpen = () => (wide() ? S.route.name === 'draft' && C.d === S.route.params.d && C.list : shown());
 
 // ---------- 保存 ----------
 async function post() {
@@ -173,7 +173,7 @@ async function reply(c) {
 async function setDone(c, done) {
   try { await db.updateQuiet(path(c.id), done ? { done: true, doneBy: me(), doneAt: Date.now() } : { done: false }); } catch (e) { fail(); }
   if (done && C.active === c.id) C.active = null;
-  toast(done ? 'コメントを解決にしました（「すべて」で見られます）' : 'コメントを開き直しました');
+  toast(done ? 'コメントを解決にしました（上の「コメント」の一覧で見られます）' : 'コメントを開き直しました');
 }
 async function saveEdit(c) {
   const e = C.editing;
@@ -415,31 +415,31 @@ function Card(c) {
 export function CommentsPanel() {
   if (S.route.name !== 'draft') return null;
   reset(S.route.params.d);
-  const on = shown();
-  const side = on && wide();
+  const on = shown() || (wide() && C.list);
+  const side = on && wide() && !C.list;
   document.body.classList.toggle('cmt-open', on);
   document.body.classList.toggle('cmt-side', side);
   if (!on) return null;
   const all = sorted(commentsOf());
-  const list = C.filter === 'open' ? all.filter((c) => !c.done) : all;
+  const open = all.filter((c) => !c.done), done = all.filter((c) => c.done);
   const m = C.compose;
   const head = h('div', { class: 'cmt-head' },
-    h('strong', null, 'コメント'),
-    h('div', { class: 'seg cmt-seg' },
-      h('button', { class: 'seg-btn' + (C.filter === 'open' ? ' on' : ''), onclick: () => { C.filter = 'open'; rerender(); } }, `未解決（${all.filter((c) => !c.done).length}）`),
-      h('button', { class: 'seg-btn' + (C.filter === 'all' ? ' on' : ''), onclick: () => { C.filter = 'all'; rerender(); } }, `すべて（${all.length}）`)),
-    side ? null : h('button', { class: 'icon-btn', title: '閉じる', 'aria-label': 'コメントを閉じる', onclick: () => toggleComments(false) }, icon('close', 18)));
+    h('strong', null, `コメント（未解決 ${open.length}件）`),
+    h('button', { class: 'icon-btn', title: '閉じる', 'aria-label': 'コメントの一覧を閉じる', style: { marginLeft: 'auto' }, onclick: () => toggleComments(false) }, icon('close', 18)));
   const compose = m ? h('div', { key: '__new', 'data-cid': '__new', class: 'cmt-card on cmt-compose' },
     h('div', { class: 'cmt-quote' }, preview(m.at.k === 'block' ? quoteOf({ at: m.at }) : m.at.q)),
     Who(me(), Date.now()),
     Box(m.text, (v) => { m.text = v; }, post, () => { C.compose = null; rerender(); }, 'コメントを書く（Ctrl+Enter で送信）', 'コメント')) : null;
-  const empty = !m && !list.length ? h('div', { class: 'cmt-empty muted small' },
-    h('p', null, C.filter === 'open' ? '未解決のコメントはありません。' : 'コメントはまだありません。'),
+  const empty = !m && !all.length ? h('div', { class: 'cmt-empty muted small' },
+    h('p', null, 'コメントはまだありません。'),
     h('p', null, 'テマ友や図解の文章をなぞって選ぶと出るボタンか、右クリック、', h('kbd', null, 'Ctrl+Alt+M'), ' でコメントできます。')) : null;
   // 広い画面：本文の右の余白。カードの高さは、描いたあとに layoutSide で付けた所にそろえる
-  if (side) return h('aside', { class: 'cmt-side-col', 'aria-label': 'コメント' }, head, empty, compose, list.map(Card));
-  return h('aside', { class: 'cmt-panel', 'aria-label': 'コメント' }, head,
-    h('div', { class: 'cmt-list' }, compose, empty, list.map(Card)),
+  // （未解決のものだけ。解決済みは上の「コメント」ボタンの一覧で見る）
+  if (side) return h('aside', { class: 'cmt-side-col', 'aria-label': 'コメント' }, compose, open.map(Card));
+  // コメントの一覧：未解決を上に、解決済みをその下に
+  return h('aside', { class: 'cmt-panel', 'aria-label': 'コメントの一覧' }, head,
+    h('div', { class: 'cmt-list' }, compose, empty, open.map(Card),
+      done.length ? h('div', { class: 'cmt-done-title muted small' }, `解決済み（${done.length}件）`) : null, done.map(Card)),
     h('div', { class: 'cmt-foot' },
       h('button', { class: 'btn small', onpointerdown: keep, onclick: startComment }, icon('comment', 16), '選んだ所にコメント')));
 }
@@ -511,7 +511,7 @@ export function BlockCommentChip(blockId) {
 export function CommentsButton() {
   const n = openCount();
   return h('button', {
-    class: 'btn cmt-btn' + (commentsOpen() ? ' on' : ''), title: 'コメントを見る・書く（Ctrl+Alt+M で選んだ所にコメント）', 'aria-pressed': commentsOpen() ? 'true' : 'false',
+    class: 'btn cmt-btn' + (commentsOpen() ? ' on' : ''), title: 'コメントの一覧（解決済みも）を開く・閉じる', 'aria-pressed': commentsOpen() ? 'true' : 'false',
     onclick: () => toggleComments(),
   }, icon('comment', 16), 'コメント', n ? h('span', { class: 'cmt-count' }, String(n)) : null);
 }

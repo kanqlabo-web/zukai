@@ -1226,7 +1226,7 @@ function docMenus({ w, d, draft, track, siblings, text, rows, empty, draftPath }
       draft.updMark ? { label: '更新箇所を青字にする', checked: draft.updShow !== false, onclick: () => db.update(draftPath, { updShow: draft.updShow === false }) } : null,
       { label: '使い方を表示', checked: !!document.querySelector('.howto-box[open]'), disabled: empty, onclick: () => { const el = document.querySelector('.howto-box'); if (el) { el.open = !el.open; el.scrollIntoView({ block: 'nearest' }); } } },
       { label: '閲覧モード', disabled: empty, onclick: () => go(`#/w/${w}/show/d/${d}`) },
-      { label: 'コメントを表示', checked: commentsOpen(), onclick: () => toggleComments() },
+      { label: 'コメントの一覧', checked: commentsOpen(), onclick: () => toggleComments() },
     ] },
     { label: '挿入', items: [
       ...INSERT_KINDS.map(([k, , label]) => ({ label, disabled: !has, onclick: () => act.add(k, NOEV) })),
