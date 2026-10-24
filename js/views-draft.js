@@ -19,6 +19,7 @@ import { resolveAnchor } from './script.js';
 import { others, NameTags, ringStyle } from './presence.js';
 import { RichEdit, runSpan, shiftMarks, lastRichEditor, applyToSelection, TEXT_COLORS, BG_COLORS, readEditor, selectionIn, setSelectionIn, attrsOf, marksOf, runsOf, markStyle } from './richtext.js';
 import { blockUpdates, showUpdates, DIAGRAM_FIXED } from './update.js';
+import { neighborDrafts } from './neighbors.js';
 import { CommentsButton, BlockCommentChip, startComment, commentOnBlock, toggleComments, commentsOpen } from './comments.js';
 
 const byOrder = (a, b) => (a.order || 0) - (b.order || 0);
@@ -1207,6 +1208,10 @@ function docMenus({ w, d, draft, track, siblings, text, rows, empty, draftPath }
       { label: '書き出す（PDF・Googleドキュメント・Word）', disabled: empty, onclick: () => go(`#/w/${w}/print/d/${d}?export`) },
       { label: '書き出しの表示を見る', disabled: empty, onclick: () => go(`#/w/${w}/print/d/${d}`) },
       '-',
+      ...(() => { const nb = neighborDrafts(d); return [
+        { label: nb.prev ? `前のトラック（${nb.prev.track.title || ''}）を開く` : '前のトラックを開く', disabled: !nb.prev, onclick: () => go(`#/w/${w}/d/${nb.prev.draft.id}`) },
+        { label: nb.next ? `次のトラック（${nb.next.track.title || ''}）を開く` : '次のトラックを開く', disabled: !nb.next, onclick: () => go(`#/w/${w}/d/${nb.next.draft.id}`) },
+      ]; })(),
       { label: 'ライブラリーに戻る', onclick: () => go(`#/w/${w}`) },
       { label: 'この稿を削除', onclick: () => removeDraft(w, draft, track, siblings) },
     ] },
@@ -1268,6 +1273,18 @@ document.addEventListener('keydown', (e) => {
   if (e.key.toLowerCase() === 'b' && !e.shiftKey && el && el.classList && el.classList.contains('rich')) { e.preventDefault(); applyToSelection(el, 'b', 1); }
 });
 
+// 話・トラックの名前と、前後のトラックへのボタン（それぞれ最新の稿を開く）
+function TrackNav(w, d, ep, track) {
+  const nb = neighborDrafts(d);
+  const btn = (n, side) => n ? h('a', {
+    class: 'track-nav ' + side, href: `#/w/${w}/d/${n.draft.id}`, title: `${side === 'prev' ? '前' : '次'}のトラック（${n.track.title || ''}）を開く`,
+  }, side === 'prev' ? '‹ ' : '', n.track.title || (side === 'prev' ? '前のトラック' : '次のトラック'), side === 'next' ? ' ›' : '') : null;
+  return h('div', { class: 'muted small track-line' },
+    btn(nb.prev, 'prev'),
+    h('span', null, ep ? ep.title : '', ' ・ ', track ? track.title : ''),
+    btn(nb.next, 'next'));
+}
+
 export function DraftView() {
   const { w, d, draft, track, ep, work, drafts } = ctx();
   if (!S.d.drafts || work === undefined) return h('main', { class: 'page' }, h('p', { class: 'muted' }, '読み込み中…'));
@@ -1287,7 +1304,7 @@ export function DraftView() {
   return h('main', { class: 'page draft-page' },
     h('div', { class: 'draft-head' },
       h('div', { class: 'grow' },
-        h('div', { class: 'muted small' }, ep ? ep.title : '', ' ・ ', track ? track.title : ''),
+        TrackNav(w, d, ep, track),
         h('h1', { class: 'sheet-name' }, draftTitle(work, ep, track, draft)),
         MenuBar('doc', docMenus({ w, d, draft, track, siblings, text, rows, empty, draftPath }), rerender)),
       h('div', { class: 'actions' },

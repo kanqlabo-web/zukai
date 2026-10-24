@@ -1,7 +1,7 @@
 // 図の編集画面（パソコン・スマホ・タブレット対応、同時編集は図形ごとに反映）
 import { h, render } from './vdom.js';
 import { db, DEL, newId } from './db.js';
-import { S, rerender, toast, pickFile } from './state.js';
+import { S, rerender, toast, pickFile, go } from './state.js';
 import { P, createImage, thumbOf } from './model.js';
 import { loadPhoto, loadPhotoSrc, warpToStage, TracePicker, TraceChooser, initialCorners, detectCorners, prepareInk, inkDataUrl, photoForSave } from './trace.js';
 import { textInRegion } from './drawimport.js';
@@ -71,11 +71,24 @@ function openOther(draftId, gid) {
   pending = { w, d: draftId, g: gid };
   location.replace(`#/w/${w}/d/${draftId}`); // 図の編集のために足した履歴を、移った先のページに置き換える
 }
+// ほかのページ（閲覧モードなど）から、稿のページに移ってその図を開く
+export function openEditorAfter(w, d, g) {
+  pending = { w, d, g };
+  if (S.route.name === 'draft' && S.route.params.d === d) openPendingEditor();
+  else go(`#/w/${w}/d/${d}`);
+}
+// 閲覧モードで、いま編集している図から見る
+function openShow() {
+  const w = E.w, d = S.route.params.d, g = E.id;
+  closeEditor(true);
+  location.replace(`#/w/${w}/show/d/${d}?g=${g}`); // 図の編集のために足した履歴を、閲覧モードに置き換える（戻るで稿のページへ）
+}
 // ページのデータが届いたら、待っていた図を開く
 export function openPendingEditor() {
   if (!pending || E) return;
   const { w, d, g } = pending;
-  if (S.route.name !== 'draft' || S.route.params.d !== d) { if (S.route.params.d !== d) pending = null; return; }
+  if (S.route.name !== 'draft') return;
+  if (S.route.params.d !== d) { pending = null; return; }
   if (!S.d.blocks || !S.d.drafts || !(S.d.diagrams || []).some((x) => x.id === g)) return;
   pending = null;
   openEditor(w, g);
@@ -2367,7 +2380,11 @@ export function EditorView() {
         h('div', { class: 'ed-title' }, '図の編集', seq.length > 1 && seq.indexOf(E.id) >= 0 ? h('span', { class: 'ed-pos muted' }, `${seq.indexOf(E.id) + 1}／${seq.length}枚目`) : null),
         MenuBar('editor', editorMenus(setTool, zoomIn, zoomOut), draw)),
       here.length ? h('div', { class: 'pres-tags in-editor', title: 'この図を開いている人' }, here.map((p) => h('span', { key: p.pid, class: 'pres-tag', style: { background: colorOf(p.email) } }, p.name))) : null,
-      CountChip(shapes, ix)),
+      CountChip(shapes, ix),
+      h('button', { class: 'btn ed-show', title: 'この図から閲覧モードで見る', 'aria-label': '閲覧モード', onclick: openShow },
+        h('svg', { class: 'ico', viewBox: '0 0 24 24', width: 18, height: 18, 'aria-hidden': 'true', fill: 'none', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linejoin': 'round' },
+          h('rect', { x: 3, y: 4, width: 18, height: 13, rx: 1.5 }), h('path', { d: 'M10 8.2v5.6l4.6-2.8z', fill: 'currentColor' }), h('path', { d: 'M8 21h8M12 17v4' })),
+        h('span', null, '閲覧モード'))),
     h('div', { class: 'ed-bar' },
       h('div', { class: 'ed-top-btns' },
         UndoButtons('icon-btn'),

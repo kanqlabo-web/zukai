@@ -211,3 +211,10 @@ body.cmt-open .draft-page { margin-right: 340px; }
   body.cmt-open .draft-page { margin-right: 0; }
   .cmt-panel { top: auto; left: 0; width: auto; height: min(70vh, 560px); border-left: 0; border-top: 1px solid var(--line); border-radius: 14px 14px 0 0; box-shadow: 0 -10px 40px rgba(20, 15, 40, .2); z-index: 45; }
 }
+
+/* トラックのページの前後のトラックへのボタン・図の編集の閲覧モードボタン */
+.track-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.track-nav { display: inline-flex; align-items: center; padding: 1px 9px; border: 1px solid var(--line-2); border-radius: 99px; background: #fff; color: var(--accent-2); font-size: 12px; text-decoration: none; white-space: nowrap; }
+.track-nav:hover { border-color: var(--accent-2); background: var(--accent-soft); }
+.ed-show { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; }
+@media (max-width: 700px) { .ed-show span { display: none; } }

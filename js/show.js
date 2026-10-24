@@ -8,6 +8,9 @@ import { workIndex } from './cast.js';
 import { buildRows, highlightRanges, sortBlocks } from './script.js';
 import { StageSVG } from './stage.js';
 import { DotText, CueTitle, ScriptLines } from './sheet.js';
+import { openEditorAfter } from './editor.js';
+import { canEdit } from './access.js';
+import { icon } from './icons.js';
 
 const byOrder = (a, b) => (a.order || 0) - (b.order || 0) || (a.createdAt || 0) - (b.createdAt || 0);
 const V = { key: '', i: 0, scrolled: -1, side: null };
@@ -92,6 +95,13 @@ export function ShowView() {
     V.key = data;
     const m = /\?(\d+)$/.exec(location.hash);
     V.i = m ? Math.max(0, +m[1] - 1) : 0;
+    // 図の編集から来たとき（?g=図の id）は、その図から
+    const g = /\?g=([^&]+)$/.exec(location.hash);
+    if (g) {
+      const i = steps().findIndex((s) => s.fig && s.fig.refId === g[1] && !s.carried);
+      V.i = Math.max(0, i);
+      try { history.replaceState(null, '', location.hash.replace(/\?.*$/, '') + '?' + (V.i + 1)); } catch (e) { /* noop */ }
+    }
     V.scrolled = -1;
   }
   const list = steps();
@@ -125,6 +135,7 @@ export function ShowView() {
         class: 'show-side', title: '説明とテーマ活動の友の位置', value: side,
         onchange: (e) => { V.side = e.target.value === 'auto' ? null : e.target.value; try { localStorage.setItem('zukai.showSide', V.side || ''); } catch (er) { /* noop */ } V.scrolled = -1; rerender(); },
       }, h('option', { value: 'auto' }, '説明の位置：自動'), h('option', { value: 'right' }, '説明の位置：右'), h('option', { value: 'bottom' }, '説明の位置：下')),
+      s.fig && canEdit(data.work) ? h('button', { class: 'btn', title: 'この図を編集する', onclick: () => openEditorAfter(data.w, t.draft.id, s.fig.refId) }, icon('pencil', 16), '図を編集') : null,
       h('button', { class: 'btn', title: '全画面（F）', onclick: toggleFull }, '全画面')),
     h('div', { class: 'show-body' },
       h('div', { class: 'show-fig', onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX - r.left < r.width * 0.35) prev(); else next(); } },
