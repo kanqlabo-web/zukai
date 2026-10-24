@@ -197,14 +197,23 @@ function findFrame(gray, w, h, edgeWhite) {
   const d = Math.max(3, Math.round(Math.max(w, h) / 80));
   const ink = new Uint8Array(w * h);
   let n = 0;
-  // edgeWhite：写真の外は白とみなす（端いっぱいの線も拾う）。そうでなければ端の近くは見ない
+  // edgeWhite：写真の外は白とみなす（端いっぱいの線も拾う）。
+  // そうでなければ、端の近くでは比べる間隔を端までに縮める（端のすぐ内側の細い線も拾い、端に写った壁などは拾わない）
   const G = (x, y) => (x < 0 || y < 0 || x >= w || y >= h ? Infinity : gray[y * w + x]);
-  const m = edgeWhite ? 0 : d;
-  for (let y = m; y < h - m; y++) for (let x = m; x < w - m; x++) {
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     const g = G(x, y);
-    const side = Math.max(
-      Math.min(G(x - d, y), G(x + d, y)), Math.min(G(x, y - d), G(x, y + d)),
-      Math.min(G(x - d, y - d), G(x + d, y + d)), Math.min(G(x - d, y + d), G(x + d, y - d)));
+    let side;
+    if (edgeWhite) {
+      side = Math.max(
+        Math.min(G(x - d, y), G(x + d, y)), Math.min(G(x, y - d), G(x, y + d)),
+        Math.min(G(x - d, y - d), G(x + d, y + d)), Math.min(G(x - d, y + d), G(x + d, y - d)));
+    } else {
+      const dx = Math.min(d, x, w - 1 - x), dy = Math.min(d, y, h - 1 - y), e = Math.min(dx, dy);
+      side = -Infinity;
+      if (dx >= 2) side = Math.max(side, Math.min(G(x - dx, y), G(x + dx, y)));
+      if (dy >= 2) side = Math.max(side, Math.min(G(x, y - dy), G(x, y + dy)));
+      if (e >= 2) side = Math.max(side, Math.min(G(x - e, y - e), G(x + e, y + e)), Math.min(G(x - e, y + e), G(x + e, y - e)));
+    }
     if (side - g > 18 && g < side * 0.85) { ink[y * w + x] = 1; n++; }
   }
   if (n < (w + h) || n > w * h * 0.4) return null;
