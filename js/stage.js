@@ -211,6 +211,14 @@ export function shapeCenter(s) {
   return [s.x, s.y];
 }
 
+// 舞台の上（袖ではない所）にある人・図形の数。ホームのカードに出す図を選ぶのに使う（写真は数えない）
+export function stageCount(shapes) {
+  return Object.values(shapes || {}).filter((sh) => {
+    if (!sh || sh.t === 'image') return false;
+    try { const [x] = shapeCenter(sh); return x > W * 0.12 && x < W * 0.88; } catch (e) { return false; }
+  }).length;
+}
+
 export function moveShape(s, dx, dy) {
   const n = { ...s };
   if (s.t === 'arrow') { n.x1 += dx; n.y1 += dy; n.x2 += dx; n.y2 += dy; }

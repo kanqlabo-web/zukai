@@ -2,6 +2,7 @@
 import { db, newId } from './db.js';
 import { makeOrig, blockUpdates } from './update.js';
 import { resolveAnchor } from './script.js';
+import { stageCount } from './stage.js';
 
 export const P = {
   work: (w) => `works/${w}`,
@@ -258,8 +259,9 @@ export function extractEmails(text) {
 }
 
 // ホームのカードに出す図（ライブラリーの works/{w}.thumb に入れる）。写真の図形は大きいので入れない
+// n は舞台の上の人・図形の数。いつも n がいちばん多い図をカードにする
 export function thumbOf(g) {
   const shapes = {};
   for (const [id, s] of Object.entries((g && g.shapes) || {})) if (s && s.t !== 'image') shapes[id] = s;
-  return { g: g.id || null, shapes, roleVis: (g && g.roleVis) || {}, at: Date.now() };
+  return { g: g.id || null, shapes, roleVis: (g && g.roleVis) || {}, n: stageCount(shapes), at: Date.now() };
 }

@@ -5,7 +5,7 @@ import { versionLabel, CHANGELOG_URL } from './version.js';
 import { db, mode } from './db.js';
 import { S, rerender, toast, fmtTime, go, adminMsg } from './state.js';
 import { P, createWork, deleteWork, exportWork, thumbOf } from './model.js';
-import { StageSVG, shapeCenter, W } from './stage.js';
+import { StageSVG, stageCount } from './stage.js';
 import { workIndex } from './cast.js';
 import { myRole, ROLE_LABEL } from './access.js';
 import { buildSample, buildSampleFrom } from './sample.js';
@@ -61,15 +61,13 @@ async function newWorkDialog() {
   go(`#/w/${id}`);
 }
 
-// カードの上の絵：そのライブラリーの図（最後に直した図。まだなければ、舞台に人がよく並んでいる図を一度だけ探して覚えておく）
+// カードの上の絵：舞台の上に人・図形がいちばん多い図（覚えていなければ、一度だけ探してライブラリーに覚えておく）
 const thumbs = {};
 async function findThumb(w) {
   thumbs[w.id] = 'loading';
   try {
     const list = await db.list(P.col(w.id, 'diagrams'));
-    // 舞台の上（袖ではない所）に図形や人がいちばん多く並んでいる図を選ぶ
-    const onStage = (g) => Object.values(g.shapes || {}).filter((sh) => { try { const [x] = shapeCenter(sh); return x > W * 0.12 && x < W * 0.88; } catch (e) { return false; } }).length;
-    const score = (g) => [onStage(g), g.updatedAt || g.createdAt || 0];
+    const score = (g) => [stageCount(g.shapes), g.updatedAt || g.createdAt || 0];
     const better = (a, b) => { const x = score(a), y = score(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] > y[i]; return false; };
     const best = list.reduce((m, g) => (!m || better(g, m) ? g : m), null);
     thumbs[w.id] = best ? thumbOf(best) : 'none';
@@ -79,8 +77,10 @@ async function findThumb(w) {
   rerender();
 }
 function CardArt(w) {
-  const t = w.thumb || thumbs[w.id];
-  if (!t) findThumb(w);
+  // 古い決め方（最後に直した図）で覚えたもの・選び直しの印があるものは、探し直す
+  const saved = w.thumb && w.thumb.n != null && !w.thumb.stale ? w.thumb : null;
+  const t = thumbs[w.id] || saved || (w.thumb ? w.thumb : null);
+  if (!thumbs[w.id] && !saved) findThumb(w);
   const shapes = t && typeof t === 'object' ? t.shapes : {};
   return StageSVG(shapes || {}, { cls: 'stage card-stage', idx: workIndex(w), roleVis: (t && t.roleVis) || {} });
 }

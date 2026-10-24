@@ -102,8 +102,14 @@ export function closeEditor(noBack) {
   if (!noBack && window.history.state && window.history.state.zukaiEditor) window.history.back();
   closeMenus();
   if (E) setPresence(E.w, { g: null, sel: null });
-  // 直した図を、ホームのカードの絵にする（履歴には残さない）
-  if (E && E.changed) db.updateQuiet(P.work(E.w), { thumb: thumbOf({ id: E.id, shapes: E.shapes, roleVis: E.roleVis }) }).catch(() => {});
+  // ホームのカードの絵は、舞台の上の人・図形がいちばん多い図（履歴には残さない）
+  // 直した図が今のカードより多ければ入れ替える。カードの図そのものを直して減ったときは、次にホームを開いたときに選び直す
+  if (E && E.changed) {
+    const cur = (S.d.work && S.d.work.thumb) || null;
+    const t = thumbOf({ id: E.id, shapes: E.shapes, roleVis: E.roleVis });
+    const patch = !cur || cur.n == null || t.n > cur.n ? t : cur.g === E.id ? (t.n === cur.n ? t : { ...t, stale: true }) : null;
+    if (patch) db.updateQuiet(P.work(E.w), { thumb: patch }).catch(() => {});
+  }
   if (unsub) unsub();
   unsub = null;
   E = null;
