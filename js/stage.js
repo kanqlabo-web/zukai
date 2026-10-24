@@ -423,10 +423,10 @@ export function shapeArea(s) {
   return 0;
 }
 export const isRegion = (s) => s && (s.t === 'ellipse' || s.t === 'rect' || s.t === 'blob');
-// 人を入れられる図形（囲み・線）
-export const isFillable = (s) => isRegion(s) || (s && s.t === 'line' && s.style !== 'block');
+// 人を入れられる図形（囲み・線）。矢印（矢の先のある線・太い矢印）には入れない
+export const isFillable = (s) => isRegion(s) || (s && s.t === 'line' && s.style !== 'block' && (!s.head || s.head === 'none'));
 // 名前を付けられる図形
-export const canName = (s) => isFillable(s) || (s && s.t === 'arrow');
+export const canName = (s) => isRegion(s) || (s && s.t === 'line' && s.style !== 'block') || (s && s.t === 'arrow');
 
 // ---------- 役名・図形名の自動配置（重ならない場所を探す） ----------
 // 文字のまわりを白くふちどって、線が字に重ならないようにする
