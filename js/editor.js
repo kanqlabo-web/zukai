@@ -3,7 +3,7 @@ import { h, render } from './vdom.js';
 import { db, DEL, newId } from './db.js';
 import { S, rerender, toast, pickFile } from './state.js';
 import { P, createImage, thumbOf } from './model.js';
-import { loadPhoto, loadPhotoSrc, warpToStage, TracePicker, TraceChooser, initialCorners } from './trace.js';
+import { loadPhoto, loadPhotoSrc, warpToStage, TracePicker, TraceChooser, initialCorners, detectCorners } from './trace.js';
 import { textInRegion } from './drawimport.js';
 import { shapesFromClipboard, MARK } from './clippaste.js';
 import { W, H, stageFrame, StageSVG, shapeNode, sortShapes, moveShape, shapeCenter, shapeBBox, simplify, LAYER, layoutLabels, isRegion, isFillable, canName, insideShape, linePoints } from './stage.js';
@@ -2013,6 +2013,13 @@ function pickTrace() {
   draw();
 }
 
+// 四隅の最初の位置：写真から舞台の枠を自動で探す。見つからなければ今までどおり少し内側
+function startCorners(photo) {
+  const auto = detectCorners(photo);
+  if (auto) toast('舞台の枠の四隅を自動で合わせました。ずれていたら丸を動かしてください');
+  return auto || initialCorners(photo);
+}
+
 async function pickTraceFile() {
   E.traceChoose = null;
   draw();
@@ -2020,7 +2027,7 @@ async function pickTraceFile() {
   if (!f || !E) return;
   try {
     const photo = await loadPhoto(f);
-    E.tracePick = { photo, pts: initialCorners(photo), drag: null };
+    E.tracePick = { photo, pts: startCorners(photo), drag: null };
     draw();
   } catch (e) { toast(e.message || String(e), 'error', 6000); }
 }
@@ -2031,7 +2038,7 @@ async function pickTraceSrc(src) {
   try {
     const photo = await loadPhotoSrc(src);
     if (!E) return;
-    E.tracePick = { photo, pts: initialCorners(photo), drag: null };
+    E.tracePick = { photo, pts: startCorners(photo), drag: null };
     draw();
   } catch (e) { toast(e.message || String(e), 'error', 6000); }
 }

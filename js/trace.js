@@ -165,3 +165,131 @@ export function initialCorners(photo) {
   const mx = photo.w * 0.08, my = photo.h * 0.1;
   return [[mx, my], [photo.w - mx, my], [photo.w - mx, photo.h - my], [mx, photo.h - my]];
 }
+
+// 写真から舞台の枠（濃い線で描いた四角）の四隅を探す。見つからなければ null
+// 濃い線を拾い（両側より暗い所）、ハフ変換で長い直線を探し、上下・左右の線の組で
+// 4辺とも線が通っている四角のうち、いちばん大きいものを舞台の枠とみなす
+export function detectCorners(photo) {
+  try {
+    const k = Math.min(1, 400 / Math.max(photo.w, photo.h));
+    const w = Math.max(8, Math.round(photo.w * k)), h = Math.max(8, Math.round(photo.h * k));
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(photo.canvas, 0, 0, w, h);
+    const px = ctx.getImageData(0, 0, w, h).data;
+    const gray = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) gray[i] = px[i * 4] * 0.299 + px[i * 4 + 1] * 0.587 + px[i * 4 + 2] * 0.114;
+    const q = cornersFromGray(gray, w, h);
+    return q ? q.map(([x, y]) => [x / k, y / k]) : null;
+  } catch (e) { return null; }
+}
+
+export function cornersFromGray(gray, w, h) {
+  // 1. 濃い線：両側（左右・上下・斜めのどれか）より暗い画素。
+  //    ホワイトボードと壁の境目のような「片側だけ暗い」所は拾わない
+  const d = Math.max(3, Math.round(Math.max(w, h) / 80));
+  const ink = new Uint8Array(w * h);
+  let n = 0;
+  const G = (x, y) => gray[y * w + x];
+  for (let y = d; y < h - d; y++) for (let x = d; x < w - d; x++) {
+    const g = G(x, y);
+    const side = Math.max(
+      Math.min(G(x - d, y), G(x + d, y)), Math.min(G(x, y - d), G(x, y + d)),
+      Math.min(G(x - d, y - d), G(x + d, y + d)), Math.min(G(x - d, y + d), G(x + d, y - d)));
+    if (side - g > 18 && g < side * 0.85) { ink[y * w + x] = 1; n++; }
+  }
+  if (n < (w + h) || n > w * h * 0.4) return null;
+  // 線の近く（1画素ふくらませた所）
+  const near = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (!ink[y * w + x]) continue;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const yy = y + dy, xx = x + dx;
+      if (yy >= 0 && yy < h && xx >= 0 && xx < w) near[yy * w + xx] = 1;
+    }
+  }
+  // 2. ハフ変換（角度 1°、距離 1px）
+  const NT = 180, D = Math.ceil(Math.hypot(w, h)), NR = D * 2 + 1;
+  const cs = [], sn = [];
+  for (let t = 0; t < NT; t++) { cs.push(Math.cos(t * Math.PI / NT)); sn.push(Math.sin(t * Math.PI / NT)); }
+  const acc = new Uint32Array(NT * NR);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (!ink[y * w + x]) continue;
+    for (let t = 0; t < NT; t++) acc[t * NR + Math.round(x * cs[t] + y * sn[t]) + D]++;
+  }
+  // 3. 山（まわりより多い所）を、強い順に拾う
+  const minV = Math.min(w, h) * 0.2;
+  const peaks = [];
+  for (let t = 0; t < NT; t++) for (let p = 0; p < NR; p++) {
+    const v = acc[t * NR + p];
+    if (v < minV) continue;
+    let top = true;
+    for (let dt = -4; dt <= 4 && top; dt++) for (let dp = -6; dp <= 6; dp++) {
+      if (!dt && !dp) continue;
+      let tt = t + dt, pp = p + dp;
+      if (tt < 0) { tt += NT; pp = NR - 1 - pp; } else if (tt >= NT) { tt -= NT; pp = NR - 1 - pp; }
+      if (pp < 0 || pp >= NR) continue;
+      const u = acc[tt * NR + pp];
+      if (u > v || (u === v && (tt * NR + pp) < t * NR + p)) { top = false; break; }
+    }
+    if (top) peaks.push({ t, rho: p - D, v });
+  }
+  peaks.sort((a, b) => b.v - a.v);
+  const hor = [], ver = [];
+  for (const L of peaks) {
+    const deg = L.t * 180 / NT;
+    const line = { c: cs[L.t], s: sn[L.t], rho: L.rho };
+    if (Math.abs(deg - 90) <= 35) { if (hor.length < 10) hor.push(line); }
+    else if (deg <= 35 || deg >= 145) { if (ver.length < 10) ver.push(line); }
+  }
+  if (hor.length < 2 || ver.length < 2) return null;
+  const yAt = (L) => (L.rho - (w / 2) * L.c) / L.s;
+  const xAt = (L) => (L.rho - (h / 2) * L.s) / L.c;
+  const meet = (a, b) => {
+    const det = a.c * b.s - a.s * b.c;
+    if (Math.abs(det) < 1e-6) return null;
+    return [(a.rho * b.s - a.s * b.rho) / det, (a.c * b.rho - a.rho * b.c) / det];
+  };
+  // 辺の上に線がどれだけ通っているか（0〜1）
+  const cover = (p, q) => {
+    const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
+    const N = Math.max(10, Math.round(len));
+    let hit = 0;
+    for (let i = 0; i <= N; i++) {
+      const x = Math.round(p[0] + (q[0] - p[0]) * i / N), y = Math.round(p[1] + (q[1] - p[1]) * i / N);
+      if (x >= 0 && y >= 0 && x < w && y < h && near[y * w + x]) hit++;
+    }
+    return hit / (N + 1);
+  };
+  const tol = Math.max(w, h) * 0.03;
+  let best = null, bestScore = 0;
+  for (let i = 0; i < hor.length; i++) for (let j = i + 1; j < hor.length; j++) {
+    let [T, B] = [hor[i], hor[j]];
+    if (yAt(T) > yAt(B)) [T, B] = [B, T];
+    if (yAt(B) - yAt(T) < h * 0.2) continue;
+    for (let a = 0; a < ver.length; a++) for (let b = a + 1; b < ver.length; b++) {
+      let [Lf, R] = [ver[a], ver[b]];
+      if (xAt(Lf) > xAt(R)) [Lf, R] = [R, Lf];
+      if (xAt(R) - xAt(Lf) < w * 0.2) continue;
+      const q = [meet(T, Lf), meet(T, R), meet(B, R), meet(B, Lf)];
+      if (q.some((p) => !p || p[0] < -tol || p[1] < -tol || p[0] > w + tol || p[1] > h + tol)) continue;
+      // 左上→右上→右下→左下 が同じ向きに曲がる（ねじれていない）四角だけ
+      let sign = 0, ok = true, area = 0;
+      for (let k = 0; k < 4; k++) {
+        const [p0, p1, p2] = [q[k], q[(k + 1) % 4], q[(k + 2) % 4]];
+        const cr = (p1[0] - p0[0]) * (p2[1] - p1[1]) - (p1[1] - p0[1]) * (p2[0] - p1[0]);
+        if (!sign) sign = Math.sign(cr); else if (Math.sign(cr) !== sign) ok = false;
+        area += p0[0] * p1[1] - p1[0] * p0[1];
+      }
+      area = Math.abs(area) / 2;
+      if (!ok || area < w * h * 0.12) continue;
+      const cv = [0, 1, 2, 3].map((k) => cover(q[k], q[(k + 1) % 4]));
+      if (Math.min(...cv) < 0.55) continue;
+      const avg = cv.reduce((s, v) => s + v, 0) / 4;
+      const score = area * avg * avg;
+      if (score > bestScore) { bestScore = score; best = q; }
+    }
+  }
+  return best && best.map(([x, y]) => [Math.max(0, Math.min(w, x)), Math.max(0, Math.min(h, y))]);
+}
