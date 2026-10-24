@@ -1,8 +1,9 @@
 // 図の編集画面（パソコン・スマホ・タブレット対応、同時編集は図形ごとに反映）
 import { h, render } from './vdom.js';
 import { db, DEL, newId } from './db.js';
-import { S, rerender, toast } from './state.js';
-import { P } from './model.js';
+import { S, rerender, toast, pickFile } from './state.js';
+import { P, createImage } from './model.js';
+import { loadPhoto, warpToStage, TracePicker, initialCorners } from './trace.js';
 import { textInRegion } from './drawimport.js';
 import { shapesFromClipboard, MARK } from './clippaste.js';
 import { W, H, stageFrame, shapeNode, sortShapes, moveShape, shapeCenter, shapeBBox, simplify, LAYER, layoutLabels, isRegion, isFillable, canName, insideShape, linePoints } from './stage.js';
@@ -35,6 +36,9 @@ export function openEditor(w, id) {
     if (!g) { toast('この図は削除されました'); closeEditor(); return; }
     E.shapes = g.shapes || {};
     E.roleVis = g.roleVis || {};
+    E.draftId = g.draftId;
+    E.trace = g.trace || null;
+    loadTrace();
     E.loaded = true;
     for (const sid of [...E.sel]) if (!E.shapes[sid]) E.sel.delete(sid);
     draw();
@@ -732,7 +736,7 @@ function InlineBox() {
 }
 
 function onKey(e) {
-  if (!E || isDialogOpen()) return;
+  if (!E || isDialogOpen() || E.tracePick) return;
   const tag = (e.target && e.target.tagName) || '';
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
   const mod = e.ctrlKey || e.metaKey;
@@ -1441,6 +1445,7 @@ function SelPanel() {
         h('li', null, '複数を選ぶ：空いている所をドラッグ、または「複数選択」をオン'),
         h('li', null, 'パソコン：Ctrl+Z 元に戻す / Ctrl+D 複製 / Delete 削除 / 矢印キー 微調整')),
       AllRoles(),
+      TraceSection(),
       h('div', { class: 'panel-actions' },
         Object.keys(E.shapes).length ? h('button', { class: 'btn tiny', onclick: () => { E.sel = new Set(Object.values(E.shapes).filter(passes).map((x) => x.id)); draw(); } }, E.filter === 'cast' ? 'メンバーをすべて選択' : E.filter === 'shapes' ? '図形をすべて選択' : 'すべて選択') : null,
         clipboard.length ? h('button', { class: 'btn tiny', onclick: paste }, `貼り付け（${clipboard.length}個）`) : null));
@@ -1667,6 +1672,73 @@ export function PresenceMarks(shapes, here, upx) {
   return out;
 }
 
+// ---------- 下絵（写真をなぞって描く） ----------
+function loadTrace() {
+  const id = E.trace && E.trace.img;
+  if (!id) { E.traceSrc = null; E.traceFor = null; return; }
+  if (E.traceFor === id) return;
+  E.traceFor = id;
+  E.traceSrc = null;
+  const cur = E;
+  db.get(P.doc(E.w, 'images', id)).then((im) => { if (E === cur && E.traceFor === id) { E.traceSrc = im ? im.data : null; draw(); } }).catch(() => {});
+}
+
+async function pickTrace() {
+  const f = await pickFile('image/*');
+  if (!f || !E) return;
+  try {
+    const photo = await loadPhoto(f);
+    E.tracePick = { photo, pts: initialCorners(photo), drag: null };
+    draw();
+  } catch (e) { toast(e.message || String(e), 'error', 6000); }
+}
+
+async function finishTrace(corners) {
+  const st = E.tracePick;
+  E.tracePick = null;
+  draw();
+  toast('下絵を作っています…');
+  try {
+    const img = warpToStage(st.photo, corners);
+    const old = E.trace && E.trace.img;
+    const iid = await createImage(E.w, E.draftId, img);
+    await db.update(path(), { trace: { img: iid, op: (E.trace && E.trace.op) || 0.5 } });
+    if (old) db.remove(P.doc(E.w, 'images', old));
+    E.traceHidden = false;
+    toast('下絵を敷きました。上からなぞって図を作ってください');
+  } catch (e) { toast('下絵を作れませんでした: ' + (e.message || e), 'error', 6000); }
+}
+
+async function removeTrace() {
+  const old = E.trace && E.trace.img;
+  await db.update(path(), { trace: DEL });
+  if (old) db.remove(P.doc(E.w, 'images', old));
+}
+
+function TraceSection() {
+  const t = E.trace;
+  if (!t) {
+    return h('div', { class: 'trace-sec' },
+      h('div', { class: 'panel-title' }, '下絵'),
+      h('p', { class: 'muted small tight' }, 'ホワイトボードなどに描いた図の写真を薄く敷いて、上からなぞって図を作れます。下絵は書き出し・閲覧モードには出ません。'),
+      h('button', { class: 'btn small', onclick: pickTrace }, '写真を下絵にする'));
+  }
+  const op = t.op == null ? 0.5 : t.op;
+  return h('div', { class: 'trace-sec' },
+    h('div', { class: 'panel-title' }, '下絵'),
+    h('label', { class: 'prop' }, h('span', null, '濃さ'),
+      h('input', {
+        type: 'range', min: 0.1, max: 0.9, step: 0.05, value: op, class: 'grow', 'aria-label': '下絵の濃さ',
+        oninput: (e) => { E.trace = { ...E.trace, op: +e.target.value }; E.traceHidden = false; draw(); },
+        onchange: (e) => db.update(path(), { 'trace.op': +e.target.value }),
+      })),
+    h('div', { class: 'panel-actions' },
+      h('button', { class: 'btn tiny', onclick: () => { E.traceHidden = !E.traceHidden; draw(); } }, E.traceHidden ? '下絵を見せる' : '下絵を隠す'),
+      h('button', { class: 'btn tiny', onclick: pickTrace }, '別の写真にする'),
+      h('button', { class: 'btn tiny danger', onclick: removeTrace }, '下絵を外す')),
+    !E.traceSrc ? h('p', { class: 'muted small' }, '下絵を読み込んでいます…') : null);
+}
+
 export function EditorView() {
   if (!E) return null;
   const shapes = merged();
@@ -1712,7 +1784,17 @@ export function EditorView() {
           h('svg', { viewBox: '0 0 24 24', width: 24, height: 24, 'aria-hidden': 'true' },
             h('rect', { x: 3, y: 3, width: 9, height: 9, fill: 'none', stroke: 'currentColor', 'stroke-width': 2 }),
             h('rect', { x: 12, y: 12, width: 9, height: 9, fill: 'currentColor' })),
-          h('span', null, '複数選択'))),
+          h('span', null, '複数選択')),
+        // 下絵：まだなければ写真を選ぶ。あれば表示・非表示を切り替える
+        h('button', {
+          class: 'tool' + (E.trace && !E.traceHidden ? ' on' : ''), title: E.trace ? '下絵を見せる・隠す' : '写真を下絵にして、なぞって描く',
+          onclick: () => { if (!E.trace) pickTrace(); else { E.traceHidden = !E.traceHidden; draw(); } },
+        },
+          h('svg', { viewBox: '0 0 24 24', width: 24, height: 24, 'aria-hidden': 'true', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.8, 'stroke-linejoin': 'round' },
+            h('rect', { x: 3, y: 5, width: 18, height: 14, rx: 2 }),
+            h('path', { d: 'M3 16l5-5 4 4 3-3 6 6' }),
+            h('circle', { cx: 16, cy: 9, r: 1.6 })),
+          h('span', null, '下絵'))),
       h('div', { class: 'ed-canvas-wrap' + (E.tool === 'pan' ? ' panning' : '') },
         !E.loaded ? h('div', { class: 'muted pad' }, '読み込み中…') : null,
         h('svg', {
@@ -1722,6 +1804,9 @@ export function EditorView() {
           oncontextmenu: (e) => e.preventDefault(),
         },
           stageFrame(),
+          // 下絵（なぞるための写真。書き出しには出ない）
+          h('g', { class: 'trace-layer', 'pointer-events': 'none' }, E.trace && E.traceSrc && !E.traceHidden
+            ? h('image', { href: E.traceSrc, x: 0, y: 0, width: W, height: H, preserveAspectRatio: 'none', opacity: E.trace.op == null ? 0.5 : E.trace.op }) : null),
           h('g', null, list.map((s) => shapeNode(s, { selected: E.sel.has(s.id), interactive: true, idx: ix }))),
           h('g', null, layoutLabels(list, ix, E.roleVis, E.tool === 'select')),
           h('g', { class: 'pres-marks' }, PresenceMarks(shapes, here, upx)),
@@ -1731,5 +1816,6 @@ export function EditorView() {
         E.inline ? InlineBox() : null),
       h('aside', { class: 'ed-panel' },
         h('div', { class: 'rotate-hint' }, '2本指で広げると拡大、2本指で動かすとスクロールします。横向きにすると大きく編集できます。'),
-        E.hmode ? HeightPanel() : E.tool === 'person' ? PersonPanel(shapes) : ['line', 'curve', 'carrow', 'cblock'].includes(E.tool) ? PolyPanel() : E.tool === 'block' ? BlockToolPanel() : SelPanel())));
+        E.hmode ? HeightPanel() : E.tool === 'person' ? PersonPanel(shapes) : ['line', 'curve', 'carrow', 'cblock'].includes(E.tool) ? PolyPanel() : E.tool === 'block' ? BlockToolPanel() : SelPanel())),
+    E.tracePick ? TracePicker(E.tracePick, { onDone: finishTrace, onCancel: () => { E.tracePick = null; draw(); }, redraw: draw }) : null);
 }

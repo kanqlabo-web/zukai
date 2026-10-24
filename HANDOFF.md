@@ -128,4 +128,5 @@
 - 「使い方」の開閉は localStorage の `zukai.howtoViews`（3回まで開いておく。閉じたら 99）。
 - アイコンは `js/icons.js` の `icon(name)`。
 - スマホ（1.7.1〜）：`pointer: coarse` だけの端末では、テマ友の欄は `contenteditable=false`。`S.ui.scriptTyping`（段の先頭位置）の段だけ書き換えられる（`views-draft.js` の `touchOnly`・`startScriptTyping`）。図の編集の2本指の拡大・スクロールは `editor.js` の `fingers`・`pinchStart`・`pinchMove`。
+- 下絵（1.8.0〜）：図（`diagrams`）の `trace: { img: 画像のid, op: 濃さ }`。画像は `images` に舞台の形（1000×470）に直した JPEG で保存。四隅を合わせる画面と射影変換は `js/trace.js`、図の編集への組み込みは `editor.js` の `pickTrace`・`finishTrace`・`TraceSection`。書き出し・閲覧モードには出さない。図を複製しても下絵は付いていかない。
 
