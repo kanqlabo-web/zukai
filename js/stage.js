@@ -273,7 +273,8 @@ export function shapeNode(s, { selected = false, interactive = false, idx = null
   }
   if (s.t === 'image') {
     // 貼り付けた画像（Googleドキュメントの図・写真など）
-    return h('g', { ...common, transform: `translate(${s.x},${s.y}) rotate(${s.rot || 0})` },
+    // ink：下絵から取り込んだ黒い線（舞台いっぱい）。押しても選ばれない（空いている所の範囲選択のじゃまにならないように）
+    return h('g', { ...common, transform: `translate(${s.x},${s.y}) rotate(${s.rot || 0})`, 'pointer-events': s.ink ? 'none' : null },
       h('image', { href: s.src, x: -s.w / 2, y: -s.h / 2, width: s.w, height: s.h, preserveAspectRatio: 'none' }),
       interactive ? h('rect', { x: -s.w / 2, y: -s.h / 2, width: s.w, height: s.h, fill: 'transparent', stroke: 'none' }) : null,
       selected ? h('rect', { x: -s.w / 2 - 6, y: -s.h / 2 - 6, width: s.w + 12, height: s.h + 12, fill: 'none', class: 'sel-ring' }) : null);

@@ -310,3 +310,88 @@ function findFrame(gray, w, h, edgeWhite) {
   }
   return best && best.map(([x, y]) => [Math.max(0, Math.min(w, x)), Math.max(0, Math.min(h, y))]);
 }
+
+// ---------- 下絵の黒い線を、図の中の画像として取り込む ----------
+// 下絵（舞台の形に直した写真）を読み込み、まわりより暗い所（手書きの線・文字）だけを黒、ほかを透明にした画像を作る準備をする
+export function prepareInk(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const w = img.naturalWidth, h = img.naturalHeight;
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0);
+      const px = ctx.getImageData(0, 0, w, h).data;
+      const gray = new Float32Array(w * h);
+      for (let i = 0; i < w * h; i++) gray[i] = px[i * 4] * 0.299 + px[i * 4 + 1] * 0.587 + px[i * 4 + 2] * 0.114;
+      // まわり（箱）の明るさの平均。照明のむらがあっても線だけを拾えるように
+      const r = Math.max(6, Math.round(Math.max(w, h) / 70));
+      const S = new Float64Array((w + 1) * (h + 1));
+      for (let y = 0; y < h; y++) {
+        let row = 0;
+        for (let x = 0; x < w; x++) { row += gray[y * w + x]; S[(y + 1) * (w + 1) + x + 1] = S[y * (w + 1) + x + 1] + row; }
+      }
+      const diff = new Float32Array(w * h);
+      for (let y = 0; y < h; y++) {
+        const y0 = Math.max(0, y - r), y1 = Math.min(h, y + r + 1);
+        for (let x = 0; x < w; x++) {
+          const x0 = Math.max(0, x - r), x1 = Math.min(w, x + r + 1);
+          const m = (S[y1 * (w + 1) + x1] - S[y0 * (w + 1) + x1] - S[y1 * (w + 1) + x0] + S[y0 * (w + 1) + x0]) / ((x1 - x0) * (y1 - y0));
+          diff[y * w + x] = m - gray[y * w + x];
+        }
+      }
+      resolve({ w, h, diff });
+    };
+    img.onerror = () => reject(new Error('下絵を読み込めませんでした'));
+    img.src = src;
+  });
+}
+
+// level：まわりよりどれだけ暗ければ線とみなすか（小さいほど薄い線も拾う）。黒い線だけの透明な PNG を返す
+export function inkDataUrl(ink, level) {
+  const { w, h, diff } = ink;
+  const make = (k) => {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    const out = ctx.createImageData(w, h);
+    const d = out.data;
+    for (let i = 0; i < w * h; i++) {
+      const a = Math.max(0, Math.min(1, (diff[i] - level) / 12));
+      d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = 17;
+      d[i * 4 + 3] = Math.round(a * 255);
+    }
+    ctx.putImageData(out, 0, 0);
+    if (k === 1) return c.toDataURL('image/png');
+    const s = document.createElement('canvas');
+    s.width = Math.round(w * k); s.height = Math.round(h * k);
+    s.getContext('2d').drawImage(c, 0, 0, s.width, s.height);
+    return s.toDataURL('image/png');
+  };
+  // 図は1つの文書に保存するので、大きすぎるときは縮める
+  let k = 1, url = make(k);
+  while (url.length > 450000 && k > 0.4) { k -= 0.2; url = make(k); }
+  return url;
+}
+
+// 取り込む前の確認画面。st = { ink, level, url }。onDone(url) / onCancel() / onLevel(level)
+export function InkPicker(st, { onDone, onCancel, onLevel }) {
+  return h('div', { class: 'trace-pick' },
+    h('div', { class: 'trace-pick-head' },
+      h('b', null, '下絵の黒い線を図に取り込む'),
+      h('div', { class: 'muted small' }, '下絵の写真から、黒い線や文字だけを取り出して図の中に入れます。白い所は透明になります。取り込んだ線は書き出し・閲覧モードにも出ます。')),
+    h('div', { class: 'trace-pick-body ink-pick-body' },
+      st.url ? h('img', { class: 'ink-pick-img', src: st.url, alt: '取り込む線' }) : h('div', { class: 'muted' }, '作っています…')),
+    h('div', { class: 'trace-pick-foot' },
+      h('label', { class: 'ink-pick-level' }, h('span', null, '拾う線'),
+        h('span', { class: 'muted small' }, '多い'),
+        h('input', {
+          type: 'range', min: 4, max: 70, step: 2, value: st.level, 'aria-label': '拾う線の量（左ほど薄い線も拾う）',
+          onchange: (e) => onLevel(+e.target.value),
+        }),
+        h('span', { class: 'muted small' }, '少ない')),
+      h('button', { class: 'btn ghost', onclick: onCancel }, 'やめる'),
+      h('button', { class: 'btn primary', disabled: !st.url, onclick: () => onDone(st.url) }, '図に取り込む')));
+}

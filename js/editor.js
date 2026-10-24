@@ -3,7 +3,7 @@ import { h, render } from './vdom.js';
 import { db, DEL, newId } from './db.js';
 import { S, rerender, toast, pickFile } from './state.js';
 import { P, createImage, thumbOf } from './model.js';
-import { loadPhoto, loadPhotoSrc, warpToStage, TracePicker, TraceChooser, initialCorners, detectCorners } from './trace.js';
+import { loadPhoto, loadPhotoSrc, warpToStage, TracePicker, TraceChooser, initialCorners, detectCorners, prepareInk, inkDataUrl, InkPicker } from './trace.js';
 import { textInRegion } from './drawimport.js';
 import { shapesFromClipboard, MARK } from './clippaste.js';
 import { W, H, stageFrame, StageSVG, shapeNode, sortShapes, moveShape, shapeCenter, shapeBBox, simplify, LAYER, layoutLabels, isRegion, isFillable, canName, insideShape, linePoints } from './stage.js';
@@ -954,7 +954,7 @@ function InlineBox() {
 }
 
 function onKey(e) {
-  if (!E || isDialogOpen() || E.tracePick || E.traceChoose) return;
+  if (!E || isDialogOpen() || E.tracePick || E.traceChoose || E.inkPick) return;
   const tag = (e.target && e.target.tagName) || '';
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
   const mod = e.ctrlKey || e.metaKey;
@@ -1212,7 +1212,7 @@ function move(e) {
     const [y0, y1] = [Math.min(d.p0[1], p[1]), Math.max(d.p0[1], p[1])];
     const sel = new Set(d.base);
     for (const s of Object.values(E.shapes)) {
-      if (!passes(s)) continue;
+      if (!passes(s) || s.ink) continue; // 下絵から取り込んだ線は範囲選択に入れない
       const [cx, cy] = shapeCenter(s);
       if (cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1) sel.add(s.id);
     }
@@ -2065,6 +2065,36 @@ async function removeTrace() {
   if (old) db.remove(P.doc(E.w, 'images', old));
 }
 
+// 下絵の黒い線だけを取り出して、図の中に画像として入れる（白い所は透明）
+async function startInk() {
+  if (!E || !E.traceSrc) return;
+  const src = E.traceSrc;
+  E.inkPick = { ink: null, level: 20, url: null };
+  draw();
+  try {
+    const ink = await prepareInk(src);
+    if (!E || !E.inkPick) return;
+    E.inkPick = { ...E.inkPick, ink, url: inkDataUrl(ink, E.inkPick.level) };
+    draw();
+  } catch (e) { E.inkPick = null; draw(); toast(e.message || String(e), 'error', 6000); }
+}
+
+const inkIds = () => Object.values(E.shapes).filter((x) => x && x.t === 'image' && x.ink).map((x) => x.id);
+
+function setInkLevel(level) {
+  const st = E && E.inkPick;
+  if (!st || !st.ink) return;
+  E.inkPick = { ...st, level, url: inkDataUrl(st.ink, level) };
+  draw();
+}
+
+function finishInk(src) {
+  E.inkPick = null;
+  const id = newId(8);
+  commit({ [id]: { t: 'image', ink: true, src, x: W / 2, y: H / 2, w: W, h: H, rot: 0, id, z: zFor('image') } });
+  toast('下絵の黒い線を図に取り込みました。外すときは右の「取り込んだ線を外す」を押してください');
+}
+
 function TraceSection() {
   const t = E.trace;
   if (!t) {
@@ -2086,6 +2116,9 @@ function TraceSection() {
       h('button', { class: 'btn tiny', onclick: () => { E.traceHidden = !E.traceHidden; draw(); } }, E.traceHidden ? '下絵を見せる' : '下絵を隠す'),
       h('button', { class: 'btn tiny', onclick: pickTrace }, '別の写真にする'),
       h('button', { class: 'btn tiny danger', onclick: removeTrace }, '下絵を外す')),
+    h('div', { class: 'panel-actions' },
+      h('button', { class: 'btn tiny', disabled: !E.traceSrc, onclick: startInk, title: '下絵の黒い線や文字だけを、図の中の画像として取り込みます（書き出しにも出ます）' }, '黒い線を図に取り込む'),
+      inkIds().length ? h('button', { class: 'btn tiny danger', onclick: () => commit(Object.fromEntries(inkIds().map((id) => [id, null]))) }, '取り込んだ線を外す') : null),
     !E.traceSrc ? h('p', { class: 'muted small' }, '下絵を読み込んでいます…') : null);
 }
 
@@ -2279,6 +2312,7 @@ export function EditorView() {
         E.hmode ? HeightPanel() : E.tool === 'person' ? PersonPanel(shapes) : ['line', 'curve', 'carrow', 'cblock'].includes(E.tool) ? PolyPanel() : E.tool === 'block' ? BlockToolPanel() : SelPanel())),
     E.xf ? XfHint() : null,
     ContextMenu(),
+    E.inkPick ? InkPicker(E.inkPick, { onDone: finishInk, onCancel: () => { E.inkPick = null; draw(); }, onLevel: setInkLevel }) : null,
     E.traceChoose ? TraceChooser(E.traceChoose, { onPick: pickTraceSrc, onFile: pickTraceFile, onCancel: () => { E.traceChoose = null; draw(); } }) : null,
     E.tracePick ? TracePicker(E.tracePick, { onDone: finishTrace, onCancel: () => { E.tracePick = null; draw(); }, redraw: draw }) : null);
 }
