@@ -77,10 +77,10 @@
 
 ## 4. やりかけ・残っていること
 
-1. **Googleスライドからの図形の貼り付け**（いま作業中）
-   - スライドで図形をコピーして図の編集画面に貼ると、文字だけになってしまう（スライド独自の形式を読めていない）。
-   - 調べるため、管理者が図の編集画面で Ctrl+V すると `clipboard.json` が自動でダウンロードされるようにした（`editor.js` の `saveClipForStudy`）。
-   - **次の一歩**：ユーザーから clipboard.json をもらい、形式を調べて `clippaste.js` に読み取りを足す（丸→人、文字→名前、線・四角→図形）。調べ終わったら `saveClipForStudy` は外す。
+1. **Googleスライドからの図形の貼り付け**（丸は対応済み。四角・線などは未確認）
+   - `js/slidesclip.js` で、クリップボードの `application/x-vnd.google-docs-drawings-object+wrapped` を読む。記録 3＝図形（[3, id, 形, 行列, 属性, ページ]）、2＝グループ、15＝図形の中の文字。属性 15＝塗り、19＝線の色、22＝線の太さ。座標は 25 EMU 単位で、図形のもとの大きさは 120000 四方。
+   - 形の番号は 8＝楕円だけ確認済み。名前の入った丸→人（名前）、同じくらいの大きさの丸→人、ほかは楕円。番号の分からない形は、いまは四角にしている。
+   - **次の一歩**：四角・線・矢印・テキストボックスをスライドでコピーした clipboard.json をもらい、`KIND` に形の番号を足す。調べ終わったら `editor.js` の `saveClipForStudy` は外す。
 2. **GitHub Pages に移ったことによる設定**（未確認）
    - Firebase Authentication の「承認済みドメイン」に `kanqlabo-web.github.io` を追加する。
    - Google Cloud の API キー（Browser key）の HTTP リファラー制限を使っているなら、`https://kanqlabo-web.github.io/*` を追加する。
