@@ -1,7 +1,7 @@
 // アプリのバージョン
 // main に push するたびに VERSION と DATE を上げ、CHANGELOG.md に1行足す。
 // 開いている人のブラウザは、サーバーのこのファイルと比べて「新しい版があります」を出す。
-export const VERSION = '1.3.0';
+export const VERSION = '1.3.1';
 export const DATE = '2026-10-24';
 
 export const CHANGELOG_URL = 'https://github.com/kanqlabo-web/zukai/blob/main/CHANGELOG.md';
@@ -26,15 +26,30 @@ export async function reloadToLatest() {
 }
 
 // 起動時・画面に戻ってきたとき・30分ごとに確かめ、新しい版があれば onNew(新しいバージョン) を呼ぶ
+// 起動した直後に古い版だと分かったときは、お知らせを出さずにそのまま最新版に読み込み直す（同じ版へは1回だけ）
 export function watchForUpdate(onNew) {
-  let told = false, last = 0;
+  let told = false, last = 0, first = true;
   const check = async () => {
     if (told || Date.now() - last < 60 * 1000) return;
     last = Date.now();
     const v = await latestVersion();
-    if (v && v !== VERSION) { told = true; onNew(v); }
+    const atStart = first;
+    first = false;
+    if (!v || v === VERSION) return;
+    if (atStart && autoReloadOnce(v)) return;
+    told = true;
+    onNew(v);
   };
   check();
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
   setInterval(check, 30 * 60 * 1000);
+}
+
+function autoReloadOnce(v) {
+  try {
+    if (sessionStorage.getItem('zukai-auto-reload') === v) return false;
+    sessionStorage.setItem('zukai-auto-reload', v);
+  } catch (e) { return false; }
+  reloadToLatest();
+  return true;
 }

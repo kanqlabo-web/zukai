@@ -227,11 +227,11 @@ function renderDialog() { render($dialog, DialogView()); }
 // 新しい版が公開されたときのお知らせ
 function renderUpdate() {
   const v = S.newVersion;
-  render($update, v ? [h('div', { class: 'update-bar' },
+  render($update, [VersionLink('corner-version' + (v ? ' is-old' : '')), v ? h('div', { class: 'update-bar' },
     h('span', null, `新しいバージョン ${v} が公開されました。`),
     h('button', { class: 'btn primary', onclick: () => reloadToLatest() }, '読み込み直す'),
     h('button', { class: 'icon-btn', title: 'あとで', 'aria-label': '閉じる', onclick: () => { S.newVersion = null; rerender(); } },
-      h('svg', { viewBox: '0 0 24 24', width: 18, height: 18 }, h('path', { d: 'M6 6l12 12M18 6L6 18', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round' }))))] : []);
+      h('svg', { viewBox: '0 0 24 24', width: 18, height: 18 }, h('path', { d: 'M6 6l12 12M18 6L6 18', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round' })))) : null]);
 }
 setRenderers([renderPage, renderModal, renderDialog, renderToasts, renderUpdate]);
 watchForUpdate((v) => { S.newVersion = v; rerender(); });

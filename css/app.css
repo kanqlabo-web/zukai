@@ -566,5 +566,12 @@ body.is-show { overflow: hidden; }
   box-shadow: 0 10px 30px rgba(30, 25, 60, .18);
 }
 .update-bar span { flex: 1; }
-@media print { .update-bar { display: none; } }
+.corner-version {
+  position: fixed; left: max(8px, env(safe-area-inset-left)); bottom: max(6px, env(safe-area-inset-bottom)); z-index: 15;
+  font-size: 11px; color: var(--muted); background: rgba(255, 255, 255, .85); padding: 2px 8px; border-radius: 99px; text-decoration: none;
+}
+.corner-version:hover { color: var(--accent-2); text-decoration: underline; }
+.corner-version.is-old { color: var(--danger); }
+body.modal-open .corner-version { display: none; }
+@media print { .update-bar, .corner-version { display: none; } }
 .menu-who + .menu-version { border-top: 0; margin-top: 0; }
