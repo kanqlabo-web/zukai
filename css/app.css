@@ -811,3 +811,12 @@ body.is-show { overflow: hidden; }
 .item { transition: transform .15s; }
 .item.dragging { transition: none; position: relative; z-index: 5; background: #fff; box-shadow: 0 8px 24px rgba(60, 64, 67, .18); border-radius: 8px; }
 @media (max-width: 640px) { .item-grip { min-width: 40px; min-height: 36px; } }
+
+/* 役の一覧（2.1.0） */
+.role-chips { margin-top: 10px; }
+.role-chip small { margin-left: 2px; }
+.cast-edit.role-list td.who { white-space: nowrap; font-size: 13px; }
+.cast-edit.role-list td.who .cno { color: #e60012; margin-right: 2px; }
+.cast-edit.role-list .lbl-in { width: 110px; }
+.role-paste { margin-top: 10px; }
+.role-paste summary { cursor: pointer; font-size: 13px; color: var(--muted); }

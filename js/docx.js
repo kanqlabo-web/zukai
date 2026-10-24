@@ -3,7 +3,7 @@
 import { h, render } from './vdom.js';
 import { S, toast } from './state.js';
 import { draftTitle, photoWidth } from './model.js';
-import { castIndex, numberCast, roleText } from './cast.js';
+import { workIndex, numberCast, roleText } from './cast.js';
 import { buildRows, highlightRanges, lineSegments } from './script.js';
 import { blockUpdates, showUpdates, DIAGRAM_FIXED } from './update.js';
 import { attrsOf, runsOf, TEXT_COLORS, BG_COLORS } from './richtext.js';
@@ -246,7 +246,7 @@ const NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/mai
 export async function buildDocx(data) {
   media = [];
   const ids = { n: 0 };
-  const idx = castIndex(data.work.cast);
+  const idx = workIndex(data.work);
   const headers = [];
   const bodies = [];
   for (let i = 0; i < data.targets.length; i++) {

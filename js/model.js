@@ -159,7 +159,7 @@ export const LIB_COLS = ['episodes', 'tracks', 'drafts', 'blocks', 'diagrams', '
 export async function exportWork(w) {
   const work = await db.get(P.work(w));
   const out = { format: 'zukai-library', version: 1, exportedAt: now(), work: {}, cols: {} };
-  for (const k of ['title', 'prefix', 'cast', 'labelRules']) if (work && work[k] !== undefined) out.work[k] = work[k];
+  for (const k of ['title', 'prefix', 'cast', 'roleList', 'labelRules']) if (work && work[k] !== undefined) out.work[k] = work[k];
   // 更新日時・更新した人は書き出さない（サンプルに名前が残らないように）
   for (const c of LIB_COLS) out.cols[c] = (await db.list(P.col(w, c))).map(({ updatedAt, updatedBy, createdBy, lastJoin, ...rest }) => rest);
   return out;

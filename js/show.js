@@ -4,7 +4,7 @@
 import { h } from './vdom.js';
 import { S, rerender, go } from './state.js';
 import { draftTitle } from './model.js';
-import { castIndex } from './cast.js';
+import { workIndex } from './cast.js';
 import { buildRows, highlightRanges, sortBlocks } from './script.js';
 import { StageSVG } from './stage.js';
 import { DotText, CueTitle, ScriptLines } from './sheet.js';
@@ -99,7 +99,7 @@ export function ShowView() {
   const s = list[V.i];
   if (!s) return h('main', { class: 'page' }, h('p', null, '表示できる図がありません。'), h('a', { class: 'btn', href: backHref() }, '← 戻る'));
   const t = data.targets[s.ti];
-  const idx = castIndex(data.work.cast);
+  const idx = workIndex(data.work);
   const title = draftTitle(data.work, t.ep, t.track, t.draft);
   document.title = title;
   const text = t.draft.script || '';

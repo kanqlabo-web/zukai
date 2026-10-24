@@ -279,7 +279,7 @@ export async function drawingSvg(id, token) {
   return r.text();
 }
 
-export async function importZukai(w, result, { epId, epTitle, replaceCast, existingEpisodes, tracks, drafts, user, asNewTrack = false, trackName = null, cast = [], vectorize = true, driveToken = null, toTrack = null, toDraftId = null, appendTo = null, onProgress = null }, onStep) {
+export async function importZukai(w, result, { epId, epTitle, replaceCast, existingEpisodes, tracks, drafts, user, asNewTrack = false, trackName = null, cast = [], roleList = [], vectorize = true, driveToken = null, toTrack = null, toDraftId = null, appendTo = null, onProgress = null }, onStep) {
   // appendTo：toDraftId の稿に中身があるとき、その稿の今の内容（{ script, zukaikko, theme }）。テマ友は後ろに足し、タイミングの位置もずらす
   // onProgress(文, 済んだ図の数, 図の数)：図を1枚読むごとに呼ぶ（画面に進み具合を出す）
   // toTrack：このトラックに入れる（toDraftId があればその稿に、なければ次の稿として）
@@ -351,7 +351,7 @@ export async function importZukai(w, result, { epId, epTitle, replaceCast, exist
           try {
             const svg = await drawingSvg(it.fig.drawing.id, driveToken);
             let d = null;
-            if (vectorize) { try { d = await diagramFromSvg(svg, { cast: castList, chars }); } catch (e) { console.warn('図に直せませんでした', e); } }
+            if (vectorize) { try { d = await diagramFromSvg(svg, { cast: castList, roleList, chars }); } catch (e) { console.warn('図に直せませんでした', e); } }
             if (d) {
               const gid = newId();
               ops.push({ op: 'set', path: P.doc(w, 'diagrams', gid), data: { draftId, shapes: d.shapes, roleVis: d.roleVis, createdAt: now() } });
@@ -372,7 +372,7 @@ export async function importZukai(w, result, { epId, epTitle, replaceCast, exist
           const src = it.fig.pdf || (it.fig.pdfPage ? { page: it.fig.pdfPage, fig: it.fig } : null);
           if (vectorize && src && isStageFig(src.fig)) {
             try {
-              const d = await diagramFromPdf(src.page, src.fig, { cast: castList, chars });
+              const d = await diagramFromPdf(src.page, src.fig, { cast: castList, roleList, chars });
               if (d) {
                 const gid = newId();
                 ops.push({ op: 'set', path: P.doc(w, 'diagrams', gid), data: { draftId, shapes: d.shapes, roleVis: d.roleVis, createdAt: now() } });

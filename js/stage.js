@@ -1,6 +1,6 @@
 // 図の描画（編集画面・一覧・PDFで共通）
 import { h } from './vdom.js';
-import { personCast, personNo, rolesOf, roleVisible } from './cast.js';
+import { personCast, personNo, personRole, roleShort, rolesOf, roleVisible } from './cast.js';
 
 export const W = 1000;
 export const H = 470;
@@ -247,7 +247,9 @@ export function shapeNode(s, { selected = false, interactive = false, idx = null
         h('text', { 'text-anchor': 'middle', 'dominant-baseline': 'central', y: 0.5, fill: NUM, 'font-size': fs.toFixed(1), 'font-family': FONT }, label)];
     }
     const ring = s.ring || !label;
-    return h('g', { ...common, 'data-pk': s.cid ? 'c' + s.cid : s.no ? 'n' + s.no : 'i' + s.id, transform: `translate(${s.x},${s.y})` },
+    // 役で置いた人は、役が決まればそのメンバーとして（閲覧モードで、メンバーで置いた図からもすべって動く）
+    const pc = s.rid && !s.cid ? personCast(s, idx) : null;
+    return h('g', { ...common, 'data-pk': s.cid ? 'c' + s.cid : pc ? 'c' + pc.id : s.rid ? 'r' + s.rid : s.no ? 'n' + s.no : 'i' + s.id, transform: `translate(${s.x},${s.y})` },
       personOutline(s.outline, r, { fill: ring || s.fill && s.fill !== 'white' ? fill : 'transparent', stroke: ring ? INK : 'none', 'stroke-width': 2.4 }),
       // 丸付き数字の内側は塗りつぶして、後ろの線が数字にかからないようにする
       circled ? h('circle', { r: r * 0.64, fill }) : null,
@@ -506,8 +508,11 @@ export function layoutLabels(list, idx, roleVis = {}, interactive = false) {
   {
     const persons = list.filter((s) => s.t === 'person').sort((a, b) => a.y - b.y || a.x - b.x);
     for (const s of persons) {
-      const c = personCast(s, idx);
+      const pr = personRole(s, idx);
+      const c = pr ? null : personCast(s, idx);
       const parts = c ? rolesOf(c).map((r, i) => (r.label && roleVisible(roleVis, c.id, i, s.ring) ? r.label : '')) : [];
+      // 役で置いた人：その役の名前だけ（役が決まっていれば、メンバーの図ごとの表示・非表示に従う）
+      if (pr && (!pr.c || roleVisible(roleVis, pr.c.id, pr.i, s.ring, true))) parts.push(roleShort(pr.role, pr.c && pr.c.roles[pr.i]));
       if (s.label) parts.push(s.label);
       const text = parts.filter(Boolean).join('・');
       if (!text) continue;

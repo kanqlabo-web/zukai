@@ -54,7 +54,7 @@ export function svgToPng(svg) {
 }
 // すでに舞台の座標になっている形の並びから（Googleスライドの図形など）
 export function diagramFromShapes(list, opts = {}) { return toDiagram(list, opts); }
-async function toDiagram(list, { cast = [] } = {}) {
+async function toDiagram(list, { cast = [], roleList = [] } = {}) {
   const persons = list.filter((s) => s.t === 'person');
   if (persons.length + list.filter((s) => s.t !== 'person' && s.t !== 'text').length < 1) return null;
   const nums = numberCast(cast);
@@ -88,7 +88,9 @@ async function toDiagram(list, { cast = [] } = {}) {
           nums.find((m) => [m.name, ...(m.roles || []).map((r) => r.name)].some((v) => v && L.length >= 2 && String(v).replace(/\s/g, '').startsWith(L)));
         if (c) { o.no = undefined; delete o.label; shown.add(c.id); }
       }
-      if (c) { o.cid = c.id; delete o.no; } else if (!s.no) delete o.no;
+      // メンバーにいなければ、役の一覧の役（役者が未定の役）として置く
+      const role = !c && !s.no && s.label ? roleList.find((r) => [r.label, r.name].some((v) => v && String(v).replace(/\s/g, '') === s.label.replace(/\s/g, ''))) : null;
+      if (c) { o.cid = c.id; delete o.no; } else if (role) { o.rid = role.id; delete o.no; delete o.label; } else if (!s.no) delete o.no;
     }
     shapes[id] = o;
   }

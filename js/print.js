@@ -8,7 +8,7 @@ import { buildPdf, deliverPdf } from './pdf.js';
 import { buildVectorPdf } from './pdfvec.js';
 import { buildDocx, deliverFile } from './docx.js';
 import { P, draftTitle, draftName, shortTrack, photoWidth } from './model.js';
-import { castIndex } from './cast.js';
+import { workIndex } from './cast.js';
 import { buildRows, highlightRanges } from './script.js';
 import { blockUpdates, showUpdates, DIAGRAM_FIXED } from './update.js';
 import { StageSVG } from './stage.js';
@@ -86,7 +86,7 @@ function Sheet(data, t, i) {
   const rows = buildRows(text, t.blocks, t.draft.spkFix);
   const hls = highlightRanges(text, t.blocks);
   const title = draftTitle(work, t.ep, t.track, t.draft);
-  const idx = castIndex(work.cast);
+  const idx = workIndex(work);
   return h('section', { key: t.draft.id, class: 'sheet src', 'data-title': title },
     h('div', { class: 'sheet-title' }, title),
     h('div', { class: 'info' },

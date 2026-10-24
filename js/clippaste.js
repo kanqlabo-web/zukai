@@ -72,7 +72,7 @@ export async function shapesFromClipboard(dt, at, opts = {}) {
   if (types.includes(SLIDES_TYPE)) {
     const list = slidesToShapes(parseSlidesClip(dt.getData(SLIDES_TYPE)), at);
     if (list.length) {
-      const d = await diagramFromShapes(list, { cast: opts.cast || [] });
+      const d = await diagramFromShapes(list, { cast: opts.cast || [], roleList: opts.roleList || [] });
       const out = d ? Object.values(d.shapes).map(({ id, z, ...s }) => s) : list.map(({ seq, ...s }) => s);
       if (out.length) return out;
     }
@@ -96,7 +96,7 @@ export async function shapesFromClipboard(dt, at, opts = {}) {
           const svg = await drawingSvg(f.drawing.id, token);
           // 舞台の図ならそのまま図形に直す。それ以外（木や石の絵など）は画像として置く
           let d = null;
-          try { d = await diagramFromSvg(svg, { cast: opts.cast || [], chars: opts.chars || '' }); } catch (e) { /* 舞台の図ではない */ }
+          try { d = await diagramFromSvg(svg, { cast: opts.cast || [], roleList: opts.roleList || [], chars: opts.chars || '' }); } catch (e) { /* 舞台の図ではない */ }
           if (d && Object.keys(d.shapes || {}).length) { out.push(...Object.values(d.shapes).map(({ id, ...s }) => s)); continue; }
           const png = await svgToPng(svg);
           if (png) out.push(...await blobsToShapes([png], [at[0] + out.length * 24, at[1] + out.length * 24]));

@@ -11,7 +11,7 @@ import { newDraftFlow, DraftPicker, isEmptyDraft } from './views-draft.js';
 import { P, draftName, createEpisode, createTrack, copyDraft, deleteDraft, deleteTrack, deleteEpisode, parseCast } from './model.js';
 import { confirmDeleteWork, confirmLeaveWork } from './views-home.js';
 import { ask, confirmBox } from './dialog.js';
-import { ensureCastIds, numberCast, rolesOf } from './cast.js';
+import { ensureCastIds, numberCast, rolesOf, roleListOf, castIndex } from './cast.js';
 import { myRole, canEdit, isOwner, ROLE_LABEL, rolesOfWork, saveRoles, joinUrl, profileName, openGroupWindow, waitGroups, cancelGroupWait } from './access.js';
 import { GROUP_LOOKUP_URL, ADMIN_EMAILS } from './settings.js';
 import { CastTable } from './sheet.js';
@@ -331,7 +331,7 @@ async function importDocIntoTrack(w, d, html) {
     setProgress('取り込んでいます…');
     const out = await importZukai(w, { ...result, tracks: [T] }, {
       epId: track.episodeId, toTrack: track, toDraftId: r.into === 'this' ? d : null, appendTo: empty ? null : { script: draft.script || '', zukaikko: draft.zukaikko || '', theme: draft.theme || '' },
-      existingEpisodes: S.d.episodes || [], tracks: S.d.tracks || [], drafts, user: S.user, cast: work.cast || [], vectorize: true, driveToken, onProgress: setProgress,
+      existingEpisodes: S.d.episodes || [], tracks: S.d.tracks || [], drafts, user: S.user, cast: work.cast || [], roleList: roleListOf(work), vectorize: true, driveToken, onProgress: setProgress,
     });
     setProgress('');
     reportImport(out, `「${track.title}」に取り込みました`);
@@ -391,7 +391,7 @@ async function finishImport(w, work, eps, result, src, note = '') {
     const out = await importZukai(w, result, {
       epId: r.ep === 'new' ? null : r.ep, epTitle: epGuess, replaceCast: r.cast === 'replace',
       asNewTrack: r.mode !== 'next', trackName: result.tracks.length === 1 ? r.tname : null,
-      existingEpisodes: eps, tracks: S.d.tracks || [], drafts: S.d.drafts || [], user: S.user, cast: work.cast || [], vectorize: true, driveToken, onProgress: setProgress,
+      existingEpisodes: eps, tracks: S.d.tracks || [], drafts: S.d.drafts || [], user: S.user, cast: work.cast || [], roleList: roleListOf(work), vectorize: true, driveToken, onProgress: setProgress,
     });
     setProgress('');
     reportImport(out, `${out.made.length}トラックを取り込みました`);
@@ -448,6 +448,94 @@ function startDrag(e, w, cast, i) {
   window.addEventListener('pointercancel', up);
 }
 
+// 役の一覧（役者が決まっていなくても、図に役で置ける）
+function editRoleList(w, list) {
+  S.ui.roleList = list;
+  saveLater(P.work(w), { roleList: list, updatedAt: Date.now() }, 500);
+  clearTimeout(roleTimer);
+  roleTimer = setTimeout(() => { S.ui.roleList = null; rerender(); }, 2500);
+  rerender();
+}
+let roleTimer = null;
+const normRole = (v) => String(v || '').replace(/\s/g, '');
+// 「ルーシィ（ルー）」「ルーシィ<TAB>ルー」を1行に1役
+function parseRoles(text) {
+  const out = [];
+  for (let line of String(text || '').split('\n')) {
+    line = line.replace(/\u3000/g, ' ').trim();
+    if (!line) continue;
+    let [name, label = ''] = line.split('\t').map((x) => x.trim());
+    const m = name.match(/^(.*?)\s*[（(](.*)[）)]\s*$/);
+    if (m && !label) { name = m[1]; label = m[2]; }
+    if (name || label) out.push({ id: newId(8), name, label });
+  }
+  return out;
+}
+
+function RoleListTable(roleList, ix, edit) {
+  if (!roleList.length && !edit) return null;
+  const who = (r) => { const a = ix.byRid[r.id]; return a ? h('span', null, h('b', { class: 'cno' }, a.c.no), ' ', a.c.name || '名前なし') : h('span', { class: 'muted' }, '未定'); };
+  return h('div', { class: 'cast-scroll' }, h('table', { class: 'cast-edit role-list' },
+    h('thead', null, h('tr', null, h('th', null, '役'), h('th', null, 'キャラクターの表記'), h('th', null, '役者'), edit ? h('th', null, '') : null)),
+    h('tbody', null, roleList.length ? roleList.map((r, i) => h('tr', { key: r.id },
+      h('td', null, edit ? h('input', { value: r.name, placeholder: '役名 例：ルーシィ', 'aria-label': '役', oninput: (e) => edit.rename(i, e.target.value) }) : r.name),
+      h('td', { class: 'lbl' }, edit ? h('input', { class: 'lbl-in', value: r.label || '', placeholder: '例：ルー', 'aria-label': 'キャラクターの表記', oninput: (e) => edit.set(i, { label: e.target.value }) }) : r.label || ''),
+      h('td', { class: 'who' }, who(r)),
+      edit ? h('td', { class: 'row-btns' }, h('button', { class: 'icon-btn', title: 'この役を削除', 'aria-label': 'この役を削除', onclick: () => edit.remove(i) }, '×')) : null))
+      : h('tr', { key: 'empty' }, h('td', { colspan: 4, class: 'muted small' }, 'まだ役がありません。')))));
+}
+
+function RoleListSection(w, cast, roleList) {
+  const ix = castIndex(cast, roleList);
+  // 続けて打ったときに古い一覧で上書きしないよう、押した時点の一覧を使う
+  const curRoles = () => S.ui.roleList || roleListOf(S.d.work);
+  const curCast = () => S.ui.cast || (S.d.work && S.d.work.cast) || [];
+  const edit = {
+    set: (i, patch) => editRoleList(w, curRoles().map((r, j) => (j === i ? { ...r, ...patch } : r))),
+    // 役名を変えたら、その役を付けたメンバーの役名も一緒に変える
+    rename: (i, name) => {
+      const list = curRoles(), old = list[i];
+      editRoleList(w, list.map((r, j) => (j === i ? { ...r, name } : r)));
+      const hit = (r) => r.rid === old.id || (!r.rid && normRole(r.name) && normRole(r.name) === normRole(old.name));
+      const cs = curCast();
+      if (cs.some((c) => rolesOf(c).some(hit))) {
+        editCast(w, cs.map((c) => (rolesOf(c).some(hit) ? { ...c, roles: rolesOf(c).map((r) => (hit(r) ? { ...r, name, rid: old.id } : r)) } : c)));
+      }
+    },
+    remove: async (i) => {
+      const r = curRoles()[i];
+      if (!(await confirmBox(`役「${r.name || r.label || '名前なし'}」を一覧から削除しますか？\n図にこの役で置いた人は、番号なしになります。`, { ok: '削除', danger: true }))) return;
+      editRoleList(w, curRoles().filter((x) => x.id !== r.id));
+    },
+  };
+  // メンバー一覧にあって、役の一覧にない役
+  const missing = [];
+  for (const c of numberCast(cast)) {
+    if (c.tag) continue;
+    for (const r of c.roles) {
+      if (!normRole(r.name) || roleList.some((x) => x.id === r.rid || normRole(x.name) === normRole(r.name)) || missing.some((x) => normRole(x.name) === normRole(r.name))) continue;
+      missing.push({ id: newId(8), name: r.name.trim(), label: r.label || '' });
+    }
+  }
+  return h('section', { class: 'panel' },
+    h('h2', null, '役の一覧'),
+    h('p', { class: 'muted small' }, '役者がまだ決まっていなくても、ここに役を入れておくと、図の編集画面の「人」から役で置けます（役名が人の横に出ます）。役者が決まったら、上のメンバー一覧の「役」にその役名を入れると、役で置いた人が自動でその人の番号になります。'),
+    RoleListTable(roleList, ix, edit),
+    h('div', { class: 'actions' },
+      h('button', { class: 'btn', onclick: () => editRoleList(w, [...curRoles(), { id: newId(8), name: '', label: '' }]) }, '＋ 役を追加'),
+      missing.length ? h('button', { class: 'btn', title: missing.map((r) => r.name).join('、'), onclick: () => { editRoleList(w, [...roleList, ...missing]); toast(`${missing.length}個の役を追加しました`); } }, `メンバーの役から追加（${missing.length}）`) : null),
+    h('details', { class: 'role-paste' },
+      h('summary', null, 'まとめて貼り付け'),
+      h('p', { class: 'muted small' }, '1行に1役。「ルーシィ（ルー）」や、表計算ソフトからコピーした「役・キャラクターの表記」の列に対応しています。'),
+      h('textarea', { rows: 5, value: S.ui.rolePaste || '', oninput: (e) => { S.ui.rolePaste = e.target.value; }, placeholder: 'ルーシィ（ルー）\nエドマンド（エド）\n白い魔女' }),
+      h('div', { class: 'actions' },
+        h('button', { class: 'btn', onclick: () => {
+          const add = parseRoles(S.ui.rolePaste).filter((r) => !roleList.some((x) => normRole(x.name) === normRole(r.name)));
+          if (!add.length) return;
+          editRoleList(w, [...roleList, ...add]); S.ui.rolePaste = ''; toast(`${add.length}個の役を追加しました`);
+        } }, '後ろに追加'))));
+}
+
 function rowStyle(i) {
   const d = S.ui.castDrag;
   if (!d) return null;
@@ -466,17 +554,25 @@ export function CastView() {
       h('div', { class: 'page-head' }, h('h1', null, 'メンバー一覧'), h('div', { class: 'actions' }, h('a', { class: 'btn', href: `#/w/${w}` }, 'ライブラリーに戻る'))),
       h('p', { class: 'muted small' }, '閲覧のみで共有されているため、変更はできません。'),
       CastTable(work.cast),
+      roleListOf(work).length ? h('section', { class: 'panel' }, h('h2', null, '役の一覧'), RoleListTable(roleListOf(work), castIndex(work.cast || [], roleListOf(work)), null)) : null,
       work.labelRules ? h('section', { class: 'panel' }, h('h2', null, 'キャラクターの表記のルール'), h('div', { class: 'rules-body' }, work.labelRules)) : null);
   }
   let cast = S.ui.cast || work.cast || [];
   const fixed = ensureCastIds(cast);
   if (fixed.changed) { cast = fixed.cast; queueMicrotask(() => editCast(w, cast)); }
   const numbered = numberCast(cast);
+  const roleList = S.ui.roleList || roleListOf(work);
   const upd = (i, k, v) => editCast(w, cast.map((c, j) => (j === i ? { ...c, [k]: v } : c)));
   // 役（兼役は複数）を書き換える。古い role / label の形は roles に置き換える
   const setRoles = (i, fn) => editCast(w, cast.map((c, j) => {
     if (j !== i) return c;
-    const roles = fn(rolesOf(c).length ? rolesOf(c).map((r) => ({ ...r })) : [{ name: '', label: '' }]);
+    // 役の一覧と同じ役名なら、その役に結びつける（あとで一覧の役名を変えても付いていく）
+    const roles = fn(rolesOf(c).length ? rolesOf(c).map((r) => ({ ...r })) : [{ name: '', label: '' }]).map((r) => {
+      const hit = normRole(r.name) && roleList.find((x) => normRole(x.name) === normRole(r.name));
+      const n = { ...r };
+      if (hit) n.rid = hit.id; else delete n.rid;
+      return n;
+    });
     const n = { ...c, roles };
     delete n.role; delete n.label;
     return n;
@@ -497,7 +593,7 @@ export function CastView() {
         h('td', { class: 'roles-cell' },
           c.tag ? h('span', { class: 'muted staff-note' }, '図には出ません')
             : (rolesOf(c).length ? rolesOf(c) : [{ name: '', label: '' }]).map((r, k, all) => h('div', { key: 'r' + k, class: 'role-line' },
-              h('input', { value: r.name, placeholder: k ? '兼役' : '（なし）', 'aria-label': k ? '兼役' : '役', oninput: (e) => setRoles(i, (rs) => { rs[k].name = e.target.value; return rs; }) }),
+              h('input', { value: r.name, list: 'role-names', placeholder: k ? '兼役' : '（なし）', 'aria-label': k ? '兼役' : '役', oninput: (e) => setRoles(i, (rs) => { rs[k].name = e.target.value; return rs; }) }),
               h('input', { class: 'lbl-in', value: r.label, placeholder: '表記 例：ルー', 'aria-label': 'キャラクターの表記', oninput: (e) => setRoles(i, (rs) => { rs[k].label = e.target.value; return rs; }) }),
               k > 0 ? h('button', { class: 'icon-btn', title: 'この兼役を削除', onclick: () => setRoles(i, (rs) => rs.filter((_, x) => x !== k)) }, '×')
                 : all.length === 1 ? h('button', { class: 'add-role', title: '兼役を追加', 'aria-label': '兼役を追加', onclick: () => setRoles(i, (rs) => [...rs, { name: '', label: '' }]) }, '＋')
@@ -515,6 +611,8 @@ export function CastView() {
         a.splice(at, 0, { name: '', roles: [{ name: '', label: '' }], tag: '' });
         editCast(w, ensureCastIds(a).cast);
       } }, '＋ 1人追加')),
+    h('datalist', { id: 'role-names' }, roleList.filter((r) => r.name).map((r) => h('option', { key: r.id, value: r.name }))),
+    RoleListSection(w, cast, roleList),
     h('section', { class: 'panel' },
       h('h2', null, 'キャラクターの表記のルール'),
       h('p', { class: 'muted small' }, '役名を図に書くときの決まりをメモしておけます（図の編集画面からも見られます）。上の表の「キャラクターの表記」に入れた文字が、図の人の横に表示されます。'),

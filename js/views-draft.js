@@ -10,7 +10,7 @@ import { CastTable, Legend, ScriptLines, DotText } from './sheet.js';
 import { openEditor, PresenceMarks } from './editor.js';
 import { confirmBox, ask } from './dialog.js';
 import { canEdit } from './access.js';
-import { castIndex } from './cast.js';
+import { workIndex } from './cast.js';
 import { resolveAnchor } from './script.js';
 import { others, NameTags, ringStyle } from './presence.js';
 import { RichEdit, runSpan, shiftMarks, lastRichEditor, applyToSelection, TEXT_COLORS, BG_COLORS, readEditor, selectionIn, setSelectionIn, attrsOf, marksOf, runsOf, markStyle } from './richtext.js';
@@ -764,7 +764,7 @@ function ItemView(w, d, b, it, i, items, rows) {
       b._u && b._u.diagram(it.id, it.refId) ? h('div', { class: 'upd small' }, DIAGRAM_FIXED) : null,
       (() => { const ed = others().filter((p) => p.g === it.refId); return h('div', { class: 'pres-edit' + (ed.length ? '' : ' empty') }, NameTags(ed, 'on-thumb'), ed.length ? h('span', { class: 'muted small' }, 'が図を編集中') : null); })(),
       h('button', { class: 'thumb', onclick: () => openEditor(w, it.refId), title: 'クリックで図を編集' },
-        g ? StageSVG(g.shapes, { idx: castIndex(S.d.work && S.d.work.cast), roleVis: g.roleVis || {} }) : h('div', { class: 'muted small pad' }, '読み込み中…'),
+        g ? StageSVG(g.shapes, { idx: workIndex(S.d.work), roleVis: g.roleVis || {} }) : h('div', { class: 'muted small pad' }, '読み込み中…'),
         (() => {
           const ed = g ? others().filter((p) => p.g === it.refId) : [];
           return h('svg', { class: 'pres-overlay', viewBox: `0 0 ${W} ${H}`, xmlns: 'http://www.w3.org/2000/svg', 'aria-hidden': 'true' }, ed.length ? PresenceMarks(g.shapes, ed, 0.8) : []);
@@ -936,7 +936,7 @@ function ScriptModal(w, d, draft, blocks) {
 // ---------- 画面 ----------
 // 舞台の人がメンバーより多いときの、控えめなお知らせ
 function OverCount(shapes) {
-  const ix = castIndex(S.d.work && S.d.work.cast);
+  const ix = workIndex(S.d.work);
   const members = ix.list.filter((c) => c.id && !c.tag).length;
   const n = Object.values(shapes || {}).filter((s) => s && s.t === 'person').length;
   if (!members || n <= members) return null;

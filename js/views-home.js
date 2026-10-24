@@ -6,7 +6,7 @@ import { db, mode } from './db.js';
 import { S, rerender, toast, fmtTime, go, adminMsg } from './state.js';
 import { P, createWork, deleteWork, exportWork, thumbOf } from './model.js';
 import { StageSVG, shapeCenter, W } from './stage.js';
-import { castIndex } from './cast.js';
+import { workIndex } from './cast.js';
 import { myRole, ROLE_LABEL } from './access.js';
 import { buildSample, buildSampleFrom } from './sample.js';
 import { SAMPLE_LINK, ADMIN_EMAILS } from './settings.js';
@@ -82,7 +82,7 @@ function CardArt(w) {
   const t = w.thumb || thumbs[w.id];
   if (!t) findThumb(w);
   const shapes = t && typeof t === 'object' ? t.shapes : {};
-  return StageSVG(shapes || {}, { cls: 'stage card-stage', idx: castIndex(w.cast || []), roleVis: (t && t.roleVis) || {} });
+  return StageSVG(shapes || {}, { cls: 'stage card-stage', idx: workIndex(w), roleVis: (t && t.roleVis) || {} });
 }
 
 export function HomeView() {

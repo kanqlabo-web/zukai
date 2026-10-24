@@ -119,7 +119,7 @@
 | E302 | `views-home.js` | ライブラリー一覧を読めなかった（通信など） |
 | E401 | `views-work.js` 共有 | Googleグループで追加しようとしたが、`settings.js` の GROUP_LOOKUP_URL が空 |
 
-## 7. 1.7.0 の画面まわりのメモ
+## 7. 1.7.0 からの画面まわりのメモ
 
 - 稿の `figs: true`：テマ友なしでも図解がある稿の目印（`createBlock` が付ける）。`isEmptyDraft`（`views-draft.js`）で、空の稿のボタンを押せなくする。
 - 図解の段のボタンは `S.ui.activeBlock` の段だけ表示（CSS で隠す。作り直すと入力中の欄が外れるため）。
@@ -131,3 +131,4 @@
 - 図解のページ（2.0.0〜）：図解（`blocks`）の中身は今までどおり `items`（order の順）で、データの形は変えていない。画面では1枚のページとして並べ、項目のあいだに「＋」（`InsertSlot`）。2.1.0 から「行頭」「足す」は上のツールバー（`FormatBar`）にあり、新しいタイミングは文章だけで作る（`model.js` の `createBlock`）。写真の幅は items の `w`（%、`photoWidth` で古い `size` s/m/l を 40/68/100 に読み替え）。カーソル位置への差し込みは `insertTarget` → `insertItems`（文章を `splitText` で行の区切りで2つに分ける。まだ保存していない打ち込みは `state.js` の `takePending` で一緒に保存）。文章の先頭の Backspace でつなげる（`noteKeyDown`）。写真の貼り付けは `richtext.js` の `onPasteFiles`、カーソル位置は `selectionchange` で `el._lastSel` に覚える。青字の判定（`update.js` の `blockUpdates`）は、図解の中のどの文章の欄にあった行でも「元からある行」とみなす。
 - 下絵（1.8.0〜）：図（`diagrams`）の `trace: { img: 画像のid, op: 濃さ }`。画像は `images` に舞台の形（1000×470）に直した JPEG で保存。四隅を合わせる画面と射影変換は `js/trace.js`、図の編集への組み込みは `editor.js` の `pickTrace`・`finishTrace`・`TraceSection`。書き出し・閲覧モードには出さない。図を複製しても下絵は付いていかない。
 
+- 役の一覧（2.3.0〜）：作品（`works/{w}`）の `roleList: [{ id, name, label }]`。図の人は `cid`（メンバー）の代わりに `rid`（役）を持てる。どのメンバーかは `cast.js` の `castIndex(cast, roleList)` が、メンバーの役（`roles[].rid`、なければ役名が同じもの）から `byRid` を作って決める（`personCast` が `rid` も見る）。役者未定なら番号なし・黒い円・役名。役名の表示は `personRole` / `roleShort`、役で置いた人の役名は図で隠していなければいつも出す（`roleVisible` の `explicit`）。画面はメンバー一覧の `RoleListSection`（`views-work.js`）と図の編集の `RoleChips`・`placeRole`・`setPersonRole`（`editor.js`）。castIndex を直接呼ばず `workIndex(work)` を使う。
