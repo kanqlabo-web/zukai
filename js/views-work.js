@@ -301,12 +301,13 @@ async function importDocIntoTrack(w, d, html) {
     r = await ask({
       title: `「${track.title}」に取り込む`, ok: '取り込む',
       message: result.tracks.length === 1 ? `見つかったトラック：${list[0][1]}` : `トラックが${result.tracks.length}個見つかりました。このトラックに入れるものを選んでください。`,
-      detail: (empty ? `この稿（${draftName(draft)}）に取り込みます。` : `この稿には中身があるので、新しい稿（第${nextNo}稿）として取り込みます。`) + '取り込んだあとで、タイミングの位置や改行を確かめてください。',
+      detail: (empty ? `この稿（${draftName(draft)}）に取り込みます。` : 'この稿にはもう中身があります。新しい稿を作るか、この稿の後ろに足すかを選んでください。') + '取り込んだあとで、タイミングの位置や改行を確かめてください。',
       fields: [
         result.tracks.length > 1 ? { key: 'ti', label: '取り込むトラック', type: 'select', value: '0', options: list } : null,
+        empty ? null : { key: 'into', label: '入れる先', type: 'select', value: 'next', options: [['next', `新しい稿（第${nextNo}稿）を作る`], ['this', `この稿（${draftName(draft)}）の後ろに足す`]] },
       ].filter(Boolean),
     });
-    if (r) r.into = empty ? 'this' : 'next';
+    if (r && empty) r.into = 'this';
   }
   if (!r) return;
   const T = result.tracks[+(r.ti || 0)] || result.tracks[0];
@@ -314,7 +315,7 @@ async function importDocIntoTrack(w, d, html) {
   try {
     setProgress('取り込んでいます…');
     const out = await importZukai(w, { ...result, tracks: [T] }, {
-      epId: track.episodeId, toTrack: track, toDraftId: r.into === 'this' ? d : null,
+      epId: track.episodeId, toTrack: track, toDraftId: r.into === 'this' ? d : null, appendTo: empty ? null : { script: draft.script || '', zukaikko: draft.zukaikko || '', theme: draft.theme || '' },
       existingEpisodes: S.d.episodes || [], tracks: S.d.tracks || [], drafts, user: S.user, cast: work.cast || [], vectorize: true, driveToken, onProgress: setProgress,
     });
     setProgress('');

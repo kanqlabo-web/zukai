@@ -279,7 +279,8 @@ export async function drawingSvg(id, token) {
   return r.text();
 }
 
-export async function importZukai(w, result, { epId, epTitle, replaceCast, existingEpisodes, tracks, drafts, user, asNewTrack = false, trackName = null, cast = [], vectorize = true, driveToken = null, toTrack = null, toDraftId = null, onProgress = null }, onStep) {
+export async function importZukai(w, result, { epId, epTitle, replaceCast, existingEpisodes, tracks, drafts, user, asNewTrack = false, trackName = null, cast = [], vectorize = true, driveToken = null, toTrack = null, toDraftId = null, appendTo = null, onProgress = null }, onStep) {
+  // appendTo：toDraftId の稿に中身があるとき、その稿の今の内容（{ script, zukaikko, theme }）。テマ友は後ろに足し、タイミングの位置もずらす
   // onProgress(文, 済んだ図の数, 図の数)：図を1枚読むごとに呼ぶ（画面に進み具合を出す）
   // toTrack：このトラックに入れる（toDraftId があればその稿に、なければ次の稿として）
   let castList = cast || [];
@@ -326,6 +327,14 @@ export async function importZukai(w, result, { epId, epTitle, replaceCast, exist
     }
     const draftId = (track && toDraftId) || newId();
     const body = { script: T.script, zukaikko: T.zukaikko || '', theme: T.theme || '', importedFrom: T.title };
+    let shift = 0;
+    if (track && toDraftId && appendTo && String(appendTo.script || '').trim()) {
+      const head = String(appendTo.script).replace(/\s+$/, '') + '\n\n';
+      shift = head.length;
+      body.script = head + (T.script || '');
+      if (appendTo.zukaikko) body.zukaikko = appendTo.zukaikko;
+      if (appendTo.theme) body.theme = appendTo.theme;
+    }
     if (track && toDraftId) ops.push({ op: 'update', path: P.doc(w, 'drafts', draftId), data: { ...body, updatedAt: now(), updatedBy: user ? user.name : '' } });
     else ops.push({ op: 'set', path: P.doc(w, 'drafts', draftId), data: { ...emptyDraft(trackId, no, user), ...body } });
     const t0 = now();
@@ -386,7 +395,7 @@ export async function importZukai(w, result, { epId, epTitle, replaceCast, exist
         }
       }
       if (!k) items[newId(8)] = { order: 1, kind: 'text', text: '● ' };
-      ops.push({ op: 'set', path: P.doc(w, 'blocks', newId()), data: { draftId, cue: b.cue || '', anchor: { offset: b.offset, text: b.anchorText || '' }, newRow: true, createdAt: t0 + bi, items } });
+      ops.push({ op: 'set', path: P.doc(w, 'blocks', newId()), data: { draftId, cue: b.cue || '', anchor: { offset: (b.offset || 0) + shift, text: b.anchorText || '' }, newRow: true, createdAt: t0 + bi, items } });
     }
     await db.batch(ops);
     made.push({ trackId, draftId, title, no });
