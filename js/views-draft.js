@@ -479,13 +479,42 @@ function startItemDrag(e, w, b, items, i) {
   window.addEventListener('pointercancel', up);
 }
 
-async function removeItem(w, d, b, it) {
-  if (it.kind !== 'text' && !(await confirmBox(it.kind === 'diagram' ? 'この図を削除しますか？' : 'この写真を削除しますか？', { ok: '削除', danger: true }))) return;
+async function removeItem(w, d, b, it, quiet) {
+  if (it.kind !== 'text' && !quiet && !(await confirmBox(it.kind === 'diagram' ? 'この図を削除しますか？' : 'この写真を削除しますか？', { ok: '削除', danger: true }))) return;
   const ops = [{ op: 'update', path: blockPath(w, b), data: { [`items.${it.id}`]: DEL } }];
   if (it.refId) ops.push({ op: 'remove', path: P.doc(w, it.kind === 'diagram' ? 'diagrams' : 'images', it.refId) });
   await db.batch(ops);
   touch(w, d);
+  if (quiet) toast(`${ITEM_NAME[it.kind] || '項目'}を削除しました（${MOD}Z で元に戻せます）`);
 }
+
+// 図・写真を押して選ぶ（Googleドキュメントの画像と同じ：選んで Delete で消す、Enter で編集）
+function selectItem(it, el) {
+  if (S.ui.selItem !== it.id) { S.ui.selItem = it.id; rerender(); }
+  const box = el && el.closest && el.closest('.item');
+  if (box && document.activeElement !== box) box.focus({ preventScroll: true });
+}
+function itemKeys(e, w, d, b, it, i, items) {
+  if (e.target !== e.currentTarget && !(e.target.classList && e.target.classList.contains('thumb'))) return; // 見出しの欄やボタンを使っているとき
+  const mod = e.ctrlKey || e.metaKey;
+  const focusAt = (k) => {
+    const el = document.querySelector(`[data-pblock="${b.id}"] [data-item="${items[k] && items[k].id}"]`);
+    if (!el) return;
+    if (items[k].kind === 'text') { const r = el.querySelector('.rich'); if (r) r.focus(); S.ui.selItem = null; rerender(); }
+    else { S.ui.selItem = items[k].id; el.focus(); rerender(); }
+  };
+  if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); S.ui.selItem = null; removeItem(w, d, b, it, true); }
+  else if (e.key === 'Enter' && it.kind === 'diagram') { e.preventDefault(); openEditor(w, it.refId); }
+  else if (e.key === 'Escape') { e.preventDefault(); S.ui.selItem = null; e.currentTarget.blur(); rerender(); }
+  else if (mod && e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); moveItem(w, b, items, i, i + (e.key === 'ArrowUp' ? -1 : 1)); }
+  else if (!mod && (e.key === 'ArrowUp' || e.key === 'ArrowLeft')) { e.preventDefault(); focusAt(i - 1); }
+  else if (!mod && (e.key === 'ArrowDown' || e.key === 'ArrowRight')) { e.preventDefault(); focusAt(i + 1); }
+  else if (mod && e.key.toLowerCase() === 'd' && it.kind === 'diagram') { e.preventDefault(); duplicateDiagram(w, d, b, it); }
+}
+// 選んだ図・写真の外を押したら、選ぶのをやめる
+document.addEventListener('pointerdown', (e) => {
+  if (S.ui.selItem && !(e.target.closest && e.target.closest(`[data-item="${S.ui.selItem}"]`))) { S.ui.selItem = null; rerender(); }
+}, true);
 
 async function removeBlock(w, d, b) {
   if (!(await confirmBox(`《${b.cue || 'タイミングなし'}》の図解を削除しますか？\n中の図・写真も消えます。`, { ok: '削除', danger: true }))) return;
@@ -759,21 +788,31 @@ function ItemView(w, d, b, it, i, items, rows) {
     h('span', { class: 'grow' }),
     h('button', { class: 'btn tiny del-btn', onclick: () => removeItem(w, d, b, it) }, icon('trash', 14), `この${name}を削除`));
 
+  const sel = S.ui.selItem === it.id;
+  // 図・写真は、選べる（フォーカスできる）まとまりにして、キーボードで消す・動かす・編集できるようにする
+  const pickable = {
+    key: it.id, 'data-item': it.id, tabindex: '0', 'aria-label': `${name}${it.caption ? '「' + it.caption + '」' : ''}（Delete で削除${it.kind === 'diagram' ? '、Enter で編集' : ''}）`,
+    onkeydown: (e) => itemKeys(e, w, d, b, it, i, items),
+    onfocus: (e) => { if (e.target === e.currentTarget && S.ui.selItem !== it.id) { S.ui.selItem = it.id; rerender(); } },
+  };
   if (it.kind === 'text') {
-    return h('div', { key: it.id, class: 'item text' },
+    return h('div', { key: it.id, class: 'item text', 'data-item': it.id },
       h('div', { class: 'text-gutter' }, grip),
       NoteEditor(w, d, b, it));
   }
   if (it.kind === 'diagram') {
     const g = (S.d.diagrams || []).find((x) => x.id === it.refId);
-    return h('div', { key: it.id, class: 'item diagram' },
+    return h('div', { ...pickable, class: 'item diagram' + (sel ? ' selected' : '') },
       h('input', {
         class: 'caption' + (it.caption ? '' : ' is-empty'), value: it.caption || '', placeholder: '図の見出し（任意）', 'data-pkey': 'cap:' + it.id,
         oninput: (e) => { e.target.classList.toggle('is-empty', !e.target.value); saveLater(blockPath(w, b), { [`items.${it.id}.caption`]: e.target.value }); touch(w, d); },
       }),
       b._u && b._u.diagram(it.id, it.refId) ? h('div', { class: 'upd small' }, DIAGRAM_FIXED) : null,
       (() => { const ed = others().filter((p) => p.g === it.refId); return h('div', { class: 'pres-edit' + (ed.length ? '' : ' empty') }, NameTags(ed, 'on-thumb'), ed.length ? h('span', { class: 'muted small' }, 'が図を編集中') : null); })(),
-      h('button', { class: 'thumb', onclick: () => openEditor(w, it.refId), title: 'クリックで図を編集' },
+      h('button', {
+        class: 'thumb', tabindex: '-1', title: 'クリックで選ぶ（もう一度クリック、ダブルクリック、Enter で図を編集）',
+        onclick: (e) => { if (sel || e.detail > 1) openEditor(w, it.refId); else selectItem(it, e.target); },
+      },
         g ? StageSVG(g.shapes, { idx: workIndex(S.d.work), roleVis: g.roleVis || {} }) : h('div', { class: 'muted small pad' }, '読み込み中…'),
         (() => {
           const ed = g ? others().filter((p) => p.g === it.refId) : [];
@@ -789,13 +828,13 @@ function ItemView(w, d, b, it, i, items, rows) {
   if (it.kind === 'image') {
     const im = (S.d.images || []).find((x) => x.id === it.refId);
     const pw = photoWidth(it);
-    return h('div', { key: it.id, class: 'item image' },
+    return h('div', { ...pickable, class: 'item image' + (sel ? ' selected' : '') },
       h('input', {
         class: 'caption' + (it.caption ? '' : ' is-empty'), value: it.caption || '', placeholder: '写真の見出し（任意）例：＜木のイメージ＞', 'data-pkey': 'cap:' + it.id,
         oninput: (e) => { e.target.classList.toggle('is-empty', !e.target.value); saveLater(blockPath(w, b), { [`items.${it.id}.caption`]: e.target.value }); touch(w, d); },
       }),
       h('div', { class: 'photo-box', style: { width: pw + '%' } },
-        im ? h('img', { class: 'photo', src: im.data, alt: it.caption || '参考写真' }) : h('div', { class: 'muted small pad' }, '読み込み中…'),
+        im ? h('img', { class: 'photo', src: im.data, alt: it.caption || '参考写真', onpointerdown: (e) => selectItem(it, e.target), draggable: 'false' }) : h('div', { class: 'muted small pad' }, '読み込み中…'),
         h('span', {
           class: 'photo-resize', title: 'ドラッグして大きさを変える', 'aria-label': '写真の大きさを変える（左右の矢印キーでも変えられます）', tabindex: '0', role: 'slider',
           'aria-valuemin': '10', 'aria-valuemax': '100', 'aria-valuenow': String(pw),
@@ -1097,12 +1136,21 @@ function docMenus({ w, d, draft, track, siblings, text, rows, empty, draftPath }
 function showDocShortcuts() {
   ask({
     title: 'キーボード ショートカット', ok: '閉じる', cancel: false, fields: [],
-    message: [['元に戻す', MOD + 'Z'], ['やり直す', MOD + 'Y'], ['太字', MOD + 'B'], ['貼り付け・取り込み', MOD + 'V'], ['ショートカットの一覧', MOD + '/']].map(([a, k]) => `${a}　${k}`).join('\n'),
+    message: [
+      ['元に戻す', MOD + 'Z'], ['やり直す', MOD + 'Y'], ['太字', MOD + 'B'], ['貼り付け・取り込み', MOD + 'V'],
+      ['保存（自動で保存されます）', MOD + 'S'], ['書き出し（印刷）', MOD + 'P'], ['ショートカットの一覧', MOD + '/'],
+      ['メニューを開く', 'Alt+F（ファイル）・E（編集）・V（表示）・I（挿入）・O（表示形式）・H（ヘルプ）'],
+      ['図・写真を選ぶ', 'クリック（Tab でも移れます）'], ['選んだ図・写真を削除', 'Delete / Backspace'], ['選んだ図を編集', 'Enter / ダブルクリック'],
+      ['選んだ図を複製', MOD + 'D'], ['前・次の項目へ', '↑ / ↓'], ['選んだ項目を上下に動かす', MOD + 'Shift+↑ / ↓'], ['選ぶのをやめる', 'Esc'],
+    ].map(([a, k]) => `${a}　${k}`).join('\n'),
   });
 }
 document.addEventListener('keydown', (e) => {
   if (!(e.ctrlKey || e.metaKey) || !S.route || S.route.name !== 'draft' || S.ui.editDiagram) return;
   if (e.key === '/') { e.preventDefault(); showDocShortcuts(); return; }
+  const k = e.key.toLowerCase();
+  if (k === 's' && !e.shiftKey) { e.preventDefault(); flushAll(); toast('変更はすべて自動で保存されています'); return; }
+  if (k === 'p' && !e.shiftKey) { e.preventDefault(); flushAll(); go(`#/w/${S.route.params.w}/print/d/${S.route.params.d}?export`); return; }
   // 太字（Googleドキュメントと同じ Ctrl+B）
   const el = document.activeElement;
   if (e.key.toLowerCase() === 'b' && !e.shiftKey && el && el.classList && el.classList.contains('rich')) { e.preventDefault(); applyToSelection(el, 'b', 1); }

@@ -47,6 +47,7 @@ export function openEditor(w, id) {
     draw();
   });
   document.body.classList.add('modal-open');
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); // 後ろのページの欄に打ち込まないように
   window.addEventListener('keydown', onKey);
   // ブラウザの「戻る」（スマホの戻るジェスチャー）で、ページではなく図の編集だけを閉じるよう、履歴を1つ足す
   if (!(window.history.state && window.history.state.zukaiEditor)) window.history.pushState({ zukaiEditor: id }, '');
@@ -752,6 +753,10 @@ document.addEventListener('paste', (e) => {
   pasteExternal(e.clipboardData);
 }, true);
 function paste() { if (clipboard.length) duplicateList(clipboard, 20, 20); }
+function zoomStep(dir) {
+  const z = dir > 0 ? ZOOMS.find((v) => v > E.zoom + 0.01) : [...ZOOMS].reverse().find((v) => v < E.zoom - 0.01);
+  if (z) { E.zoom = z; draw(); }
+}
 function cutSel() { if (!E.sel.size) return; copySel(); deleteSel(); }
 // メニューの「貼り付け」：ほかのアプリからのものも読めるときは読む（読めないブラウザでは、この画面でコピーしたものだけ）
 async function pasteFromMenu() {
@@ -760,13 +765,13 @@ async function pasteFromMenu() {
 }
 const SHORTCUTS = [
   ['元に戻す', 'Z'], ['やり直す', 'Y'], ['切り取り', 'X'], ['コピー', 'C'], ['貼り付け', 'V'], ['複製', 'D'], ['すべて選択', 'A'],
-  ['前面へ移動', 'Shift+↑'], ['背面へ移動', 'Shift+↓'], ['ショートカットの一覧', '/'],
+  ['前面へ移動', 'Shift+↑（または ' + MOD + '↑）'], ['背面へ移動', 'Shift+↓（または ' + MOD + '↓）'], ['拡大', 'Alt+＋'], ['縮小', 'Alt+−'], ['保存（自動で保存されます）', 'S'], ['ショートカットの一覧', '/'],
 ];
 function showShortcuts() {
   ask({
     title: 'キーボード ショートカット', ok: '閉じる', cancel: false, fields: [],
     message: SHORTCUTS.map(([a, k]) => `${a}　${MOD}${k}`).join('\n')
-      + '\n削除　Delete\n少し動かす　矢印キー（Shift で大きく）\n選ぶのをやめる　Esc\n名前を書く　ダブルクリック',
+      + '\n削除　Delete / Backspace\n少し動かす　矢印キー（Shift で大きく）\n次・前の図形を選ぶ　Tab / Shift+Tab\n名前・文字を書く　Enter / ダブルクリック\n選ぶのをやめる　Esc\n前・次の図へ　PageUp / PageDown\n図の編集を終える　' + MOD + 'Enter\nメニューを開く　Alt+E（編集）・V（表示）・I（挿入）・O（配置）・H（ヘルプ）',
   });
 }
 
@@ -833,7 +838,39 @@ function onKey(e) {
   if (mod && e.key.toLowerCase() === 'c') { copySel(); return; }
   if (mod && e.key.toLowerCase() === 'x') { e.preventDefault(); cutSel(); return; }
   if (mod && e.key === '/') { e.preventDefault(); showShortcuts(); return; }
-  if (mod && e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); reorder(e.key === 'ArrowUp'); return; }
+  if (mod && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); reorder(e.key === 'ArrowUp'); return; }
+  if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); toast('変更はすべて自動で保存されています'); return; }
+  if (mod && e.key === 'Enter') { e.preventDefault(); closeEditor(); return; }
+  if (mod && e.altKey && (e.key === '=' || e.key === '+' || e.key === '-')) { e.preventDefault(); zoomStep(e.key === '-' ? -1 : 1); return; }
+  if (!mod && e.altKey && (e.key === '=' || e.key === '+' || e.key === '-' || e.code === 'Equal' || e.code === 'Minus' || e.code === 'NumpadAdd' || e.code === 'NumpadSubtract')) {
+    e.preventDefault(); zoomStep(e.key === '-' || e.code === 'Minus' || e.code === 'NumpadSubtract' ? -1 : 1); return;
+  }
+  if (!mod && (e.key === 'PageDown' || e.key === 'PageUp')) {
+    e.preventDefault();
+    const seq = diagramSequence().filter((id) => (S.d.diagrams || []).some((g) => g.id === id));
+    const to = seq[seq.indexOf(E.id) + (e.key === 'PageDown' ? 1 : -1)];
+    if (to) switchDiagram(to);
+    return;
+  }
+  // ボタンや欄を選んでいるときの Tab・Enter は、そのボタンや欄に任せる
+  const onCanvas = !(e.target && e.target.closest && e.target.closest('.ed-root')) || !!e.target.closest('.ed-canvas-wrap');
+  if (e.key === 'Tab' && !mod && onCanvas && !E.poly && !E.hmode) {
+    // 図形を順に選ぶ（スライドと同じ）
+    e.preventDefault();
+    const all = sortShapes(E.shapes).filter(passes);
+    if (!all.length) return;
+    const curI = E.sel.size === 1 ? all.findIndex((x) => x.id === [...E.sel][0]) : -1;
+    const n = all.length;
+    const nx = curI < 0 ? (e.shiftKey ? n - 1 : 0) : (curI + (e.shiftKey ? -1 : 1) + n) % n;
+    E.tool = 'select';
+    E.sel = new Set([all[nx].id]);
+    draw();
+    return;
+  }
+  if (e.key === 'Enter' && !mod && onCanvas && !E.poly && !E.hmode && E.sel.size === 1) {
+    const one = E.shapes[[...E.sel][0]];
+    if (one && (one.t === 'text' || one.t === 'person' || canName(one))) { e.preventDefault(); startInline(one); return; }
+  }
   // Ctrl+V は「貼り付け」の操作（paste）で受け取る（ほかのアプリからの画像や図形も貼れるように）
   if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); E.sel = new Set(Object.values(E.shapes).filter(passes).map((x) => x.id)); draw(); return; }
   if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSel(); return; }

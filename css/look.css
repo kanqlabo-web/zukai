@@ -139,3 +139,9 @@
   .card-grid.as-list .work-sub { flex: 1 0 100%; }
   .card-grid.as-list .work-thumb { width: 72px; height: 36px; }
 }
+
+/* ---------- トラックのページ：選んだ図・写真（Delete で消せる） ---------- */
+.doc .item[tabindex]:focus { outline: none; }
+.doc .item.selected .thumb, .doc .item.selected .photo-box { outline: 2px solid var(--sel); outline-offset: 2px; }
+.doc .item.selected .thumb-hint { opacity: 1; }
+.mp-row.hi { background: var(--accent-soft); }
