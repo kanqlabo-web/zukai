@@ -135,7 +135,7 @@ export function WorkView() {
           if (t) await createEpisode(w, t, eps.length + 1);
         },
       }, '＋ 話を追加'),
-      h('button', { class: 'btn', disabled: !!S.ui.importing, onclick: () => importFlow(w, work, eps) }, S.ui.importing || '読み込む'),
+      h('button', { class: 'btn', disabled: !!S.ui.importing, onclick: () => importFlow(w, work, eps) }, S.ui.importing ? '読み込み中…' : '読み込む'),
       isAdmin() ? h('button', { class: 'btn ghost', onclick: startCapture }, '（調査）クリップボードを保存') : null) : null,
     edit ? h('p', { class: 'muted small' }, '「読み込む」で、コピーしたGoogleドキュメントか、図解のPDFを取り込めます。Googleドキュメントで Ctrl+A → Ctrl+C してから、このページで Ctrl+V しても取り込めます。') : null,
   );
@@ -310,30 +310,48 @@ async function importDocIntoTrack(w, d, html) {
   }
   if (!r) return;
   const T = result.tracks[+(r.ti || 0)] || result.tracks[0];
-  const setMsg = (m) => { S.ui.importing = m; rerender(); };
-  let driveToken = null;
-  if (T.blocks.some((b) => b.items.some((i) => i.fig && i.fig.drawing))) {
-    try { driveToken = await auth.driveToken(true); } catch (e) { toast('Googleドライブの許可がないので、図形描画は取り込めません', 'error', 8000); }
-  }
+  const driveToken = await driveTokenFor([T]);
   try {
-    setMsg('取り込んでいます…');
+    setProgress('取り込んでいます…');
     const out = await importZukai(w, { ...result, tracks: [T] }, {
       epId: track.episodeId, toTrack: track, toDraftId: r.into === 'this' ? d : null,
-      existingEpisodes: S.d.episodes || [], tracks: S.d.tracks || [], drafts, user: S.user, cast: work.cast || [], vectorize: true, driveToken,
+      existingEpisodes: S.d.episodes || [], tracks: S.d.tracks || [], drafts, user: S.user, cast: work.cast || [], vectorize: true, driveToken, onProgress: setProgress,
     });
-    setMsg('');
-    toast(`「${track.title}」に取り込みました`, 'info', 5000);
+    setProgress('');
+    reportImport(out, `「${track.title}」に取り込みました`);
     const made = out.made[0];
     if (made && made.draftId !== d) go(`#/w/${w}/d/${made.draftId}`);
   } catch (e) {
-    setMsg('');
-    toast('取り込めませんでした: ' + (e.message || e), 'error', 8000);
+    setProgress('');
+    toast('取り込めませんでした: ' + (e.message || e), 'error', 15000);
   }
+}
+
+// 取り込みの進み具合（画面の下に出す）。m が空なら消す
+function setProgress(m, done = 0, total = 0) {
+  S.ui.importing = m;
+  S.ui.importProg = m && total ? { done, total } : null;
+  rerender();
+}
+// 図形描画があれば、取り出すために Googleドライブの許可をもらう
+async function driveTokenFor(tracks) {
+  if (!tracks.some((T) => T.blocks.some((b) => b.items.some((i) => i.fig && i.fig.drawing)))) return null;
+  setProgress('Googleドライブの許可を待っています…');
+  try { return await auth.driveToken(true); } catch (e) {
+    toast('Googleドライブの許可がないので、図形描画は取り込めません', 'error', 10000);
+    return null;
+  } finally { setProgress(''); }
+}
+// 終わったことと、読めなかった図があればそれを知らせる
+function reportImport(out, okMsg) {
+  const f = out.failed || [];
+  if (!f.length) { toast(okMsg, 'info', 6000); return; }
+  const cues = [...new Set(f.filter(Boolean))].slice(0, 3).map((c) => `《${c}》`).join('、');
+  toast(`${okMsg}。ただし図${f.length}枚は読み込めませんでした${cues ? `（${cues}${f.length > 3 ? 'など' : ''}）` : ''}。その段には図が入っていないので、描き直すか、もう一度取り込んでください。`, 'error', 20000);
 }
 
 const trackTitleOf = (t) => String(t || '').replace(/^トラ(?!ック)/, 'トラック');
 async function finishImport(w, work, eps, result, src, note = '') {
-  const setMsg = (m) => { S.ui.importing = m; rerender(); };
   const epGuess = result.tracks[0].ep || '';
   const same = eps.find((e) => e.title === epGuess);
   const castN = result.cast ? result.cast.split('\n').filter(Boolean).length : 0;
@@ -351,25 +369,20 @@ async function finishImport(w, work, eps, result, src, note = '') {
     ].filter(Boolean),
   });
   if (!r) return;
-  // Googleの図形描画があれば、取り出すために Googleドライブの許可をもらう
-  const hasDrawing = result.tracks.some((T) => T.blocks.some((b) => b.items.some((i) => i.fig && i.fig.drawing)));
-  let driveToken = null;
-  if (hasDrawing) {
-    try { driveToken = await auth.driveToken(true); } catch (e) { toast('Googleドライブの許可がないので、図形描画は取り込めません', 'error', 8000); }
-  }
+  const driveToken = await driveTokenFor(result.tracks);
   try {
-    setMsg('取り込んでいます…');
+    setProgress('取り込んでいます…');
     const out = await importZukai(w, result, {
       epId: r.ep === 'new' ? null : r.ep, epTitle: epGuess, replaceCast: r.cast === 'replace',
       asNewTrack: r.mode !== 'next', trackName: result.tracks.length === 1 ? r.tname : null,
-      existingEpisodes: eps, tracks: S.d.tracks || [], drafts: S.d.drafts || [], user: S.user, cast: work.cast || [], vectorize: true, driveToken,
-    }, (d, t) => setMsg(`取り込んでいます…（${d}／${t}トラック）`));
-    setMsg('');
-    toast(`${out.made.length}トラックを取り込みました`, 'info', 5000);
+      existingEpisodes: eps, tracks: S.d.tracks || [], drafts: S.d.drafts || [], user: S.user, cast: work.cast || [], vectorize: true, driveToken, onProgress: setProgress,
+    });
+    setProgress('');
+    reportImport(out, `${out.made.length}トラックを取り込みました`);
     if (out.made[0]) go(`#/w/${w}/d/${out.made[0].draftId}`);
   } catch (e) {
-    setMsg('');
-    toast('取り込めませんでした: ' + (e.message || e), 'error', 8000);
+    setProgress('');
+    toast('取り込めませんでした: ' + (e.message || e), 'error', 15000);
   }
 }
 

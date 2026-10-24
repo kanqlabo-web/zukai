@@ -224,10 +224,25 @@ function renderToasts() {
 }
 
 function renderDialog() { render($dialog, DialogView()); }
+// 取り込みの進み具合（読み込み中だと分かるよう、回る印と、図の数の進み具合を出す）
+function ImportProgress() {
+  const m = S.ui.importing;
+  if (!m) return null;
+  const p = S.ui.importProg;
+  return h('div', { class: 'import-panel', role: 'status', 'aria-live': 'polite' },
+    h('svg', { class: 'spin', viewBox: '0 0 24 24', width: 20, height: 20, 'aria-hidden': 'true' },
+      h('circle', { cx: 12, cy: 12, r: 9, fill: 'none', stroke: 'var(--line)', 'stroke-width': 3 }),
+      h('path', { d: 'M12 3a9 9 0 0 1 9 9', fill: 'none', stroke: 'var(--accent-2)', 'stroke-width': 3, 'stroke-linecap': 'round' })),
+    h('div', { class: 'grow' },
+      h('div', null, m),
+      p ? h('div', { class: 'import-bar' }, h('div', { style: `width:${Math.round((p.done / p.total) * 100)}%` })) : null,
+      h('div', { class: 'muted small' }, '取り込みが終わるまで、このページを閉じないでください。')));
+}
+
 // 新しい版が公開されたときのお知らせ
 function renderUpdate() {
   const v = S.newVersion;
-  render($update, [VersionLink('corner-version' + (v ? ' is-old' : '')), v ? h('div', { class: 'update-bar' },
+  render($update, [VersionLink('corner-version' + (v ? ' is-old' : '')), ImportProgress(), v ? h('div', { class: 'update-bar' },
     h('span', null, `新しいバージョン ${v} が公開されました。`),
     h('button', { class: 'btn primary', onclick: () => reloadToLatest() }, '読み込み直す'),
     h('button', { class: 'icon-btn', title: 'あとで', 'aria-label': '閉じる', onclick: () => { S.newVersion = null; rerender(); } },

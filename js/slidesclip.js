@@ -127,7 +127,7 @@ export function slidesToShapes(list, at) {
     const t = s.text.trim();
     if (isPerson(s)) {
       const p = { t: 'person', x: Math.round(X(s.cx)), y: Math.round(Y(s.cy)), no: '', ring: true, seq: seq++ };
-      if (s.fill) { const v = gray(s.fill); if (v < 0.3) p.fill = 'black'; else if (v < 0.95) p.fill = 'gray'; }
+      if (s.fill) { const v = gray(s.fill); if (v < 0.3) p.fill = 'black'; else if (v < 0.88) p.fill = 'gray'; }
       if (t) p.label = t.replace(/\n/g, '');
       // 名前の入った円より小さい・大きい丸は、その大きさのまま
       const r = Math.round(((s.w + s.h) / 4) * k * 10) / 10;

@@ -1416,6 +1416,8 @@ function SelPanel() {
     const ring = persons.every((s) => !!s.ring === !!persons[0].ring) ? !!persons[0].ring : null;
     parts.push(h('div', { class: 'prop' }, h('span', null, '黒い円'), Seg([[false, 'なし'], [true, 'あり']], ring, (v) => setProps({ ring: v }, (s) => s.t === 'person'))));
     parts.push(h('p', { class: 'muted small tight' }, '黒い円で囲むのは、役や人として扱うとき・一人ひとりとして見るときです。ふだんの立ち位置は赤の丸付き数字だけにします。'));
+    const ol = persons.every((s) => (s.outline || 'circle') === (persons[0].outline || 'circle')) ? persons[0].outline || 'circle' : null;
+    parts.push(h('div', { class: 'prop' }, h('span', null, '囲みの形'), Seg([['circle', '丸'], ['square', '四角'], ['tri', '三角']], ol, (v) => setProps(v === 'circle' ? { outline: 'circle' } : { outline: v, ring: true }, (s) => s.t === 'person'))));
     {
       const ixx = idx();
       const ms = persons.map((x) => personCast(x, ixx)).filter((m) => m && rolesOf(m).some((r) => r.label));

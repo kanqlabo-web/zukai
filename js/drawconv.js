@@ -142,6 +142,8 @@ async function circled() {
 
 // ---------- 色 ----------
 const gray = (c) => (c[0] + c[1] + c[2]) / 3;
+// 人の塗り：これより明るい灰色（ごく薄い灰色で塗る人もいる）は白とする
+export const PERSON_WHITE = 0.88;
 const isRed = (c) => c[0] > 0.7 && c[1] < 0.35 && c[2] < 0.35;
 function areaFill(c) {
   const v = gray(c);
@@ -282,7 +284,7 @@ export async function convertDrawing(page, fig, { chars = '', frame = null } = {
     used.add(p);
     const twin = vis.find((q) => q !== p && !used.has(q) && q.fill && isCircle(q) && Math.abs(size(q) - d) < 1.5 && Math.hypot(ctr(q)[0] - c[0], ctr(q)[1] - c[1]) < 1.5);
     let fill = 'white';
-    if (twin) { used.add(twin); if ((twin.fa ?? 1) > 0.05) { const v = gray(twin.fc); if (v < 0.3) fill = 'black'; else if (v < 0.95) fill = 'gray'; } }
+    if (twin) { used.add(twin); if ((twin.fa ?? 1) > 0.05) { const v = gray(twin.fc); if (v < 0.3) fill = 'black'; else if (v < PERSON_WHITE) fill = 'gray'; } }
     persons.push({ p, c, d, no: '', seq: p.seq, ring: true, fill, circle: true });
   }
   // 人のまわりの円：大きい円 → 黒い円、同じ大きさの塗り → 塗り
@@ -294,9 +296,31 @@ export async function convertDrawing(page, fig, { chars = '', frame = null } = {
     const k = d / who.d;
     if (k > 1.15 && k < 2.4 && q.stroke && gray(q.sc) < 0.6) { who.ring = true; used.add(q); }
     else if (k > 0.8 && k <= 1.15) {
-      if (q.fill && (q.fa ?? 1) > 0.05) { const v = gray(q.fc); if (v < 0.3) who.fill = 'black'; else if (v < 0.95) who.fill = 'gray'; }
+      if (q.fill && (q.fa ?? 1) > 0.05) { const v = gray(q.fc); if (v < 0.3) who.fill = 'black'; else if (v < PERSON_WHITE) who.fill = 'gray'; }
       used.add(q);
     }
+  }
+  // 人のまわりの四角・三角（丸のかわりに、見分けるために使うことがある）
+  for (const q of vis) {
+    if (used.has(q) || !q.stroke || isCircle(q)) continue;
+    const sp = subpaths(q.path);
+    if (sp.length !== 1 || !/^ML+Z?$/.test(q.path.map((c) => c[0]).join(''))) continue;
+    const n = dedupe(sp[0].pts).length;
+    const kind = n === 4 ? 'square' : n === 3 ? 'tri' : null;
+    if (!kind) continue;
+    const c = ctr(q), d = size(q);
+    // 三角は、重心（下寄り）のあたりに番号がある
+    const cc = kind === 'tri' ? [sp[0].pts.slice(0, 3).reduce((a, v) => a + v[0], 0) / 3, sp[0].pts.slice(0, 3).reduce((a, v) => a + v[1], 0) / 3] : c;
+    const who = persons.find((x) => !x.outline && (Math.hypot(x.c[0] - cc[0], x.c[1] - cc[1]) < x.d * 0.35 || Math.hypot(x.c[0] - c[0], x.c[1] - c[1]) < x.d * 0.35));
+    if (!who) continue;
+    const k = d / who.d;
+    if (k < 1.1 || k > 2.8) continue;
+    used.add(q);
+    who.ring = true; who.outline = kind;
+    const twin = vis.find((f) => f !== q && !used.has(f) && f.fill && !f.stroke && Math.abs(f.x0 - q.x0) < 1.5 && Math.abs(f.x1 - q.x1) < 1.5 && Math.abs(f.y0 - q.y0) < 1.5 && Math.abs(f.y1 - q.y1) < 1.5);
+    const fc = q.fill && (q.fa ?? 1) > 0.05 ? q.fc : twin && (twin.fa ?? 1) > 0.05 ? twin.fc : null;
+    if (twin) used.add(twin);
+    if (fc) { const v = gray(fc); if (v < 0.3) who.fill = 'black'; else if (v < PERSON_WHITE) who.fill = 'gray'; }
   }
   const personShape = new Map();
   for (const x of persons) {
@@ -305,11 +329,14 @@ export async function convertDrawing(page, fig, { chars = '', frame = null } = {
     personShape.set(x, s);
     if (x.ring) s.ring = true;
     if (x.fill !== 'white') s.fill = x.fill;
+    if (x.outline) s.outline = x.outline;
     shapes.push(s);
   }
 
   // 文字：小さな、塗りだけの形（文字の線）
-  const textPaths = vis.filter((p) => !used.has(p) && p.fill && !p.stroke && !isRed(p.fc) && (p.y1 - p.y0) < 18 && (p.x1 - p.x0) < 160 && !isCircle(p) && p.path.length > 6);
+  // 文字は濃い色の塗りだけ。薄い塗りで同じ枠の線がある形（白抜きの小さな矢印など）は文字ではない
+  const outlined = (p) => vis.some((q) => q !== p && q.stroke && Math.abs(q.x0 - p.x0) < 1.5 && Math.abs(q.x1 - p.x1) < 1.5 && Math.abs(q.y0 - p.y0) < 1.5 && Math.abs(q.y1 - p.y1) < 1.5);
+  const textPaths = vis.filter((p) => !used.has(p) && p.fill && !p.stroke && !isRed(p.fc) && gray(p.fc) < 0.6 && !outlined(p) && (p.y1 - p.y0) < 18 && (p.x1 - p.x0) < 160 && !isCircle(p) && p.path.length > 6);
   const pool = [...new Set([...String(chars || '').normalize('NFKC'), ...COMMON, ...KANA, ...ASCII])].filter((ch) => /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}A-Za-z0-9ー々]/u.test(ch));
   const textRefs = textPaths.length ? await refsFor(pool) : [];
   for (const p of textPaths) {

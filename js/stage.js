@@ -20,6 +20,12 @@ export function circledNumber(no) {
 // 囲み・楕円・四角の塗り
 const AREA_FILLS = { light: '#ececec', white: '#ffffff', gray: '#bfbfbf', dark: '#555555' };
 export const FILLS = { white: '#ffffff', gray: '#c8c8c8', black: '#1a1a1a' };
+// 人の外側の形：ふつうは丸。見分けるために四角（square）や三角（tri）で描くこともある
+export function personOutline(kind, r, attrs) {
+  if (kind === 'square') return h('rect', { x: -r, y: -r, width: 2 * r, height: 2 * r, ...attrs });
+  if (kind === 'tri') { const a = r * 1.75; return h('polygon', { points: `0,${(-a).toFixed(1)} ${(a * 0.92).toFixed(1)},${(a * 0.62).toFixed(1)} ${(-a * 0.92).toFixed(1)},${(a * 0.62).toFixed(1)}`, ...attrs }); }
+  return h('circle', { r, ...attrs });
+}
 export const LAYER = { image: 0, blob: 0, ellipse: 0, rect: 0, line: 1, arrow: 1, person: 2, text: 3 };
 
 export function stageFrame() {
@@ -242,7 +248,7 @@ export function shapeNode(s, { selected = false, interactive = false, idx = null
     }
     const ring = s.ring || !label;
     return h('g', { ...common, 'data-pk': s.cid ? 'c' + s.cid : s.no ? 'n' + s.no : 'i' + s.id, transform: `translate(${s.x},${s.y})` },
-      h('circle', { r, fill: ring || s.fill && s.fill !== 'white' ? fill : 'transparent', stroke: ring ? INK : 'none', 'stroke-width': 2.4 }),
+      personOutline(s.outline, r, { fill: ring || s.fill && s.fill !== 'white' ? fill : 'transparent', stroke: ring ? INK : 'none', 'stroke-width': 2.4 }),
       // 丸付き数字の内側は塗りつぶして、後ろの線が数字にかからないようにする
       circled ? h('circle', { r: r * 0.64, fill }) : null,
       mark,

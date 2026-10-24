@@ -279,7 +279,8 @@ export async function drawingSvg(id, token) {
   return r.text();
 }
 
-export async function importZukai(w, result, { epId, epTitle, replaceCast, existingEpisodes, tracks, drafts, user, asNewTrack = false, trackName = null, cast = [], vectorize = true, driveToken = null, toTrack = null, toDraftId = null }, onStep) {
+export async function importZukai(w, result, { epId, epTitle, replaceCast, existingEpisodes, tracks, drafts, user, asNewTrack = false, trackName = null, cast = [], vectorize = true, driveToken = null, toTrack = null, toDraftId = null, onProgress = null }, onStep) {
+  // onProgress(文, 済んだ図の数, 図の数)：図を1枚読むごとに呼ぶ（画面に進み具合を出す）
   // toTrack：このトラックに入れる（toDraftId があればその稿に、なければ次の稿として）
   let castList = cast || [];
   if (replaceCast && result.cast) { castList = parseCast(result.cast); await db.update(P.work(w), { cast: castList, updatedAt: now() }); }
@@ -293,6 +294,12 @@ export async function importZukai(w, result, { epId, epTitle, replaceCast, exist
   const epTracks = (tracks || []).filter((t) => t.episodeId === epId);
   let order = epTracks.length;
   const made = [];
+  const isFig = (it) => it.kind === 'figure' && it.fig && (it.fig.drawing || it.fig.render || it.fig.load || it.fig.pdf);
+  const figTotal = result.tracks.reduce((a, T) => a + T.blocks.reduce((b2, b) => b2 + b.items.filter(isFig).length, 0), 0);
+  let figDone = 0;
+  const failed = []; // 読めなかった図（タイミングの文字）
+  const tick = () => { figDone++; if (onProgress) onProgress(`図を読み込んでいます（${figDone}／${figTotal}）`, figDone, figTotal); };
+  if (onProgress) onProgress(figTotal ? `図を読み込んでいます（0／${figTotal}）` : '取り込んでいます…', 0, figTotal);
   for (let ti = 0; ti < result.tracks.length; ti++) {
     const T = result.tracks[ti];
     if (onStep) onStep(ti + 1, result.tracks.length);
@@ -331,7 +338,7 @@ export async function importZukai(w, result, { epId, epTitle, replaceCast, exist
         if (it.kind === 'text') items[iid] = { order: ++k, kind: 'text', text: it.text };
         else if (it.kind === 'figure' && it.fig && it.fig.drawing) {
           // Googleの図形描画：SVG を取り出して、図に直す（だめなら写真）
-          if (!driveToken) continue;
+          if (!driveToken) { failed.push(b.cue || ''); tick(); continue; }
           try {
             const svg = await drawingSvg(it.fig.drawing.id, driveToken);
             let d = null;
@@ -342,13 +349,14 @@ export async function importZukai(w, result, { epId, epTitle, replaceCast, exist
               items[iid] = { order: ++k, kind: 'diagram', refId: gid, caption: '' };
             } else {
               const blob = await svgToPng(svg);
-              if (!blob) continue;
+              if (!blob) { failed.push(b.cue || ''); tick(); continue; }
               const img = await compressImage(blob);
               const imgId = newId();
               ops.push({ op: 'set', path: P.doc(w, 'images', imgId), data: { draftId, ...img, createdAt: now() } });
               items[iid] = { order: ++k, kind: 'image', refId: imgId, caption: '', size: 'l' };
             }
-          } catch (e) { console.warn(e); }
+          } catch (e) { console.warn(e); failed.push(b.cue || ''); }
+          tick();
         }
         else if (it.kind === 'figure' && it.fig && (it.fig.render || it.fig.load || it.fig.pdf)) {
           // 図形描画（PDFの線・文字）→ 図解メーカーの図
@@ -360,19 +368,21 @@ export async function importZukai(w, result, { epId, epTitle, replaceCast, exist
                 const gid = newId();
                 ops.push({ op: 'set', path: P.doc(w, 'diagrams', gid), data: { draftId, shapes: d.shapes, roleVis: d.roleVis, createdAt: now() } });
                 items[iid] = { order: ++k, kind: 'diagram', refId: gid, caption: '' };
+                tick();
                 continue;
               }
             } catch (e) { console.warn('図に直せませんでした', e); }
           }
-          if (!it.fig.render && !it.fig.load) continue;
+          if (!it.fig.render && !it.fig.load) { failed.push(b.cue || ''); tick(); continue; }
           try {
             const blob = await (it.fig.render || it.fig.load)();
-            if (!blob) continue;
+            if (!blob) { failed.push(b.cue || ''); tick(); continue; }
             const img = await compressImage(blob);
             const imgId = newId();
             ops.push({ op: 'set', path: P.doc(w, 'images', imgId), data: { draftId, ...img, createdAt: now() } });
             items[iid] = { order: ++k, kind: 'image', refId: imgId, caption: '', size: 'l' };
-          } catch (e) { /* 読めない画像は飛ばす */ }
+          } catch (e) { failed.push(b.cue || ''); }
+          tick();
         }
       }
       if (!k) items[newId(8)] = { order: 1, kind: 'text', text: '● ' };
@@ -381,5 +391,5 @@ export async function importZukai(w, result, { epId, epTitle, replaceCast, exist
     await db.batch(ops);
     made.push({ trackId, draftId, title, no });
   }
-  return { epId, made };
+  return { epId, made, failed, figTotal };
 }
