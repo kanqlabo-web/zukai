@@ -295,16 +295,19 @@ async function importDocIntoTrack(w, d, html) {
   const empty = !String(draft.script || '').trim() && !(S.d.blocks || []).some((b) => b.draftId === d);
   const nextNo = Math.max(0, ...drafts.filter((x) => x.trackId === track.id).map((x) => x.no || 0)) + 1;
   const list = result.tracks.map((T, i) => { const figs = T.blocks.reduce((a, b) => a + b.items.filter((it) => it.kind === 'figure').length, 0); return [String(i), `${T.track || 'トラック'}（第${T.draftNo}稿・タイミング${T.blocks.filter((b) => b.cue).length}個${figs ? `・図${figs}枚` : ''}）`]; });
-  const r = await ask({
-    title: `「${track.title}」に取り込む`, ok: '取り込む',
-    message: result.tracks.length === 1 ? `見つかったトラック：${list[0][1]}` : `トラックが${result.tracks.length}個見つかりました。このトラックに入れるものを選んでください。`,
-    detail: 'テーマ活動の友・タイミング・メモ・図を、このトラックに取り込みます。取り込んだあとで、タイミングの位置や改行を確かめてください。',
-    fields: [
-      result.tracks.length > 1 ? { key: 'ti', label: '取り込むトラック', type: 'select', value: '0', options: list } : null,
-      { key: 'into', label: '入れる先', type: 'select', value: empty ? 'this' : 'next', options: [...(empty ? [['this', `この稿（${draftName(draft)}）に入れる`]] : []), ['next', `新しい稿（第${nextNo}稿）にする`]] },
-      { key: 'vec', label: '図形描画の図', type: 'select', value: 'diagram', options: [['diagram', '図解メーカーの図に直す（人や形を動かせる）'], ['photo', '写真のまま入れる']] },
-    ].filter(Boolean),
-  });
+  // 白紙の稿で、トラックが1つだけなら、聞かずにこの稿に取り込む
+  let r = { into: empty ? 'this' : 'next' };
+  if (!empty || result.tracks.length > 1) {
+    r = await ask({
+      title: `「${track.title}」に取り込む`, ok: '取り込む',
+      message: result.tracks.length === 1 ? `見つかったトラック：${list[0][1]}` : `トラックが${result.tracks.length}個見つかりました。このトラックに入れるものを選んでください。`,
+      detail: (empty ? `この稿（${draftName(draft)}）に取り込みます。` : `この稿には中身があるので、新しい稿（第${nextNo}稿）として取り込みます。`) + '取り込んだあとで、タイミングの位置や改行を確かめてください。',
+      fields: [
+        result.tracks.length > 1 ? { key: 'ti', label: '取り込むトラック', type: 'select', value: '0', options: list } : null,
+      ].filter(Boolean),
+    });
+    if (r) r.into = empty ? 'this' : 'next';
+  }
   if (!r) return;
   const T = result.tracks[+(r.ti || 0)] || result.tracks[0];
   const setMsg = (m) => { S.ui.importing = m; rerender(); };
@@ -316,7 +319,7 @@ async function importDocIntoTrack(w, d, html) {
     setMsg('取り込んでいます…');
     const out = await importZukai(w, { ...result, tracks: [T] }, {
       epId: track.episodeId, toTrack: track, toDraftId: r.into === 'this' ? d : null,
-      existingEpisodes: S.d.episodes || [], tracks: S.d.tracks || [], drafts, user: S.user, cast: work.cast || [], vectorize: r.vec !== 'photo', driveToken,
+      existingEpisodes: S.d.episodes || [], tracks: S.d.tracks || [], drafts, user: S.user, cast: work.cast || [], vectorize: true, driveToken,
     });
     setMsg('');
     toast(`「${track.title}」に取り込みました`, 'info', 5000);
@@ -339,11 +342,10 @@ async function finishImport(w, work, eps, result, src, note = '') {
   const r = await ask({
     title: src === 'PDF' ? '図解PDFを取り込む' : 'Googleドキュメントから取り込む', ok: '取り込む',
     message: `見つかったトラック：${list}`,
-    detail: (note ? note + '\n' : '') + 'テーマ活動の友・タイミング・メモを、トラックごとに取り込みます。既にある話を選ぶと、その話にトラックが追加されます。図は写真として入るので、必要なら図を描き直してください。取り込んだあとで、タイミングの位置や改行を確かめてください。',
+    detail: (note ? note + '\n' : '') + 'テーマ活動の友・タイミング・メモを、トラックごとに取り込みます。既にある話を選ぶと、その話にトラックが追加されます。図形描画の図は、動かせる図に直して取り込みます。取り込んだあとで、タイミングの位置や改行を確かめてください。',
     fields: [
       { key: 'ep', label: '取り込む先の話', type: 'select', value: same ? same.id : 'new', options: [...eps.map((e) => [e.id, e.title]), ['new', `新しい話「${epGuess || '取り込んだ話'}」を作る`]] },
       result.tracks.length === 1 ? { key: 'tname', label: 'トラックの名前', value: trackTitleOf(result.tracks[0].track) || 'トラック1', hint: '取り込む先の話に同じ名前のトラックがあるときは、下の「同じ名前のトラックがあるとき」に従います。' } : null,
-      { key: 'vec', label: '図形描画の図', type: 'select', value: 'diagram', options: [['diagram', '図解メーカーの図に直す（人や形を動かせる）'], ['photo', '写真のまま入れる']] },
       { key: 'mode', label: '同じ名前のトラックがあるとき', type: 'select', value: 'new', options: [['new', '新しいトラックとして追加する'], ['next', 'そのトラックの次の稿にする']] },
       castN ? { key: 'cast', label: `メンバー一覧（${src}には${castN}人）`, type: 'select', value: named ? 'keep' : 'replace', options: [['keep', '今の一覧のままにする'], ['replace', `${src}の一覧で置き換える`]] } : null,
     ].filter(Boolean),
@@ -360,7 +362,7 @@ async function finishImport(w, work, eps, result, src, note = '') {
     const out = await importZukai(w, result, {
       epId: r.ep === 'new' ? null : r.ep, epTitle: epGuess, replaceCast: r.cast === 'replace',
       asNewTrack: r.mode !== 'next', trackName: result.tracks.length === 1 ? r.tname : null,
-      existingEpisodes: eps, tracks: S.d.tracks || [], drafts: S.d.drafts || [], user: S.user, cast: work.cast || [], vectorize: r.vec !== 'photo', driveToken,
+      existingEpisodes: eps, tracks: S.d.tracks || [], drafts: S.d.drafts || [], user: S.user, cast: work.cast || [], vectorize: true, driveToken,
     }, (d, t) => setMsg(`取り込んでいます…（${d}／${t}トラック）`));
     setMsg('');
     toast(`${out.made.length}トラックを取り込みました`, 'info', 5000);
