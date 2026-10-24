@@ -352,9 +352,6 @@ export function prepareInk(src) {
 // level：まわりよりどれだけ暗ければ線とみなすか（小さいほど薄い線も拾う）。黒い線だけの透明な PNG を返す
 export function inkDataUrl(ink, level) {
   const { w, h, diff } = ink;
-  const m = new Uint8Array(w * h);
-  for (let i = 0; i < w * h; i++) m[i] = diff[i] > level ? 1 : 0;
-  const gone = frameLines(m, w, h);
   const make = (k) => {
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
@@ -362,7 +359,7 @@ export function inkDataUrl(ink, level) {
     const out = ctx.createImageData(w, h);
     const d = out.data;
     for (let i = 0; i < w * h; i++) {
-      const a = gone[i] ? 0 : Math.max(0, Math.min(1, (diff[i] - level) / 12));
+      const a = Math.max(0, Math.min(1, (diff[i] - level) / 12));
       d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = 17;
       d[i * 4 + 3] = Math.round(a * 255);
     }
@@ -377,72 +374,6 @@ export function inkDataUrl(ink, level) {
   let k = 1, url = make(k);
   while (url.length > 450000 && k > 0.4) { k -= 0.2; url = make(k); }
   return url;
-}
-
-// 舞台の枠の線（外枠・袖の線・袖の四角・真ん中の十字）を見つけて、消す画素を返す
-// 図解メーカーの図にも同じ枠と十字があるので、取り込んだ線では二重にならないように消す。
-// 下絵は写真の枠の四隅を図の四隅に合わせてあるので、線はだいたい決まった場所にある。
-// その近くで、まっすぐ長く続く線（点線も）を探し、短い区間ごとに位置と太さを合わせて消す。
-// 線をまたいでいる文字や矢印（線の外まで続いている所）は残す。m：線の画素（1）
-export function frameLines(m, w, h) {
-  const band = new Uint8Array(w * h); // 見つけた枠の線の帯
-  const segs = [];
-  // 横の線は (u=x, v=y)、縦の線は (u=y, v=x) として同じように扱う
-  const idx = (hor, u, v) => (hor ? (u < 0 || u >= w || v < 0 || v >= h ? -1 : v * w + u) : (u < 0 || u >= h || v < 0 || v >= w ? -1 : u * w + v));
-  const at = (hor, u, v) => { const i = idx(hor, u, v); return i < 0 ? 0 : m[i]; };
-  const line = (hor, vmin, vmax, a, b, minCov) => {
-    const V = hor ? h : w, U = hor ? w : h;
-    vmin = Math.max(0, Math.round(vmin)); vmax = Math.min(V - 1, Math.round(vmax));
-    a = Math.max(0, Math.round(a)); b = Math.min(U - 1, Math.round(b));
-    if (b - a < 10) return;
-    // 区間全体で、いちばん線が通っている位置（少し斜めでも拾えるよう上下1画素も見る）
-    let best = -1, bestN = 0;
-    for (let v = vmin; v <= vmax; v++) {
-      let n = 0;
-      for (let u = a; u <= b; u++) if (at(hor, u, v) || at(hor, u, v - 1) || at(hor, u, v + 1)) n++;
-      if (n > bestN) { bestN = n; best = v; }
-    }
-    if (best < 0 || bestN < (b - a + 1) * minCov) return;
-    // 短い区間ごとに、位置と太さを合わせる（手書きで少し曲がっていてもよいように）
-    const SEG = Math.max(20, Math.round(U / 25)), R = Math.max(4, Math.round(V / 60));
-    for (let s0 = a; s0 <= b; s0 += SEG) {
-      const s1 = Math.min(b, s0 + SEG - 1), L = s1 - s0 + 1;
-      const cov = (v) => { let n = 0; for (let u = s0; u <= s1; u++) n += at(hor, u, v); return n / L; };
-      let v0 = -1, c0 = 0;
-      for (let v = Math.max(vmin - R, best - R); v <= Math.min(vmax + R, best + R); v++) { const c = cov(v); if (c > c0) { c0 = c; v0 = v; } }
-      if (v0 < 0 || c0 < 0.3) continue;
-      let v1 = v0, v2 = v0;
-      while (v1 - 1 >= 0 && v0 - v1 < R && cov(v1 - 1) >= c0 * 0.4) v1--;
-      while (v2 + 1 < V && v2 - v0 < R && cov(v2 + 1) >= c0 * 0.4) v2++;
-      v1 = Math.max(0, v1 - 1); v2 = Math.min(V - 1, v2 + 1);
-      segs.push({ hor, s0, s1, v1, v2 });
-      for (let u = s0; u <= s1; u++) for (let v = v1; v <= v2; v++) band[idx(hor, u, v)] = 1;
-    }
-  };
-  // 外枠
-  line(true, 0, h * 0.07, 0, w, 0.35); line(true, h * 0.93, h, 0, w, 0.35);
-  line(false, 0, w * 0.05, 0, h, 0.35); line(false, w * 0.95, w, 0, h, 0.35);
-  // 袖の線
-  line(false, w * 0.05, w * 0.17, 0, h, 0.35); line(false, w * 0.83, w * 0.95, 0, h, 0.35);
-  // 真ん中の十字（点線）
-  line(false, w * 0.44, w * 0.56, 0, h, 0.35); line(true, h * 0.42, h * 0.6, w * 0.1, w * 0.9, 0.35);
-  // 下の袖の四角（上の辺と内側の辺）
-  line(true, h * 0.74, h * 0.93, w * 0.08, w * 0.26, 0.5); line(true, h * 0.74, h * 0.93, w * 0.74, w * 0.92, 0.5);
-  line(false, w * 0.12, w * 0.27, h * 0.8, h, 0.5); line(false, w * 0.73, w * 0.88, h * 0.8, h, 0.5);
-
-  // 消す。ほかの枠の線の帯でない線（文字・円・矢印など）が帯のすぐ外にある所は残す
-  const gone = new Uint8Array(w * h);
-  const other = (hor, u, v) => { const i = idx(hor, u, v); return i >= 0 && m[i] && !band[i]; };
-  for (const { hor, s0, s1, v1, v2 } of segs) {
-    for (let u = s0; u <= s1; u++) {
-      // 帯のすぐ外（近くの列も）に文字などがある所は、文字を欠けさせないよう線を残す
-      let keep = false;
-      for (let du = -3; du <= 3 && !keep; du++) for (let k = 2; k <= 6; k++) if (other(hor, u + du, v1 - k) || other(hor, u + du, v2 + k)) { keep = true; break; }
-      if (keep) continue;
-      for (let v = v1; v <= v2; v++) { const i = idx(hor, u, v); if (i >= 0) gone[i] = 1; }
-    }
-  }
-  return gone;
 }
 
 // 四隅をあとで合わせ直せるよう、元の写真を保存できる大きさにする（1つの文書に入るように縮める）。k：元の写真からの倍率
