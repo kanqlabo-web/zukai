@@ -180,12 +180,14 @@ export function analyzeDocHtml(html) {
     if (Math.max(...rows.map((r) => r.length)) !== 2) continue;
     const T = cur || newTrack('');
     // 右の列の幅（写真の大きさを、この幅に対する割合で再現するため）
+    // 図解の欄（右のマス）は、最初の列より右の全部（2列をまとめたマスのこともある）
     const cols = [...it.el.querySelectorAll(':scope > colgroup > col')].map((c) => parseFloat(c.getAttribute('width')) || 0);
-    const colW = cols.length >= 2 ? cols[cols.length - 1] : 0;
+    const colW = cols.length >= 2 ? cols.slice(1).reduce((a, v) => a + v, 0) : 0;
+    const colPt = +it.el.getAttribute('data-colpt') || 0;
     for (const r of rows) {
       if (r.length < 2) continue;
       const right = flatten(r[r.length - 1]);
-      if (colW) for (const x of right) if (x.type === 'img') x.colW = colW;
+      for (const x of right) if (x.type === 'img') { if (colW) x.colW = colW; if (colPt) x.colPt = colPt; }
       T.rows.push({ left: flatten(r[0]), right });
     }
   }
@@ -215,7 +217,10 @@ function buildTrack(t) {
         if (!blk) start('');
         flush();
         const f = figureOf(it.el);
-        if (f && it.colW && f.w && !f.drawing) f.pct = Math.round(Math.max(10, Math.min(100, (f.w / it.colW) * 100)));
+        // 写真の大きさ：ドキュメントでの幅 ÷ 右のマスの幅（コピーの書式の pt があればそれ、なければ HTML の px）
+        const wpt = +it.el.getAttribute('data-wpt') || 0;
+        const ratio = wpt && it.colPt ? wpt / it.colPt : f && f.w && it.colW ? f.w / it.colW : 0;
+        if (f && ratio && !f.drawing) f.pct = Math.round(Math.max(10, Math.min(100, ratio * 100)));
         if (f) blk.parts.push({ kind: 'figure', fig: f, beside: !!it.beside });
         continue;
       }
@@ -284,8 +289,15 @@ export function sliceToHtml(sliceText, html) {
     if (!e) return '';
     if (e.d_id) return `<img data-drawing="${esc(e.d_id)}" data-w="${e.i_wth || 0}" data-h="${e.i_ht || 0}">`;
     const ph = photos[photoIdx++];
-    return ph || '';
+    // ドキュメントでの写真の幅（pt）。右の列の幅（pt）と比べて、写真の大きさにする
+    return ph && e.i_wth ? ph.replace(/^<img\b/i, `<img data-wpt="${e.i_wth}"`) : ph || '';
   };
+  // 表の列の幅（pt）：表の始まりの位置の表の書式、なければ全体を囲む表（コピーした所を含む表）の書式
+  const tblSt = (R.dsl_styleslices || []).find((x) => x && x.stsl_type === 'tbl');
+  const colsOf = (st) => { const v = st && st.tbls_cols && st.tbls_cols.cv && st.tbls_cols.cv.opValue; return Array.isArray(v) ? v.map((c) => +(c && c.col_wv) || 0) : []; };
+  // 図解の欄（右のマス）は、最初の列（テマ友）より右の全部（2列をまとめたマスのこともある）
+  const rightPt = (cols) => (cols.length >= 2 && cols.every((v) => v > 0) ? cols.slice(1).reduce((a, v) => a + v, 0) - 10 : 0); // マスの左右の余白（5pt ずつ）を引く
+  const tblAt = (i) => rightPt(colsOf(tblSt && tblSt.stsl_styles && tblSt.stsl_styles[i])) || rightPt(colsOf(tblSt && tblSt.stsl_trailing));
   // 表の列の幅（クリップボードの HTML の表に、同じ順で入っている）
   const colgroups = html ? [...html.matchAll(/<colgroup\b[^>]*>[\s\S]*?<\/colgroup>/gi)].map((m) => m[0]) : [];
   let tableIdx = 0;
@@ -297,7 +309,7 @@ export function sliceToHtml(sliceText, html) {
   for (let i = 0; i < sp.length; i++) {
     const ch = sp[i];
     if (posAt[i]) for (const k of posAt[i]) after.push(`<p>${objHtml(k)}</p>`);
-    if (ch === '\x10') { out += '<table>' + (colgroups[tableIdx++] || '') + '<tbody>'; cellOpen.push(false); rowOpen.push(false); continue; }
+    if (ch === '\x10') { const pt = tblAt(i); out += '<table' + (pt ? ` data-colpt="${pt}"` : '') + '>' + (colgroups[tableIdx++] || '') + '<tbody>'; cellOpen.push(false); rowOpen.push(false); continue; }
     if (ch === '\x12') { const d = rowOpen.length - 1; if (cellOpen[d]) out += '</td>'; if (rowOpen[d]) out += '</tr>'; out += '<tr>'; rowOpen[d] = true; cellOpen[d] = false; continue; }
     if (ch === '\x1c') { const d = cellOpen.length - 1; if (cellOpen[d]) out += '</td>'; out += '<td>'; cellOpen[d] = true; continue; }
     if (ch === '\x11') { const d = cellOpen.length - 1; if (para) flush(); if (cellOpen[d]) out += '</td>'; if (rowOpen[d]) out += '</tr>'; out += '</tbody></table>'; cellOpen.pop(); rowOpen.pop(); continue; }
