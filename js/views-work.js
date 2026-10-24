@@ -249,7 +249,9 @@ async function probeDrawings(out) {
       if (e && e.d_id) res.drawings.push({ key: k, id: e.d_id, rev: e.d_revision, tok: toks[k] || '', w: e.i_wth, h: e.i_ht });
     }
   }
-  if (!res.drawings.length) { saveJson({ ...res, raw: out }, 'clipboard.json'); toast('コピーした内容を clipboard.json に保存しました', 'info', 8000); return; }
+  // コピーした内容はいつでも保存する（取り込みの不具合を調べるため）。図形描画があれば、続けて中身も取り出してみる
+  saveJson({ ...res, raw: out }, 'clipboard.json'); toast('コピーした内容を clipboard.json に保存しました', 'info', 8000);
+  if (!res.drawings.length) return;
   toast('Googleドライブの許可を求めます（調査用）', 'info', 5000);
   let token = '';
   try { token = await auth.driveToken(true); } catch (e) { res.tokenError = String(e.message || e); }

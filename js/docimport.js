@@ -12,6 +12,8 @@ function clean(s) {
   return String(s || '')
     .replace(/[⺀-⿟]/g, (c) => c.normalize('NFKC'))
     .replace(/[⚫⬤]/g, '●')
+    // Googleドキュメントの段落内改行（Shift+Enter）は、コピーすると \v（縦タブ）になる。ふつうの改行にする
+    .replace(/[\u000b\u2028\u2029]/g, '\n')
     .replace(/[    ]/g, ' ')
     .replace(/[​﻿]/g, '');
 }
