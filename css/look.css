@@ -222,7 +222,7 @@ body.cmt-open .draft-page { margin-right: 340px; }
 .cmt-float:hover { background: var(--accent-soft); color: var(--accent); }
 .cmt-float[hidden] { display: none; }
 /* 広い画面：コメントを本文の右に、付けた所の高さで並べる */
-.cmt-side-col { position: absolute; right: 16px; width: 310px; z-index: 30; }
+.cmt-side-col { position: absolute; right: 16px; width: 310px; z-index: 15; } /* 上のバー（20）・ツールバー（19）より下に */
 .cmt-side-col > .cmt-head { position: absolute; top: 0; left: 0; right: 0; border: 1px solid var(--line); border-radius: 10px; }
 .cmt-side-col > .cmt-card, .cmt-side-col > .cmt-empty { position: absolute; left: 0; right: 0; transition: top .15s ease, transform .15s ease; }
 .cmt-side-col > .cmt-card.on { transform: translateX(-12px); z-index: 2; }
