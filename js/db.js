@@ -44,6 +44,7 @@ export const db = {
   getQuiet: (path) => impl.get(path).catch(() => null),
   setQuiet: (path, data) => impl.set(path, clean(data)),
   updateQuiet: (path, patch) => impl.update(path, clean(patch)),
+  removeQuiet: (path) => impl.remove(path),
   // 同時に開いている人の表示用（Realtime Database。使えないときは available() が false）
   room: {
     available: () => !!(impl.hasRoom && impl.hasRoom()),

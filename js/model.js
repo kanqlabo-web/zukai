@@ -129,12 +129,14 @@ export async function copyDraft(w, draftId, user, opts = {}) {
 }
 
 export async function deleteDraft(w, draftId) {
-  const [blocks, diagrams, images] = await Promise.all([
+  const [blocks, diagrams, images, comments] = await Promise.all([
     db.list(P.col(w, 'blocks'), ['draftId', draftId]),
     db.list(P.col(w, 'diagrams'), ['draftId', draftId]),
     db.list(P.col(w, 'images'), ['draftId', draftId]),
+    db.list(P.col(w, 'comments'), ['draftId', draftId]).catch(() => []),
   ]);
   const ops = [];
+  for (const c of comments) ops.push({ op: 'remove', path: P.doc(w, 'comments', c.id) });
   for (const b of blocks) ops.push({ op: 'remove', path: P.doc(w, 'blocks', b.id) });
   for (const g of diagrams) ops.push({ op: 'remove', path: P.doc(w, 'diagrams', g.id) });
   for (const im of images) ops.push({ op: 'remove', path: P.doc(w, 'images', im.id) });
@@ -167,7 +169,7 @@ export async function exportWork(w) {
 
 export async function deleteWork(w) {
   const ops = [];
-  for (const c of ['episodes', 'tracks', 'drafts', 'blocks', 'diagrams', 'images']) {
+  for (const c of ['episodes', 'tracks', 'drafts', 'blocks', 'diagrams', 'images', 'comments']) {
     const items = await db.list(P.col(w, c));
     for (const it of items) ops.push({ op: 'remove', path: P.doc(w, c, it.id) });
   }

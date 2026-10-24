@@ -19,6 +19,7 @@ import { resolveAnchor } from './script.js';
 import { others, NameTags, ringStyle } from './presence.js';
 import { RichEdit, runSpan, shiftMarks, lastRichEditor, applyToSelection, TEXT_COLORS, BG_COLORS, readEditor, selectionIn, setSelectionIn, attrsOf, marksOf, runsOf, markStyle } from './richtext.js';
 import { blockUpdates, showUpdates, DIAGRAM_FIXED } from './update.js';
+import { CommentsButton, BlockCommentChip, startComment, commentOnBlock, toggleComments, commentsOpen } from './comments.js';
 
 const byOrder = (a, b) => (a.order || 0) - (b.order || 0);
 export const itemsOf = (b) => Object.entries(b.items || {}).map(([id, it]) => ({ id, ...it })).sort(byOrder);
@@ -119,7 +120,9 @@ function FormatBar(w, d, rows) {
     ['●', '☆', '＊', '→'].map((m) => h('button', { class: 'fmt-btn', title: `カーソルのある行の頭に「${m}」`, onpointerdown: keep, onclick: (e) => mark(m, e) }, m)),
     h('span', { class: 'fmt-sep' }),
     h('span', { class: 'fmt-label' }, '足す'),
-    INSERT_KINDS.map(([k, ic, label]) => h('button', { class: 'fmt-btn fmt-ins', title: `カーソルの位置に${label === '直前の図を複製' ? '直前の図の複製' : label}を入れる`, onpointerdown: keep, onclick: (e) => add(k, e) }, icon(ic, 15), label)));
+    INSERT_KINDS.map(([k, ic, label]) => h('button', { class: 'fmt-btn fmt-ins', title: `カーソルの位置に${label === '直前の図を複製' ? '直前の図の複製' : label}を入れる`, onpointerdown: keep, onclick: (e) => add(k, e) }, icon(ic, 15), label)),
+    h('span', { class: 'fmt-sep' }),
+    h('button', { class: 'fmt-btn fmt-ins', title: `選んだ語句・図解にコメント（${MOD}+Alt+M）`, onpointerdown: keep, onclick: startComment }, icon('comment', 15), 'コメント'));
 }
 
 // テマ友の段（行のまとまり）を、その場で書き換えられる欄にする
@@ -455,6 +458,7 @@ export function SelectionBar() {
     h('div', { class: 'selbar-btns' },
       h('button', { class: 'btn primary', onpointerdown: keep, onclick: () => makeBlock(true) }, sel ? '選んだ語句で図解を追加' : 'この行に図解を追加'),
       reanchorPick() ? h('button', { class: 'btn', onpointerdown: keep, onclick: startRange, title: 'ここを始まりにして、次に終わりのタイミングを選びます' }, 'ここから範囲で追加') : null,
+      h('button', { class: 'btn', onpointerdown: keep, onclick: startComment, title: `${sel ? '選んだ語句' : 'この行'}にコメントします（${MOD}+Alt+M）` }, icon('comment', 16), 'コメント'),
       LineFixButtons(),
       lineSel != null && S.ui.lineRow != null && touchOnly() ? h('button', { class: 'btn', onpointerdown: keep, onclick: startScriptTyping }, '文字を直す') : null,
       h('button', { class: 'btn ghost selbar-close', onpointerdown: keep, onclick: clearSel, 'aria-label': '閉じる', title: '閉じる' }, icon('close', 20))));
@@ -1008,9 +1012,11 @@ function BlockCard(w, d, b, r, rowIndex, indexInRow, rows) {
           class: 'cue-end' + (S.ui.reanchor === b.id && S.ui.reanchorEnd ? ' picking' : ''),
           onclick: () => { if (S.ui.justPicked === b.id) { S.ui.justPicked = null; return; } startReanchor(S.ui.reanchor === b.id && S.ui.reanchorEnd ? null : b.id, true); },
         }, b.cueEnd), h('span', { class: 'cue-br' }, '》')] : null),
+      BlockCommentChip(b.id),
       h('details', { class: 'kebab' },
         h('summary', { title: 'その他の操作' }, icon('more')),
         h('div', { class: 'menu' },
+          h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; commentOnBlock(b.id); } }, 'この図解にコメント'),
           canMerge ? h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; db.update(blockPath(w, b), { newRow: false }); } }, '上の段とまとめる') : null,
           b.newRow === false ? h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; db.update(blockPath(w, b), { newRow: true }); } }, 'この位置で段を分ける') : null,
           h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; startReanchor(b.id); } }, 'タイミング（テマ友での位置）を付け替える'),
@@ -1189,11 +1195,14 @@ function docMenus({ w, d, draft, track, siblings, text, rows, empty, draftPath }
       draft.updMark ? { label: '更新箇所を青字にする', checked: draft.updShow !== false, onclick: () => db.update(draftPath, { updShow: draft.updShow === false }) } : null,
       { label: '使い方を表示', checked: !!document.querySelector('.howto-box[open]'), disabled: empty, onclick: () => { const el = document.querySelector('.howto-box'); if (el) { el.open = !el.open; el.scrollIntoView({ block: 'nearest' }); } } },
       { label: '閲覧モード', disabled: empty, onclick: () => go(`#/w/${w}/show/d/${d}`) },
+      { label: 'コメントを表示', checked: commentsOpen(), onclick: () => toggleComments() },
     ] },
     { label: '挿入', items: [
       ...INSERT_KINDS.map(([k, , label]) => ({ label, disabled: !has, onclick: () => act.add(k, NOEV) })),
       '-',
       ...['●', '☆', '＊', '→'].map((m) => ({ label: `行頭に「${m}」`, disabled: !has, onclick: () => act.mark(m, NOEV) })),
+      '-',
+      { label: 'コメント', kbd: MOD + 'Alt+M', disabled: !has, onclick: startComment },
     ] },
     { label: '表示形式', items: [
       { label: '太字', kbd: MOD + 'B', onclick: () => act.apply('b', 1) },
@@ -1218,7 +1227,7 @@ function showDocShortcuts() {
       ['保存（自動で保存されます）', MOD + 'S'], ['書き出し（印刷）', MOD + 'P'], ['ショートカットの一覧', MOD + '/'],
       ['メニューを開く', 'Alt+F（ファイル）・E（編集）・V（表示）・I（挿入）・O（表示形式）・H（ヘルプ）'],
       ['図・写真を選ぶ', 'クリック（Tab でも移れます）'], ['選んだ図・写真を削除', 'Delete / Backspace'], ['選んだ図を編集', 'Enter / ダブルクリック'],
-      ['選んだ図を複製', MOD + 'D'], ['前・次の項目へ', '↑ / ↓'], ['選んだ項目を上下に動かす', MOD + 'Shift+↑ / ↓'], ['選ぶのをやめる', 'Esc'],
+      ['選んだ図を複製', MOD + 'D'], ['選んだ語句・図解にコメント', MOD + 'Alt+M'], ['前・次の項目へ', '↑ / ↓'], ['選んだ項目を上下に動かす', MOD + 'Shift+↑ / ↓'], ['選ぶのをやめる', 'Esc'],
     ].map(([a, k]) => `${a}　${k}`).join('\n'),
   });
 }
@@ -1256,6 +1265,7 @@ export function DraftView() {
         h('h1', { class: 'sheet-name' }, draftTitle(work, ep, track, draft)),
         MenuBar('doc', docMenus({ w, d, draft, track, siblings, text, rows, empty, draftPath }), rerender)),
       h('div', { class: 'actions' },
+        CommentsButton(),
         DraftPicker({ drafts: siblings, cur: d, edit: true, canNew: !empty, onPick: (id) => go(`#/w/${w}/d/${id}`), onNew: () => newDraftFlow(w, draft, siblings) }),
         h('button', { class: 'btn', onclick: () => { S.ui.scriptEdit = { value: text, base: text }; rerender(); } }, text ? 'テマ友を編集' : 'テマ友を貼り付け'),
         (() => { const o = off(empty, '図を大きく、1枚ずつ見ます（プレゼンテーションのように）'); return h('a', { class: 'btn' + o.class, href: empty ? null : `#/w/${w}/show/d/${d}`, title: o.title, 'aria-disabled': o['aria-disabled'] }, '閲覧モード'); })(),

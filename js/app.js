@@ -13,6 +13,7 @@ import { DialogView, isDialogOpen, closeDialog } from './dialog.js';
 import { saveMyProfile, handleGroupResult } from './access.js';
 import { setPresence, PresenceBar, paintCarets, paintPointers } from './presence.js';
 import { ShowView, afterShow } from './show.js';
+import { CommentsPanel, paintCommentMarks } from './comments.js';
 import { versionLabel, CHANGELOG_URL, watchForUpdate, reloadToLatest } from './version.js';
 
 const $app = document.getElementById('app');
@@ -80,6 +81,7 @@ function onRoute() {
     watch('blocks', (cb) => db.watchList(P.col(w, 'blocks'), ['draftId', d], cb, () => { S.d.work = null; rerender(); }));
     watch('diagrams', (cb) => db.watchList(P.col(w, 'diagrams'), ['draftId', d], cb, () => { S.d.work = null; rerender(); }));
     watch('images', (cb) => db.watchList(P.col(w, 'images'), ['draftId', d], cb, () => { S.d.work = null; rerender(); }));
+    watch('comments', (cb) => db.watchList(P.col(w, 'comments'), ['draftId', d], cb, () => {}));
   }
   if (r.name === 'print' || r.name === 'show') {
     S.d.print = null; S.d.printError = null;
@@ -214,7 +216,7 @@ function PageView() {
   else if (r.name === 'cast') page = CastView();
   else if (r.name === 'people') page = ShareView();
   else if (r.name === 'draft') page = DraftView();
-  return [Header(), page, r.name === 'draft' ? SelectionBar() : null];
+  return [Header(), page, r.name === 'draft' ? SelectionBar() : null, r.name === 'draft' ? CommentsPanel() : null];
 }
 
 function renderPage() {
@@ -223,6 +225,7 @@ function renderPage() {
   render($app, PageView());
   if (S.route.name === 'print' && S.phase === 'ready') { if (S.d.print) requestAnimationFrame(() => layoutPages()); } else clearPages();
   requestAnimationFrame(paintCarets);
+  requestAnimationFrame(paintCommentMarks);
   requestAnimationFrame(paintPointers);
   afterShow(); // 描いた直後に（次のフレームまで待つと、図が一瞬新しい位置に出てしまう）
 }
