@@ -531,6 +531,20 @@ export function layoutLabels(list, idx, roleVis = {}, interactive = false) {
       let best = null, bestScore = Infinity;
       // 手で動かした位置があれば、そこに置く
       const fixed = Array.isArray(s.labelOff);
+      // 円の中に名前を書いた図から取り込んだ人：円の中に入るなら、円の中に書く（横に入らなければ縦に）
+      if (s.labelIn && !fixed && !personNo(s, idx)) {
+        const fs = Math.min(ROLE_FS, r * 0.8), n = [...text].length;
+        const across = textW(text, fs) <= r * 1.7, down = !across && n <= 4 && n * fs * 1.05 <= r * 1.7;
+        if (across || down) {
+          const bw = across ? textW(text, fs) : fs, bh = across ? fs * 1.1 : n * fs * 1.05;
+          const box = [s.x - bw / 2, s.y - bh / 2, s.x + bw / 2, s.y + bh / 2];
+          placed.push(box);
+          const attrs = { key: 'rl' + s.id, 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': fs.toFixed(1), fill: '#111', 'font-family': LABEL_FONT, class: 'role-label', ...dragAttrs(s.id, 'role', box) };
+          out.push(across ? h('text', { ...attrs, x: s.x, y: s.y }, text)
+            : h('text', attrs, [...text].map((ch, i) => h('tspan', { x: s.x, y: (s.y - bh / 2 + fs * 1.05 * (i + 0.5)).toFixed(1) }, ch))));
+          continue;
+        }
+      }
       if (fixed) { const cx = s.x + s.labelOff[0], cy = s.y + s.labelOff[1]; best = [cx - w / 2, cy - hh / 2, cx + w / 2, cy + hh / 2]; bestScore = 0; }
       for (let i = 0; !fixed && i < cands.length; i++) {
         const [x, y] = cands[i];

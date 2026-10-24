@@ -91,15 +91,16 @@ async function toDiagram(list, { cast = [], roleList = [] } = {}) {
     delete o.seq; delete o.nearNo;
     if (s.t === 'person') {
       let c = s.no && byNo[s.no];
-      // 円の中に名前が書いてある人：メンバー一覧の表記・役名・名前と同じ（またはその頭）なら、その人
-      if (!c && s.label) {
+      const same = (v) => v && String(v).replace(/\s/g, '') === String(s.label).replace(/\s/g, '');
+      // 円の中の文字が、役の一覧の役の表記（呼び方）や役名と同じなら、その役として置く（役者が決まっていればその人になる）
+      const role = !c && !s.no && s.label ? roleList.find((r) => same(r.label)) || roleList.find((r) => same(r.name)) : null;
+      // そうでなければ：メンバー一覧の表記・役名・名前と同じ（またはその頭）なら、その人
+      if (!c && !role && s.label) {
         const L = s.label.replace(/\s/g, '');
         c = nums.find((m) => (m.roles || []).some((r) => (r.label || '').replace(/\s/g, '') === L)) ||
           nums.find((m) => [m.name, ...(m.roles || []).map((r) => r.name)].some((v) => v && L.length >= 2 && String(v).replace(/\s/g, '').startsWith(L)));
         if (c) { o.no = undefined; delete o.label; shown.add(c.id); }
       }
-      // メンバーにいなければ、役の一覧の役（役者が未定の役）として置く
-      const role = !c && !s.no && s.label ? roleList.find((r) => [r.label, r.name].some((v) => v && String(v).replace(/\s/g, '') === s.label.replace(/\s/g, ''))) : null;
       if (c) { o.cid = c.id; delete o.no; } else if (role) { o.rid = role.id; delete o.no; delete o.label; } else if (!s.no) delete o.no;
     }
     shapes[id] = o;

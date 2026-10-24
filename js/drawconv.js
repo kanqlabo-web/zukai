@@ -29,9 +29,10 @@ export function subpaths(path, n = 6) {
   const out = [];
   let cur = null;
   for (const c of path) {
-    if (c[0] === 'M') { cur = { pts: [[c[1], c[2]]], closed: false, ops: 'M' }; out.push(cur); }
+    if (c[0] === 'M') { cur = { pts: [[c[1], c[2]]], closed: false, ops: 'M', cmds: [c] }; out.push(cur); continue; }
     else if (!cur) continue;
-    else if (c[0] === 'L') { cur.pts.push([c[1], c[2]]); cur.ops += 'L'; }
+    cur.cmds.push(c);
+    if (c[0] === 'L') { cur.pts.push([c[1], c[2]]); cur.ops += 'L'; }
     else if (c[0] === 'C') { bez(cur.pts[cur.pts.length - 1], [c[1], c[2]], [c[3], c[4]], [c[5], c[6]], n, cur.pts); cur.ops += 'C'; }
     else if (c[0] === 'Z') { cur.closed = true; cur.ops += 'Z'; }
   }
@@ -266,7 +267,10 @@ export async function convertDrawing(page, fig, { chars = '', frame = null, word
   const scale = 980 / (FX[3] - FX[0]);
   const M = (p) => [Math.round(mx(p[0]) * 10) / 10, Math.round(my(p[1]) * 10) / 10];
   const tol = 2;
-  const vis = page.paths.filter((p) => p.x0 >= fig.x0 - tol && p.x1 <= fig.x1 + tol && p.y0 >= fig.y0 - tol && p.y1 <= fig.y1 + tol
+  // 線だけの形は、舞台の外にはみ出していても入れる（はみ出した部分はあとで切る）
+  const inside = (p) => p.x0 >= fig.x0 - tol && p.x1 <= fig.x1 + tol && p.y0 >= fig.y0 - tol && p.y1 <= fig.y1 + tol;
+  const overlaps = (p) => p.stroke && !p.fill && p.x1 > fig.x0 && p.x0 < fig.x1 && p.y1 > fig.y0 && p.y0 < fig.y1;
+  const vis = page.paths.filter((p) => (inside(p) || overlaps(p))
     && ((p.fill && (p.fa ?? 1) > 0.05) || (p.stroke && (p.sa ?? 1) > 0.05))
     && !((p.x1 - p.x0) > W * 0.9 && (p.y1 - p.y0) > H * 0.9));
   const used = new Set();
@@ -347,6 +351,9 @@ export async function convertDrawing(page, fig, { chars = '', frame = null, word
   for (const x of persons) {
     const [px, py] = M(x.c);
     const s = { t: 'person', x: Math.round(px), y: Math.round(py), no: x.no, seq: x.seq };
+    // 大きさ：ふつうの大きさ（半径20）に近ければそのまま。大きく描いた人は大きく
+    const r = (x.d / 2) * scale;
+    if (Math.abs(r - 20) > 3) s.r = Math.round(Math.max(10, Math.min(48, r)));
     personShape.set(x, s);
     if (x.ring) s.ring = true;
     if (x.fill !== 'white') s.fill = x.fill;
@@ -470,7 +477,7 @@ export async function convertDrawing(page, fig, { chars = '', frame = null, word
   }
 
   // 円の中の名前（上から、左から順につなぐ）
-  for (const x of persons) if (x.texts) personShape.get(x).label = x.texts.sort((a, b) => a.y - b.y || a.x - b.x).map((v) => v.t).join('');
+  for (const x of persons) if (x.texts) { const s = personShape.get(x); s.label = x.texts.sort((a, b) => a.y - b.y || a.x - b.x).map((v) => v.t).join(''); s.labelIn = true; }
 
   // そのほかの形
   const rest = vis.filter((p) => !used.has(p));
@@ -483,14 +490,12 @@ export async function convertDrawing(page, fig, { chars = '', frame = null, word
     const twin = fillOnly.find((f) => !used.has(f) && Math.abs(f.x0 - p.x0) < 1.5 && Math.abs(f.x1 - p.x1) < 1.5 && Math.abs(f.y0 - p.y0) < 1.5 && Math.abs(f.y1 - p.y1) < 1.5);
     if (twin) { fc = twin.fc; used.add(twin); }
     used.add(p);
-    const s = shapeOf(p, M, scale, fc, false);
-    if (s) { s.seq = p.seq; shapes.push(s); }
+    for (const s of shapesOf(p, M, scale, fc, false)) { s.seq = p.seq; shapes.push(s); }
   }
   for (const p of fillOnly) {
     if (used.has(p) || bboxArea(p) < 4) continue;
     used.add(p);
-    const s = shapeOf(p, M, scale, p.fc, true);
-    if (s) { s.seq = p.seq; shapes.push(s); }
+    for (const s of shapesOf(p, M, scale, p.fc, true)) { s.seq = p.seq; shapes.push(s); }
   }
   shapes.sort((a, b) => a.seq - b.seq);
   // 人のそばの文字（キャラ名かもしれない）
@@ -503,6 +508,42 @@ export async function convertDrawing(page, fig, { chars = '', frame = null, word
   return shapes;
 }
 
+// 線だけの形で、離れた線が何本も入っているもの（2本線など）は、1本ずつの線にする。舞台の外にはみ出した部分は切る
+const STAGE = [0, 0, 1000, 470];
+function shapesOf(p, M, scale, fc, noline) {
+  const sp = subpaths(p.path, 8);
+  const open = !p.fill && sp.length > 1 && sp.every((x) => !x.closed);
+  const list = open ? sp.map((x) => shapeOf({ ...p, path: x.cmds }, M, scale, fc, noline)) : [shapeOf(p, M, scale, fc, noline)];
+  const out = [];
+  for (const s of list) {
+    if (!s) continue;
+    if (s.t !== 'line') { out.push(s); continue; }
+    for (const pts of clipPoly(s.pts, STAGE)) if (pts.length >= 2) out.push({ ...s, pts });
+  }
+  return out;
+}
+// 折れ線を四角の中だけに切る（はみ出したところで切れて、何本かに分かれることもある）
+function clipPoly(pts, [x0, y0, x1, y1]) {
+  const inR = (q) => q[0] >= x0 && q[0] <= x1 && q[1] >= y0 && q[1] <= y1;
+  if (pts.every(inR)) return [pts];
+  const cut = (a, b) => {
+    // a から b へ進んで、四角の境目を越える点（a が中、b が外）
+    let lo = 0, hi = 1;
+    for (let i = 0; i < 30; i++) { const m = (lo + hi) / 2; if (inR([a[0] + (b[0] - a[0]) * m, a[1] + (b[1] - a[1]) * m])) lo = m; else hi = m; }
+    return [Math.round((a[0] + (b[0] - a[0]) * lo) * 10) / 10, Math.round((a[1] + (b[1] - a[1]) * lo) * 10) / 10];
+  };
+  const out = [];
+  let cur = null;
+  for (let i = 0; i < pts.length; i++) {
+    const q = pts[i], prev = pts[i - 1];
+    if (inR(q)) {
+      if (!cur) { cur = []; if (prev) cur.push(cut(q, prev)); }
+      cur.push(q);
+    } else if (cur) { cur.push(cut(prev, q)); out.push(cur); cur = null; }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
 function shapeOf(p, M, scale, fc, noline) {
   const ops = p.path.map((c) => c[0]).join('');
   const sw = Math.max(1.5, Math.round((p.lw || 0.75) * scale * 10) / 10);

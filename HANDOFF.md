@@ -93,7 +93,7 @@
    - リポジトリが公開なので、サンプル（メンバーの呼び名・テマ友）も見える。気になるなら Private に（その場合 GitHub Pages は有料プランが必要）。
 3. **drive.readonly 権限**：図形描画の取り出しに使っている。利用者が100人を超えるあたりで Google の審査が必要になり、ログイン時に「確認されていないアプリ」と出る。広く公開するなら見直す。
 4. **取り込みのメモ（1.4.0）**：文字とみなすのは濃い塗り（灰色 0.6 未満）で、同じ枠の線がない形だけ（白抜き矢印の誤読対策）。人の塗りは `PERSON_WHITE`（0.88）より明るければ白。人を四角・三角で囲んだ図は、人の `outline: 'square'|'tri'` になる（`stage.js` の `personOutline`）。進み具合は `S.ui.importing`・`S.ui.importProg` を `app.js` の `ImportProgress` が表示。
-5. **文字の読み取りの誤り**：図形描画を図形に直すときの読み取りで、アニ→アユ、玉→王、台→合 などの誤りが残る（`drawconv.js`）。2.5.0 から、図形描画は PDF でも書き出して本当の文字を使う（`pdfimport.js` の `drawingPdf` → `svgToPage` の `page.texts`）。PDF に文字がなければ形の読み取りに戻り、読んだ語はメンバー名・役名に寄せる（`drawconv.js` の `snapWord`、語は `drawimport.js` の `vocabOf`）。Google の PDF に本当に文字が入っているかは実物で未確認。
+5. **文字の読み取りの誤り**：図形描画を図形に直すときの読み取りで、アニ→アユ、玉→王、台→合 などの誤りが残る（`drawconv.js`）。2.5.0 から、図形描画は PDF でも書き出して本当の文字を使う（`pdfimport.js` の `drawingPdf` → `svgToPage` の `page.texts`）。PDF に文字がなければ形の読み取りに戻り、読んだ語はメンバー名・役名に寄せる（`drawconv.js` の `snapWord`、語は `drawimport.js` の `vocabOf`）。Google の PDF に本当に文字が入っているかは実物で未確認。2.7.0：円の中の文字はまず役の一覧（表記→役名の順）と比べて `rid` にする（`drawimport.js` の `toDiagram`）。人の大きさは `s.r` に写し、円の中の名前は `labelIn`（`stage.js` の `layoutLabels` が円の中に描く）。線は `shapesOf` で部分ごとに分け、`clipPoly` で舞台の外を切る（舞台からはみ出した線だけの形も `vis` に入れる）。
 6. **調査用ボタン**：ライブラリーのページの「（調査）クリップボードを保存」（管理者だけ）。不要になったら外す。
 
 ---
