@@ -4,7 +4,10 @@
 //   [3, id, 形, [a,b,c,d,tx,ty], [属性の番号, 値, …], ページ] 図形（形 8 ＝ 楕円）
 //   [2, id, [子のid…], [a,b,c,d,tx,ty], ページ]             グループ（子の行列にかける）
 //   [15, id, null, 位置, 文字]                               図形の中の文字
-// ・属性：15 塗りの色、19 線の色、22 線の太さ（25 EMU 単位）
+//   [17, id, null, 始め, 終わり, [], [4, 文字の色, 6, 文字の大きさ(pt)]] 文字の書式
+// ・形：8 楕円、108 テキストボックス、153 線、4 フリーハンド（属性 12 に点の並び）
+// ・属性：14 塗りのあり（0 ＝なし）、15 塗りの色、19 線の色、22 線の太さ（25 EMU 単位）
+//   12 フリーハンドの線：[[閉じる?, ?, [命令, 数の個数, …], [x, y, …], …]]（命令 0 ＝移動、1 ＝直線）
 // ・座標は 25 EMU 単位。図形のもとの大きさは 120000 四方で、行列で大きさを変える
 import { W, H } from './stage.js';
 
@@ -12,7 +15,8 @@ export const SLIDES_TYPE = 'application/x-vnd.google-docs-drawings-object+wrappe
 const BASE = 120000;
 const SLIDE_W = 365760; // 16:9 のスライドの横幅（25 EMU 単位）
 const PERSON_D = 40; // 図解メーカーの人の直径
-const KIND = { 8: 'ellipse' };
+const KIND = { 8: 'ellipse', 108: 'text', 153: 'line', 4: 'free' };
+const PT = 12700 / 25; // 1pt（25 EMU 単位）
 
 const mulM = (a, b) => [a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1], a[0] * b[2] + a[2] * b[3], a[1] * b[2] + a[3] * b[3], a[0] * b[4] + a[2] * b[5] + a[4], a[1] * b[4] + a[3] * b[5] + a[5]];
 const rgb = (c) => { const m = /^#([0-9a-f]{6})$/i.exec(String(c || '')); if (!m) return null; const n = parseInt(m[1], 16); return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; };
@@ -34,7 +38,7 @@ export function parseSlidesClip(raw) {
     rec = inner && inner.resolved;
   } catch (e) { return null; }
   if (!Array.isArray(rec)) return null;
-  const shapes = new Map(), groups = new Map(), texts = new Map();
+  const shapes = new Map(), groups = new Map(), texts = new Map(), sizes = new Map();
   for (const r of rec) {
     if (!Array.isArray(r)) continue;
     if (r[0] === 3 && Array.isArray(r[3])) {
@@ -46,6 +50,8 @@ export function parseSlidesClip(raw) {
     else if (r[0] === 15 && typeof r[4] === 'string') {
       if (!texts.has(r[1])) texts.set(r[1], []);
       texts.get(r[1]).push([r[3] || 0, r[4]]);
+    } else if (r[0] === 17 && Array.isArray(r[6])) {
+      for (let i = 0; i + 1 < r[6].length; i += 2) if (r[6][i] === 6 && typeof r[6][i + 1] === 'number') sizes.set(r[1], Math.max(sizes.get(r[1]) || 0, r[6][i + 1]));
     }
   }
   // グループの行列を、中の図形にかける（グループの中のグループもある）
@@ -58,11 +64,24 @@ export function parseSlidesClip(raw) {
     const t = (texts.get(s.id) || []).sort((a, b) => a[0] - b[0]).map((v) => v[1]).join('').replace(/\n+$/, '');
     const P = (x, y) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
     const [cx, cy] = P(BASE / 2, BASE / 2);
+    // フリーハンド：点の並び（属性 12）。行列はそのまま点にかける
+    let pts = null, closed = false;
+    if (KIND[s.kind] === 'free' && Array.isArray(s.props[12])) {
+      pts = [];
+      for (const seg of s.props[12]) {
+        if (!Array.isArray(seg) || !Array.isArray(seg[3])) continue;
+        const v = seg[3];
+        for (let i = 0; i + 1 < v.length; i += 2) pts.push(P(v[i], v[i + 1]));
+        if (seg[0] === 1 && s.props[14] !== 0 && s.props[15] != null) closed = true;
+      }
+    }
+    // 線：もとの枠の対角（行列が負なら向きが逆になる）
+    if (KIND[s.kind] === 'line') pts = [P(0, 0), P(BASE, BASE)];
     out.push({
-      kind: s.kind, text: t, cx, cy,
+      kind: s.kind, text: t, cx, cy, pts, closed, pt: sizes.get(s.id) || 0,
       w: BASE * Math.hypot(m[0], m[1]), h: BASE * Math.hypot(m[2], m[3]),
       rot: (Math.atan2(m[1], m[0]) * 180) / Math.PI,
-      fill: s.props[15] != null ? rgb(s.props[15]) : null,
+      fill: s.props[15] != null && s.props[14] !== 0 ? rgb(s.props[15]) : null,
       line: s.props[19] != null ? rgb(s.props[19]) : null,
     });
   }
@@ -79,7 +98,8 @@ export function slidesToShapes(list, at) {
   const isPerson = (s) => isCircle(s) && (s.text.trim() || (pd ? Math.abs((s.w + s.h) / 2 / pd - 1) < 0.35 : false));
   let k = pd ? PERSON_D / pd : (W - 20) / SLIDE_W;
   // 舞台に入りきらないときは縮める
-  const xs = list.flatMap((s) => [s.cx - s.w / 2, s.cx + s.w / 2]), ys = list.flatMap((s) => [s.cy - s.h / 2, s.cy + s.h / 2]);
+  const xs = list.flatMap((s) => (s.pts ? s.pts.map((q) => q[0]) : [s.cx - Math.abs(s.w) / 2, s.cx + Math.abs(s.w) / 2]));
+  const ys = list.flatMap((s) => (s.pts ? s.pts.map((q) => q[1]) : [s.cy - Math.abs(s.h) / 2, s.cy + Math.abs(s.h) / 2]));
   const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
   k = Math.min(k, (W - 40) / Math.max(1, x1 - x0), (H - 40) / Math.max(1, y1 - y0));
   const ox = at[0] - ((x0 + x1) / 2) * k, oy = at[1] - ((y0 + y1) / 2) * k;
@@ -98,11 +118,28 @@ export function slidesToShapes(list, at) {
       out.push(p);
       continue;
     }
+    const kind = KIND[s.kind];
+    if (kind === 'text') {
+      if (t) out.push({ t: 'text', text: t, x: Math.round(X(s.cx)), y: Math.round(Y(s.cy)), size: Math.max(10, Math.round((s.pt || 14) * PT * k)), rot: 0, seq: seq++ });
+      continue;
+    }
+    if (kind === 'line' || kind === 'free') {
+      const pts = [];
+      for (const q of s.pts || []) {
+        const v = [X(q[0]), Y(q[1])];
+        const l = pts[pts.length - 1];
+        if (!l || Math.hypot(l[0] - v[0], l[1] - v[1]) > 3) pts.push(v);
+      }
+      if (pts.length < 2) continue;
+      if (s.closed && pts.length >= 3) out.push({ t: 'blob', sharp: true, pts, ...(s.fill ? { fill: areaFill(s.fill) } : {}), seq: seq++ });
+      else out.push({ t: 'line', pts, ...(kind === 'free' ? { mode: 'smooth' } : {}), seq: seq++ });
+      continue;
+    }
     const base = { seq: seq++ };
     if (s.fill) base.fill = areaFill(s.fill);
     if (!s.line) base.noline = true;
     const rot = Math.round(s.rot * 10) / 10;
-    if (KIND[s.kind] === 'ellipse') out.push({ t: 'ellipse', x: X(s.cx), y: Y(s.cy), rx: Math.round(s.w * k * 5) / 10, ry: Math.round(s.h * k * 5) / 10, rot, ...base });
+    if (kind === 'ellipse') out.push({ t: 'ellipse', x: X(s.cx), y: Y(s.cy), rx: Math.round(s.w * k * 5) / 10, ry: Math.round(s.h * k * 5) / 10, rot, ...base });
     else out.push({ t: 'rect', x: Math.round(X(s.cx)), y: Math.round(Y(s.cy)), w: Math.round(s.w * k), h: Math.round(s.h * k), rot, ...base });
     // 図形の中の文字は、文字として置く（あとで図形の名前にする）
     if (t) out.push({ t: 'text', text: t, x: Math.round(X(s.cx)), y: Math.round(Y(s.cy)), size: 20, rot: 0, seq: seq++ });
