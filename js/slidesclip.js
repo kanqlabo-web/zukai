@@ -5,7 +5,8 @@
 //   [2, id, [子のid…], [a,b,c,d,tx,ty], ページ]             グループ（子の行列にかける）
 //   [15, id, null, 位置, 文字]                               図形の中の文字
 //   [17, id, null, 始め, 終わり, [], [4, 文字の色, 6, 文字の大きさ(pt)]] 文字の書式
-// ・形：8 楕円、108 テキストボックス、153 線、4 フリーハンド（属性 12 に点の並び）
+// ・形：8 楕円、6 四角、108 テキストボックス、153 線、4 フリーハンド（属性 12 に点の並び）、太い矢印は ARROWS
+//   知らない形は、同じ大きさの四角にする
 // ・属性：14 塗りのあり（0 ＝なし）、15 塗りの色、19 線の色、22 線の太さ（25 EMU 単位）
 //   12 フリーハンドの線：[[閉じる?, ?, [命令, 数の個数, …], [x, y, …], …]]（命令 0 ＝移動、1 ＝直線）
 // ・座標は 25 EMU 単位。図形のもとの大きさは 120000 四方で、行列で大きさを変える
@@ -15,7 +16,15 @@ export const SLIDES_TYPE = 'application/x-vnd.google-docs-drawings-object+wrappe
 const BASE = 120000;
 const SLIDE_W = 365760; // 16:9 のスライドの横幅（25 EMU 単位）
 const PERSON_D = 40; // 図解メーカーの人の直径
-const KIND = { 8: 'ellipse', 108: 'text', 153: 'line', 4: 'free' };
+const KIND = { 8: 'ellipse', 6: 'rect', 108: 'text', 153: 'line', 4: 'free', 72: 'arrow', 45: 'arrow', 102: 'arrow', 24: 'arrow' };
+// 太い矢印：もとの枠（0〜1）の中の中心線と、軸の太さ（枠の短い辺に対する割合）
+// 72 右矢印、45 左矢印吹き出し、102 U ターン矢印、24 曲線矢印（くるりと回る）
+const ARROWS = {
+  72: { pts: [[0, 0.5], [1, 0.5]], w: 0.5 },
+  45: { pts: [[1, 0.5], [0, 0.5]], w: 0.3 },
+  102: { pts: [[0.17, 1], [0.17, 0.4], [0.3, 0.12], [0.5, 0.05], [0.7, 0.12], [0.8, 0.4], [0.8, 0.9]], w: 0.25, smooth: true },
+  24: { pts: [[0.95, 0.1], [0.45, 0.08], [0.1, 0.25], [0.08, 0.5], [0.3, 0.75], [0.6, 0.8], [0.95, 0.75]], w: 0.18, smooth: true },
+};
 const PT = 12700 / 25; // 1pt（25 EMU 単位）
 
 const mulM = (a, b) => [a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1], a[0] * b[2] + a[2] * b[3], a[1] * b[2] + a[3] * b[3], a[0] * b[4] + a[2] * b[5] + a[4], a[1] * b[4] + a[3] * b[5] + a[5]];
@@ -77,8 +86,13 @@ export function parseSlidesClip(raw) {
     }
     // 線：もとの枠の対角（行列が負なら向きが逆になる）
     if (KIND[s.kind] === 'line') pts = [P(0, 0), P(BASE, BASE)];
+    const arrow = ARROWS[s.kind];
+    if (arrow) pts = arrow.pts.map(([u, v]) => P(u * BASE, v * BASE));
+    // 線の先：28 始点、29 終点（0 ＝なし）
+    const hs = !!s.props[28], he = !!s.props[29];
     out.push({
-      kind: s.kind, text: t, cx, cy, pts, closed, pt: sizes.get(s.id) || 0,
+      kind: s.kind, text: t, cx, cy, pts, closed, pt: sizes.get(s.id) || 0, arrow,
+      head: hs && he ? 'both' : he ? 'end' : hs ? 'start' : 'none',
       w: BASE * Math.hypot(m[0], m[1]), h: BASE * Math.hypot(m[2], m[3]),
       rot: (Math.atan2(m[1], m[0]) * 180) / Math.PI,
       fill: s.props[15] != null && s.props[14] !== 0 ? rgb(s.props[15]) : null,
@@ -123,6 +137,13 @@ export function slidesToShapes(list, at) {
       if (t) out.push({ t: 'text', text: t, x: Math.round(X(s.cx)), y: Math.round(Y(s.cy)), size: Math.max(10, Math.round((s.pt || 14) * PT * k)), rot: 0, seq: seq++ });
       continue;
     }
+    if (kind === 'arrow' && s.pts) {
+      const w = Math.max(6, Math.round(Math.min(Math.abs(s.w), Math.abs(s.h)) * k * s.arrow.w));
+      const q = s.pts.map((v) => [X(v[0]), Y(v[1])]);
+      if (!s.arrow.smooth) out.push({ t: 'arrow', style: 'block', head: 'end', width: w, x1: q[0][0], y1: q[0][1], x2: q[1][0], y2: q[1][1], seq: seq++ });
+      else out.push({ t: 'line', style: 'block', head: 'end', width: w, mode: 'smooth', pts: q, seq: seq++ });
+      continue;
+    }
     if (kind === 'line' || kind === 'free') {
       const pts = [];
       for (const q of s.pts || []) {
@@ -132,7 +153,8 @@ export function slidesToShapes(list, at) {
       }
       if (pts.length < 2) continue;
       if (s.closed && pts.length >= 3) out.push({ t: 'blob', sharp: true, pts, ...(s.fill ? { fill: areaFill(s.fill) } : {}), seq: seq++ });
-      else out.push({ t: 'line', pts, ...(kind === 'free' ? { mode: 'smooth' } : {}), seq: seq++ });
+      else if (kind === 'line' && s.head !== 'none') out.push({ t: 'arrow', style: 'line', head: s.head === 'start' ? 'end' : s.head, ...(s.head === 'start' ? { x1: pts[1][0], y1: pts[1][1], x2: pts[0][0], y2: pts[0][1] } : { x1: pts[0][0], y1: pts[0][1], x2: pts[pts.length - 1][0], y2: pts[pts.length - 1][1] }), seq: seq++ });
+      else out.push({ t: 'line', pts, ...(kind === 'free' ? { mode: 'smooth' } : {}), ...(s.head !== 'none' ? { head: s.head } : {}), seq: seq++ });
       continue;
     }
     const base = { seq: seq++ };
