@@ -60,6 +60,8 @@ export const db = {
   watchDoc: (path, cb, onErr) => impl.watchDoc(path, cb, onErr || errorHandler),
   watchList: (col, where, cb, onErr) => impl.watchList(col, where, cb, onErr || errorHandler),
   batch: (ops) => track(ops.map((o) => o.path), () => raw.batch(ops)),
+  // 数が多くても、元に戻すの履歴に必ず残す（稿の置き換えなど、消すものがあるとき）
+  batchUndoable: (ops) => track(ops.map((o) => o.path), () => raw.batch(ops), true),
   // 元に戻すの履歴に残さない（サンプル作成など、大量の新しいデータを一度に書くとき）
   batchUntracked: (ops) => raw.batch(ops),
 };
@@ -88,9 +90,9 @@ function closeGroup() {
   notify();
 }
 
-function track(paths, write) {
-  // 一度にたくさん書くとき（取り込み・サンプル作成など）は、控えを取ると時間がかかるので履歴に残さない
-  if (H.paused || paths.length > 40) return write();
+function track(paths, write, force = false) {
+  // 一度にたくさん書くとき（取り込み・サンプル作成など）は、控えを取ると時間がかかるので履歴に残さない（force なら残す）
+  if (H.paused || (!force && paths.length > 40)) return write();
   const w = paths.map(workOf).find(Boolean) || null;
   const run = queue.then(async () => {
     if (H.cur && H.cur.w !== w) closeGroup();

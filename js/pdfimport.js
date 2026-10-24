@@ -279,7 +279,18 @@ export async function drawingSvg(id, token) {
   return r.text();
 }
 
-export async function importZukai(w, result, { epId, epTitle, replaceCast, existingEpisodes, tracks, drafts, user, asNewTrack = false, trackName = null, cast = [], roleList = [], vectorize = true, driveToken = null, toTrack = null, toDraftId = null, appendTo = null, onProgress = null }, onStep) {
+// 図形描画を PDF で取り出す（図の中の文字を、形からではなく本当の文字で読むため）。だめなら null
+export async function drawingPdf(id, token) {
+  try {
+    const r = await fetch(`https://docs.google.com/drawings/d/${encodeURIComponent(id)}/export/pdf`, { headers: { Authorization: 'Bearer ' + token } });
+    if (!r.ok) return null;
+    const pages = await readPdf(new Uint8Array(await r.arrayBuffer()));
+    return pages[0] && pages[0].glyphs.length ? pages[0] : null;
+  } catch (e) { console.warn('図形描画を PDF で取り出せませんでした', e); return null; }
+}
+
+export async function importZukai(w, result, { epId, epTitle, replaceCast, existingEpisodes, tracks, drafts, user, asNewTrack = false, trackName = null, cast = [], roleList = [], vectorize = true, driveToken = null, toTrack = null, toDraftId = null, appendTo = null, replace = false, onProgress = null }, onStep) {
+  // replace：toDraftId の稿の中身（テマ友・タイミング・図・写真）を全部消してから入れる。元に戻す（Ctrl+Z）で戻せるよう、履歴に残す
   // appendTo：toDraftId の稿に中身があるとき、その稿の今の内容（{ script, zukaikko, theme }）。テマ友は後ろに足し、タイミングの位置もずらす
   // onProgress(文, 済んだ図の数, 図の数)：図を1枚読むごとに呼ぶ（画面に進み具合を出す）
   // toTrack：このトラックに入れる（toDraftId があればその稿に、なければ次の稿として）
@@ -335,6 +346,13 @@ export async function importZukai(w, result, { epId, epTitle, replaceCast, exist
       if (appendTo.zukaikko) body.zukaikko = appendTo.zukaikko;
       if (appendTo.theme) body.theme = appendTo.theme;
     }
+    if (track && toDraftId && replace) {
+      const [ob, og, oi] = await Promise.all(['blocks', 'diagrams', 'images'].map((c) => db.list(P.col(w, c), ['draftId', draftId])));
+      for (const x of ob) ops.push({ op: 'remove', path: P.doc(w, 'blocks', x.id) });
+      for (const x of og) ops.push({ op: 'remove', path: P.doc(w, 'diagrams', x.id) });
+      for (const x of oi) ops.push({ op: 'remove', path: P.doc(w, 'images', x.id) });
+      body.scriptMarks = [];
+    }
     if (track && toDraftId) ops.push({ op: 'update', path: P.doc(w, 'drafts', draftId), data: { ...body, updatedAt: now(), updatedBy: user ? user.name : '' } });
     else ops.push({ op: 'set', path: P.doc(w, 'drafts', draftId), data: { ...emptyDraft(trackId, no, user), ...body } });
     const t0 = now();
@@ -351,7 +369,7 @@ export async function importZukai(w, result, { epId, epTitle, replaceCast, exist
           try {
             const svg = await drawingSvg(it.fig.drawing.id, driveToken);
             let d = null;
-            if (vectorize) { try { d = await diagramFromSvg(svg, { cast: castList, roleList, chars }); } catch (e) { console.warn('図に直せませんでした', e); } }
+            if (vectorize) { try { d = await diagramFromSvg(svg, { cast: castList, roleList, chars, pdf: await drawingPdf(it.fig.drawing.id, driveToken) }); } catch (e) { console.warn('図に直せませんでした', e); } }
             if (d) {
               const gid = newId();
               ops.push({ op: 'set', path: P.doc(w, 'diagrams', gid), data: { draftId, shapes: d.shapes, roleVis: d.roleVis, createdAt: now() } });
@@ -397,7 +415,7 @@ export async function importZukai(w, result, { epId, epTitle, replaceCast, exist
       if (!k) items[newId(8)] = { order: 1, kind: 'text', text: '● ' };
       ops.push({ op: 'set', path: P.doc(w, 'blocks', newId()), data: { draftId, cue: b.cue || '', anchor: { offset: (b.offset || 0) + shift, text: b.anchorText || '' }, newRow: true, createdAt: t0 + bi, items } });
     }
-    await db.batch(ops);
+    await (replace && toDraftId ? db.batchUndoable(ops) : db.batch(ops));
     made.push({ trackId, draftId, title, no });
   }
   return { epId, made, failed, figTotal };

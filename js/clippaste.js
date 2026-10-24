@@ -1,7 +1,7 @@
 // 図の編集画面への貼り付け（Googleドキュメント・スライド・ほかのアプリ・画像ファイルから）
 // 返すもの：新しく置く図形の配列（id なし）／ 'internal'（この図解メーカーの中でコピーした図形）／ null（貼れるものがない）
 import { SLICE_TYPE, sliceToHtml, figureOf } from './docimport.js';
-import { drawingSvg } from './pdfimport.js';
+import { drawingSvg, drawingPdf } from './pdfimport.js';
 import { diagramFromSvg, svgToPng, diagramFromShapes } from './drawimport.js';
 import { SLIDES_TYPE, parseSlidesClip, slidesToShapes } from './slidesclip.js';
 import { auth, mode } from './db.js';
@@ -96,7 +96,7 @@ export async function shapesFromClipboard(dt, at, opts = {}) {
           const svg = await drawingSvg(f.drawing.id, token);
           // 舞台の図ならそのまま図形に直す。それ以外（木や石の絵など）は画像として置く
           let d = null;
-          try { d = await diagramFromSvg(svg, { cast: opts.cast || [], roleList: opts.roleList || [], chars: opts.chars || '' }); } catch (e) { /* 舞台の図ではない */ }
+          try { d = await diagramFromSvg(svg, { cast: opts.cast || [], roleList: opts.roleList || [], chars: opts.chars || '', pdf: await drawingPdf(f.drawing.id, token) }); } catch (e) { /* 舞台の図ではない */ }
           if (d && Object.keys(d.shapes || {}).length) { out.push(...Object.values(d.shapes).map(({ id, ...s }) => s)); continue; }
           const png = await svgToPng(svg);
           if (png) out.push(...await blobsToShapes([png], [at[0] + out.length * 24, at[1] + out.length * 24]));

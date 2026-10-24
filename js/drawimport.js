@@ -4,6 +4,15 @@ import { LAYER, insideShape, shapeArea, textBox, isRegion } from './stage.js';
 import { numberCast } from './cast.js';
 import { convertDrawing, frameOf, svgToPage } from './drawconv.js';
 
+// 図の中の文字を読み違えたとき、近い名前に直すための言葉（メンバーの名前・役名・役の表記）
+function vocabOf({ cast = [], roleList = [] } = {}) {
+  const out = new Set();
+  const add = (v) => { const t = String(v || '').replace(/\s/g, ''); if (t.length >= 2) out.add(t); };
+  for (const c of cast) { add(c.name); for (const r of c.roles || []) { add(r.name); add(r.label); } }
+  for (const r of roleList) { add(r.name); add(r.label); }
+  return [...out];
+}
+
 // 舞台の図らしいか（横長の背景画像）
 export function isStageFig(f) {
   if (!f || f.kind !== 'image') return false;
@@ -14,13 +23,14 @@ export function isStageFig(f) {
 // page・fig：readPdf の結果 / cast：メンバー一覧（番号→人）/ chars：文字の候補
 export async function diagramFromPdf(page, fig, opts = {}) {
   const frame = await frameOf(fig);
-  return toDiagram(await convertDrawing(page, fig, { chars: opts.chars || '', frame }), opts);
+  return toDiagram(await convertDrawing(page, fig, { chars: opts.chars || '', frame, words: vocabOf(opts) }), opts);
 }
 // Googleの図形描画の SVG から
+// opts.pdf：同じ図形描画の PDF（readPdf のページ）。あれば図の中の文字をそこから取る
 export async function diagramFromSvg(svg, opts = {}) {
-  const { page, fig } = svgToPage(svg);
+  const { page, fig } = svgToPage(svg, opts.pdf || null);
   const frame = await frameOf(fig);
-  return toDiagram(await convertDrawing(page, fig, { chars: opts.chars || '', frame }), opts);
+  return toDiagram(await convertDrawing(page, fig, { chars: opts.chars || '', frame, words: vocabOf(opts) }), opts);
 }
 // SVG を写真（PNG）にする（「写真のまま入れる」とき・図に直せなかったとき）
 export function svgToPng(svg) {

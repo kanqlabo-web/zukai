@@ -235,7 +235,28 @@ async function numberOf(sp, p) {
 
 // ---------- 本体 ----------
 // page: readPdf の1ページ / fig: 図の範囲（x0,y0,x1,y1 上から下）/ chars: 文字の候補（文字列）
-export async function convertDrawing(page, fig, { chars = '', frame = null } = {}) {
+// 形から読んだ文字が、知っている言葉（名前・役名）と1〜2字だけ違うなら、その言葉に直す（アユ→アニ など）
+export function snapWord(t, words) {
+  const s = String(t || '');
+  if (!words || !words.length || s.length < 2 || s.length > 8 || /\s/.test(s)) return s;
+  let best = null, bd = Infinity, tie = false;
+  for (const w of words) {
+    if (w.length !== s.length) continue;
+    let d = 0;
+    let ok = true;
+    for (let i = 0; i < s.length && d <= bd; i++) {
+      if (w[i] === s[i]) continue;
+      d++;
+      // 英数字の違い（ドA と ドC など）は読み違いではなく別の名前なので、直さない
+      if (/[A-Za-z0-9]/.test(w[i] + s[i])) ok = false;
+    }
+    if (!ok) continue;
+    if (d < bd) { bd = d; best = w; tie = false; } else if (d === bd && w !== best) tie = true;
+  }
+  const limit = s.length <= 3 ? 1 : 2;
+  return best && bd > 0 && bd <= limit && !tie ? best : s;
+}
+export async function convertDrawing(page, fig, { chars = '', frame = null, words = [] } = {}) {
   const fr = frame || FRAME_DEFAULT;
   const W = fig.x1 - fig.x0, H = fig.y1 - fig.y0;
   const FX = fr.fx.map((v) => fig.x0 + v * W), FY = fr.fy.map((v) => fig.y0 + v * H);
@@ -338,9 +359,33 @@ export async function convertDrawing(page, fig, { chars = '', frame = null } = {
   const outlined = (p) => vis.some((q) => q !== p && q.stroke && Math.abs(q.x0 - p.x0) < 1.5 && Math.abs(q.x1 - p.x1) < 1.5 && Math.abs(q.y0 - p.y0) < 1.5 && Math.abs(q.y1 - p.y1) < 1.5);
   const textPaths = vis.filter((p) => !used.has(p) && p.fill && !p.stroke && !isRed(p.fc) && gray(p.fc) < 0.6 && !outlined(p) && (p.y1 - p.y0) < 18 && (p.x1 - p.x0) < 160 && !isCircle(p) && p.path.length > 6);
   const pool = [...new Set([...String(chars || '').normalize('NFKC'), ...COMMON, ...KANA, ...ASCII])].filter((ch) => /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}A-Za-z0-9ー々]/u.test(ch));
-  const textRefs = textPaths.length ? await refsFor(pool) : [];
+  // 図形描画を PDF でも取り出せたときは、PDF の中の本当の文字を使う（形から読むと、アニ→アユのように間違えることがある）
+  const claimed = new Set();
+  const realText = (p) => {
+    const T = page.texts;
+    if (!T || !T.length) return null;
+    const m = 3;
+    const gs = T.filter((g) => !claimed.has(g) && g.x + g.w / 2 >= p.x0 - m && g.x + g.w / 2 <= p.x1 + m && g.y - g.size * 0.35 >= p.y0 - m && g.y - g.size * 0.35 <= p.y1 + m);
+    if (!gs.length) return null;
+    for (const g of gs) claimed.add(g);
+    const lines = [];
+    for (const g of gs.slice().sort((a, b) => a.y - b.y || a.x - b.x)) {
+      const L = lines[lines.length - 1];
+      if (L && Math.abs(g.y - L.y) < g.size * 0.5) L.gs.push(g); else lines.push({ y: g.y, gs: [g] });
+    }
+    const txt = lines.map((L) => {
+      const sorted = L.gs.sort((a, b) => a.x - b.x);
+      let t = '';
+      sorted.forEach((g, i) => { if (i && g.x - (sorted[i - 1].x + sorted[i - 1].w) > g.size * 0.25 && /[A-Za-z0-9]$/.test(t)) t += ' '; t += g.text; });
+      return t.trim();
+    }).filter(Boolean);
+    return txt.length ? { lines: txt, em: Math.max(...gs.map((g) => g.size)) } : null;
+  };
+  const reals = new Map(textPaths.map((p) => [p, realText(p)]));
+  const textRefs = textPaths.some((p) => !reals.get(p)) ? await refsFor(pool) : [];
   for (const p of textPaths) {
     used.add(p);
+    const real = reals.get(p);
     const sp = subpaths(p.path);
     // 行に分ける（縦にはっきり空いているところで分ける。「森」のように上下に分かれた字は分けない）
     const maxH = Math.max(...sp.map((s) => s.y1 - s.y0));
@@ -363,9 +408,9 @@ export async function convertDrawing(page, fig, { chars = '', frame = null } = {
       T2.sp.push(...L0.sp); T2.y0 = Math.min(T2.y0, L0.y0); T2.y1 = Math.max(T2.y1, L0.y1);
       lines.splice(k, 1);
     }
-    let em = 0;
-    const out = [];
-    for (const L of lines) {
+    let em = real ? real.em : 0;
+    const out = real ? real.lines.slice() : [];
+    for (const L of real ? [] : lines) {
       const e = (L.y1 - L.y0) / 0.86;
       em = Math.max(em, e);
       // 文字ごとに分ける：横に重なる部分をまとめ（かたまり）、続くかたまりを1字にするかどうかを、
@@ -414,7 +459,7 @@ export async function convertDrawing(page, fig, { chars = '', frame = null } = {
       let t = parts.join('');
       // 長音：カタカナのあとの「一」は「ー」
       t = t.replace(/([ァ-ヴー])[一⼀－—]/g, '$1ー');
-      out.push(t);
+      out.push(snapWord(t, words));
     }
     // 円の中の文字は、その人の名前（縦書きの名前もあるので、行はつなげる）
     const tc = ctr(p);
@@ -559,7 +604,8 @@ function svgD(d, M) {
   }
   return out;
 }
-export function svgToPage(svg) {
+// pdf：同じ図形描画を PDF で取り出したページ（{ width, height, glyphs }）。あれば、その文字を page.texts にする
+export function svgToPage(svg, pdf = null) {
   const items = []; // { kind:'path'|'image', attrs, m }
   const stack = [[1, 0, 0, 1, 0, 0]];
   const attrsOf = (s) => { const a = {}; const re = /([\w:-]+)="([^"]*)"/g; let x; while ((x = re.exec(s))) a[x[1]] = x[2]; return a; };
@@ -616,5 +662,14 @@ export function svgToPage(svg) {
   const fig = { kind: 'image', x0: 0, y0: 0, x1: (frameBox.x1 - frameBox.x0) * k, y1: (frameBox.y1 - frameBox.y0) * k, seq: -1 };
   if (bg && /^data:/.test(bg.href)) fig.load = async () => (await fetch(bg.href)).blob();
   void T;
-  return { page: { paths, figs: [fig], glyphs: [] }, fig, hasFrame: !!bg };
+  // PDF の文字の位置（PDF のページ ＝ 図形描画の全体 ＝ SVG の viewBox）を、上の paths と同じ座標にする
+  const texts = [];
+  if (pdf && pdf.glyphs && pdf.width && pdf.height) {
+    const kx = vw / pdf.width, ky = vh / pdf.height;
+    for (const g of pdf.glyphs) {
+      if (!g.text || !String(g.text).trim()) continue;
+      texts.push({ text: g.text, x: (vx + g.x * kx - frameBox.x0) * k, y: (vy + g.y * ky - frameBox.y0) * k, w: (g.w || 0) * kx * k, size: (g.size || 10) * ky * k });
+    }
+  }
+  return { page: { paths, figs: [fig], glyphs: [], texts }, fig, hasFrame: !!bg };
 }

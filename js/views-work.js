@@ -316,11 +316,11 @@ async function importDocIntoTrack(w, d, html) {
     r = await ask({
       title: `「${track.title}」に取り込む`, ok: '取り込む',
       message: result.tracks.length === 1 ? `見つかったトラック：${list[0][1]}` : `トラックが${result.tracks.length}個見つかりました。このトラックに入れるものを選んでください。`,
-      detail: (empty ? `この稿（${draftName(draft)}）に取り込みます。` : `この稿にはもう中身があります。「新しい稿に取り込む」は第${nextNo}稿を作って入れ、「この稿に取り込む」は${draftName(draft)}のテマ友の後ろに足します。`) + '取り込んだあとで、タイミングの位置や改行を確かめてください。',
+      detail: (empty ? `この稿（${draftName(draft)}）に取り込みます。` : `この稿にはもう中身があります。「この稿を置き換える」は${draftName(draft)}の中身を全部消してから入れます（あとで元に戻すボタンや Ctrl+Z で戻せます）。「新しい稿に取り込む」は第${nextNo}稿を作って入れます。`) + '取り込んだあとで、タイミングの位置や改行を確かめてください。',
       fields: [
         result.tracks.length > 1 ? { key: 'ti', label: '取り込むトラック', type: 'select', value: '0', options: list } : null,
       ].filter(Boolean),
-      ...(empty ? {} : { choices: [['this', 'この稿に取り込む'], ['next', '新しい稿に取り込む']] }),
+      ...(empty ? {} : { choices: [['next', '新しい稿に取り込む'], ['replace', 'この稿を置き換える']] }),
     });
     if (r) r.into = empty ? 'this' : r.choice;
   }
@@ -330,11 +330,11 @@ async function importDocIntoTrack(w, d, html) {
   try {
     setProgress('取り込んでいます…');
     const out = await importZukai(w, { ...result, tracks: [T] }, {
-      epId: track.episodeId, toTrack: track, toDraftId: r.into === 'this' ? d : null, appendTo: empty ? null : { script: draft.script || '', zukaikko: draft.zukaikko || '', theme: draft.theme || '' },
+      epId: track.episodeId, toTrack: track, toDraftId: r.into === 'this' || r.into === 'replace' ? d : null, replace: r.into === 'replace',
       existingEpisodes: S.d.episodes || [], tracks: S.d.tracks || [], drafts, user: S.user, cast: work.cast || [], roleList: roleListOf(work), vectorize: true, driveToken, onProgress: setProgress,
     });
     setProgress('');
-    reportImport(out, `「${track.title}」に取り込みました`);
+    reportImport(out, r.into === 'replace' ? `${draftName(draft)}を置き換えました（元に戻すボタンや Ctrl+Z で戻せます）` : `「${track.title}」に取り込みました`);
     const made = out.made[0];
     if (made && made.draftId !== d) go(`#/w/${w}/d/${made.draftId}`);
   } catch (e) {
