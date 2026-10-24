@@ -1,5 +1,6 @@
 // 全体の「元に戻す・やり直す」（画面のボタン・Ctrl+Z から使う）
 import { h } from './vdom.js';
+import { icon } from './icons.js';
 import { history } from './db.js';
 import { toast } from './state.js';
 import { confirmBox } from './dialog.js';
@@ -17,7 +18,7 @@ export async function redoAll() {
 
 export function UndoButtons(cls = 'icon-btn') {
   return [
-    h('button', { class: cls, title: '元に戻す（Ctrl+Z）', 'aria-label': '元に戻す', disabled: !history.canUndo(), onclick: undoAll }, '↶'),
-    h('button', { class: cls, title: 'やり直す（Ctrl+Shift+Z）', 'aria-label': 'やり直す', disabled: !history.canRedo(), onclick: redoAll }, '↷'),
+    h('button', { class: cls, title: '元に戻す（Ctrl+Z）', 'aria-label': '元に戻す', disabled: !history.canUndo(), onclick: undoAll }, icon('undo')),
+    h('button', { class: cls, title: 'やり直す（Ctrl+Shift+Z）', 'aria-label': 'やり直す', disabled: !history.canRedo(), onclick: redoAll }, icon('redo')),
   ];
 }

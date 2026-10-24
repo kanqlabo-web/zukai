@@ -199,6 +199,8 @@ export async function createBlock(w, draftId, { cue, offset, anchorText, shapes 
         items: { [itemId]: { order: 1, kind: 'text', text: '● ' }, [diaItem]: { order: 2, kind: 'diagram', refId: gid, caption: '' } },
       },
     },
+    // テマ友がなくても図解がある稿だと分かるように（ライブラリーのページで、空の稿のボタンを押せなくするため）
+    { op: 'update', path: P.doc(w, 'drafts', draftId), data: { figs: true } },
   ]);
   return { id, itemId, diagramId: gid };
 }

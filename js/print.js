@@ -99,8 +99,8 @@ function Sheet(data, t, i) {
     h('div', { class: 'p-box' },
       h('table', { class: 'p-table' },
         h('colgroup', null, h('col', { class: 'c-script' }), h('col', { class: 'c-notes' })),
-        h('tbody', null, text ? rows.map((row) => h('tr', { key: 'r' + row.start, class: 'p-row' },
-          h('td', { class: 'p-script' }, ScriptLines(text, row.lines, hls, { marks: t.draft.scriptMarks || [] })),
+        h('tbody', null, text || t.blocks.length ? rows.map((row) => h('tr', { key: 'r' + row.start, class: 'p-row' },
+          h('td', { class: 'p-script' }, text ? ScriptLines(text, row.lines, hls, { marks: t.draft.scriptMarks || [] }) : '（テマ友なし）'),
           h('td', { class: 'p-notes', 'data-off': row.blocks.length ? row.blocks[0].r.offset : null }, row.blocks.map(({ b }) => NoteBlock(t, b, idx)))))
           : h('tr', { class: 'p-row' }, h('td', { class: 'p-script' }, '（テマ友なし）'), h('td', { class: 'p-notes' }, ''))))));
 }
@@ -287,7 +287,7 @@ function pdfMsg() {
   if (pdf.state === 'making') return `PDFを作っています…（${pdf.done}／${pdf.total}ページ）`;
   if (pdf.state === 'ready') return 'PDFができました。「保存する」を押して、「ファイルに保存」などを選んでください。';
   if (pdf.state === 'busy') return pdf.msg || '書き出しています…';
-  return '「書き出す」を押すと、PDF・Googleドキュメント・Wordから選んで書き出せます。';
+  return '書き出す前の確認です。「書き出す」を押すと、PDF・Googleドキュメント・Wordから選んで書き出せます。';
 }
 function PdfButton() {
   if (pdf.state === 'making' || pdf.state === 'busy') return h('button', { class: 'btn primary', disabled: true }, '作成中…');
@@ -306,6 +306,12 @@ const FORMATS = [
   ['gdoc', 'Googleドキュメント（ドライブに作る）'],
   ['docx', 'Word（.docx）'],
 ];
+// 一覧やトラックのページの「書き出す」から来たときは、すぐに形式を選ぶ画面を出す。やめたら元のページに戻る
+export async function autoExport() {
+  const r = await exportFlow();
+  if (r === 'cancel' && S.route.name === 'print') window.history.back();
+}
+
 async function exportFlow() {
   if (pdf.state === 'making' || pdf.state === 'busy') return;
   const def = (S.d.print && S.d.print.fileName) || '図解';
@@ -320,7 +326,7 @@ async function exportFlow() {
       { key: 'name', label: 'ファイル名', value: def, required: true },
     ],
   });
-  if (!r) return;
+  if (!r) return 'cancel';
   try { localStorage.setItem('zukai.exportAs', r.as); } catch (e) { /* 使えない環境 */ }
   const fileName = String(r.name).replace(/\.(pdf|docx)$/i, '').trim() || def;
   if (r.as === 'pdf' || r.as === 'pdf-drive') return savePdf(fileName, r.as === 'pdf-drive');
@@ -349,6 +355,8 @@ async function saveDoc(fileName, toDrive) {
 
 async function savePdf(fileName, toDrive) {
   if (IN_APP && !toDrive) { cannotPrint(); return; }
+  // ページ分けが終わるまで待つ（ページを開いてすぐ書き出すとき）
+  for (let i = 0; i < 150 && !document.querySelector('#print-pages .pg'); i++) await new Promise((res) => setTimeout(res, 100));
   const pages = [...document.querySelectorAll('#print-pages .pg')];
   if (!pages.length || pdf.state === 'making') return;
   // ドライブ：先に許可と保存先を決めておく（PDFを作ってからだと、許可の画面がブロックされることがある）

@@ -22,7 +22,7 @@
 - 直したら **GitHub の main に push するだけ**。Firebase への deploy はしない。
 - **push のたびにバージョンを上げる**：`js/version.js` の `VERSION`・`DATE` を上げ、`CHANGELOG.md` の先頭に追記する（付け方は CHANGELOG の冒頭）。
 - アプリを開いている人には、画面の下に「新しいバージョンが公開されました」と出る（`version.js` がサーバーの `version.js` と比べる。起動時・画面に戻ったとき・30分ごと）。「読み込み直す」で古い js / css を取り直してから再読み込みするので、Ctrl+Shift+R は要らない。
-- 今のバージョンは、どのページでも左下に出る（アカウントのメニューとログイン画面にも）。ページを開いた直後に古い版だと分かったら、お知らせを出さずに自動で読み込み直す（同じ版へは1回だけ。sessionStorage の `zukai-auto-reload`）。
+- 今のバージョンは、ホームのいちばん下・アカウントのメニュー・ログイン画面に出る（1.7.0 で左下の固定表示はやめた）。ページを開いた直後に古い版だと分かったら、お知らせを出さずに自動で読み込み直す（同じ版へは1回だけ。sessionStorage の `zukai-auto-reload`）。
 
 ### 報告のしかた（ユーザーの希望）
 - です／ます調の丁寧な日本語。最初に一文で結論、そのあと「ラベル：具体的な事実」の箇条書き。
@@ -103,3 +103,27 @@
 - 手元で `python3 -m http.server` で配信し、apiKey を空にしてデモモードで Playwright から確認する。「サンプルを作る」で中身のあるライブラリーができる。
 - `node --check` は `.js` だと構文の誤りを見逃すことがあるので、`.mjs` にコピーしてから確認する。
 - vdom は子の並びが変わると作り直すので、表示しないときも空の枠を置く（例：`NameTags`）。
+
+---
+
+## 6. エラー番号（1.7.0〜）
+
+利用者には「管理者（ADMIN_EMAILS の先頭）に知らせてください（エラー番号 E…）」と出す（`state.js` の `adminMsg`）。
+
+| 番号 | 場所 | 意味 |
+|---|---|---|
+| E101 | `app.js` ログイン | このURLが Firebase Authentication の承認済みドメインにない（unauthorized-domain） |
+| E102 | `app.js` ログイン | そのほかのログインの失敗（後ろに Firebase のエラーコードが付く。詳しくはコンソール） |
+| E201 | `app.js` 起動 | Firebase を読み込めなかった（firebase-config.js・通信） |
+| E301 | `views-home.js` | ライブラリー一覧を読む権限がない（firestore.rules が古い可能性） |
+| E302 | `views-home.js` | ライブラリー一覧を読めなかった（通信など） |
+| E401 | `views-work.js` 共有 | Googleグループで追加しようとしたが、`settings.js` の GROUP_LOOKUP_URL が空 |
+
+## 7. 1.7.0 の画面まわりのメモ
+
+- 稿の `figs: true`：テマ友なしでも図解がある稿の目印（`createBlock` が付ける）。`isEmptyDraft`（`views-draft.js`）で、空の稿のボタンを押せなくする。
+- 図解の段のボタンは `S.ui.activeBlock` の段だけ表示（CSS で隠す。作り直すと入力中の欄が外れるため）。
+- 図の編集を開くと `history.pushState({ zukaiEditor })` で履歴を1つ足し、popstate で閉じる（`editor.js`）。
+- 書き出しへのリンクは `#/w/…/print/…?export`。開いたらすぐ `autoExport`（`print.js`）。キャンセルで `history.back()`。
+- 「使い方」の開閉は localStorage の `zukai.howtoViews`（3回まで開いておく。閉じたら 99）。
+- アイコンは `js/icons.js` の `icon(name)`。

@@ -124,7 +124,7 @@ export function ShowView() {
       h('select', {
         class: 'show-side', title: '説明とテーマ活動の友の位置', value: side,
         onchange: (e) => { V.side = e.target.value === 'auto' ? null : e.target.value; try { localStorage.setItem('zukai.showSide', V.side || ''); } catch (er) { /* noop */ } V.scrolled = -1; rerender(); },
-      }, h('option', { value: 'auto' }, '配置：自動'), h('option', { value: 'right' }, '説明を右に'), h('option', { value: 'bottom' }, '説明を下に')),
+      }, h('option', { value: 'auto' }, '説明の位置：自動'), h('option', { value: 'right' }, '説明の位置：右'), h('option', { value: 'bottom' }, '説明の位置：下')),
       h('button', { class: 'btn', title: '全画面（F）', onclick: toggleFull }, '全画面')),
     h('div', { class: 'show-body' },
       h('div', { class: 'show-fig', onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX - r.left < r.width * 0.35) prev(); else next(); } },

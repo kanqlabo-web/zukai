@@ -40,10 +40,16 @@ export function openEditor(w, id) {
   });
   document.body.classList.add('modal-open');
   window.addEventListener('keydown', onKey);
+  // ブラウザの「戻る」（スマホの戻るジェスチャー）で、ページではなく図の編集だけを閉じるよう、履歴を1つ足す
+  if (!(window.history.state && window.history.state.zukaiEditor)) window.history.pushState({ zukaiEditor: id }, '');
   rerender();
 }
 
-export function closeEditor() {
+export const isEditorOpen = () => !!E;
+
+// noBack：「戻る」やページの移動で閉じるとき（足した履歴はもう戻っている）
+export function closeEditor(noBack) {
+  if (!noBack && window.history.state && window.history.state.zukaiEditor) window.history.back();
   if (E) setPresence(E.w, { g: null, sel: null });
   if (unsub) unsub();
   unsub = null;
@@ -53,6 +59,10 @@ export function closeEditor() {
   window.removeEventListener('keydown', onKey);
   rerender();
 }
+
+window.addEventListener('popstate', () => {
+  if (E && !(window.history.state && window.history.state.zukaiEditor)) closeEditor(true);
+});
 
 let raf = 0;
 function draw() {
@@ -1621,7 +1631,7 @@ export function EditorView() {
   const zi = ZOOMS.indexOf(E.zoom);
   return h('div', { class: 'ed-root', role: 'dialog', 'aria-label': '図の編集' },
     h('header', { class: 'ed-top' },
-      h('button', { class: 'btn primary', onclick: closeEditor }, '完了'),
+      h('button', { class: 'btn primary', onclick: () => closeEditor() }, '完了'),
       h('div', { class: 'ed-title' }, '図の編集'),
       here.length ? h('div', { class: 'pres-tags in-editor', title: 'この図を開いている人' }, here.map((p) => h('span', { key: p.email, class: 'pres-tag', style: { background: colorOf(p.email) } }, p.name))) : null,
       CountChip(shapes, ix),

@@ -47,6 +47,9 @@ function submit(choice) {
 
 export function isDialogOpen() { return !!cur; }
 
+// ページを移ったときは、開いているダイアログを閉じる（キャンセルしたことにする）
+export function closeDialog() { close(null); }
+
 export function DialogView() {
   if (!cur) return [];
   const { opts, values } = cur;

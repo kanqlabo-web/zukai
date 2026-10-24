@@ -1,7 +1,9 @@
 // ライブラリー一覧
 import { h } from './vdom.js';
+import { icon } from './icons.js';
+import { versionLabel, CHANGELOG_URL } from './version.js';
 import { db, mode } from './db.js';
-import { S, rerender, toast, fmtTime, go } from './state.js';
+import { S, rerender, toast, fmtTime, go, adminMsg } from './state.js';
 import { P, createWork, deleteWork, exportWork } from './model.js';
 import { myRole, ROLE_LABEL } from './access.js';
 import { buildSample, buildSampleFrom } from './sample.js';
@@ -49,10 +51,19 @@ async function newWork() {
   go(`#/w/${id}`);
 }
 
+// ライブラリーがあるときは、一覧の右上のボタンから作る
+async function newWorkDialog() {
+  const r = await ask({ title: '新しいライブラリー', ok: '作成', fields: [{ key: 'v', label: 'ライブラリー名', placeholder: '例：ライオンと魔女と大きなたんす', required: true }] });
+  if (!r) return;
+  const id = await createWork(r.v, S.user);
+  go(`#/w/${id}`);
+}
+
 export function HomeView() {
   const works = (S.d.works || []).slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  const hasWorks = works.length > 0;
   return h('main', { class: 'page' },
-    h('section', { class: 'hero' },
+    hasWorks ? null : h('section', { class: 'hero' },
       h('h1', null, '新しいライブラリーを作る'),
       h('form', { class: 'hero-form', onsubmit: (e) => { e.preventDefault(); newWork(); } },
         h('input', {
@@ -67,12 +78,14 @@ export function HomeView() {
     mode === 'local' ? h('div', { class: 'note' },
       h('b', null, 'デモモードで動いています。'),
       ' データはこのブラウザの中だけに保存され、他の人とは共有されません。Firebase を設定すると、ライブラリーを共有してみんなで同時に編集できるようになります。') : null,
-    h('h2', { class: 'section-h' }, 'ライブラリー一覧'),
+    h('div', { class: 'section-head' },
+      h('h2', { class: 'section-h' }, 'ライブラリー一覧'),
+      hasWorks ? h('button', { class: 'btn primary', onclick: newWorkDialog }, icon('plus', 16), '新しいライブラリー') : null),
     S.d.worksError ? h('div', { class: 'warn' },
       h('b', null, 'ライブラリー一覧を読み込めませんでした。'),
       S.d.worksError === 'permission-denied'
-        ? ' Firebase の Firestore の「ルール」が古いままの可能性があります。zip の firestore.rules の内容を、Firebase コンソール →「Firestore Database」→「ルール」にすべて貼り付けて「公開」してください。'
-        : ' 通信状態を確かめて、ページを読み込み直してください。') : null,
+        ? ' ' + adminMsg('読み込む権限がありませんでした', 'E301')
+        : ' 通信状態を確かめて、ページを読み込み直してください（エラー番号 E302）。') : null,
     S.d.works == null ? h('p', { class: 'muted' }, '読み込み中…')
       : works.length === 0 ? h('div', { class: 'empty' }, h('p', null, 'まだライブラリーがありません。'), h('p', { class: 'muted' }, '上の欄にライブラリー名を入れて「作成」を押してください。ほかの人から共有されたライブラリーも、ここに表示されます。'))
         : h('div', { class: 'card-grid' }, works.map((w) => h('div', {
@@ -83,7 +96,7 @@ export function HomeView() {
           h('div', { class: 'work-card-head' },
             h('div', { class: 'work-title' }, w.title || '無題のライブラリー'),
             h('details', { class: 'kebab' },
-              h('summary', { title: 'その他の操作', 'aria-label': 'その他の操作' }, '⋯'),
+              h('summary', { title: 'その他の操作', 'aria-label': 'その他の操作' }, icon('more')),
               h('div', { class: 'menu' },
                 myRole(w) === 'owner' && ADMIN_EMAILS.includes(String((S.user && S.user.email) || '').toLowerCase()) ? h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; exportSample(w.id, w); } }, 'サンプル用に書き出す') : null,
                 myRole(w) === 'owner'
@@ -94,6 +107,11 @@ export function HomeView() {
             (w.participants || []).length > 1 ? h('span', { class: 'muted small' }, `${w.participants.length}人で共有`) : null,
             w.linkRole && w.linkRole !== 'off' ? h('span', { class: 'muted small' }, 'リンク共有') : null),
           h('div', { class: 'muted small' }, `更新 ${fmtTime(w.updatedAt)}`)))),
+    hasWorks ? h('p', { class: 'home-foot muted small' },
+      h('button', { class: 'linklike inline', onclick: createSampleWork, disabled: !!S.ui.makingSample }, S.ui.makingSample ? 'サンプルを作っています…' : 'サンプルを作る'),
+      ' ・ ',
+      h('a', { href: CHANGELOG_URL, target: '_blank', rel: 'noopener', title: '更新履歴を見る' }, versionLabel())) : h('p', { class: 'home-foot muted small' },
+      h('a', { href: CHANGELOG_URL, target: '_blank', rel: 'noopener', title: '更新履歴を見る' }, versionLabel())),
   );
 }
 

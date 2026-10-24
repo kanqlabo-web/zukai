@@ -2,14 +2,14 @@
 import { h, render } from './vdom.js';
 import { db, auth, initDB, mode, onDBError, history } from './db.js';
 import { UndoButtons, undoAll, redoAll } from './undo.js';
-import { S, rerender, setRenderers, toast, go } from './state.js';
+import { S, rerender, setRenderers, toast, go, adminMsg } from './state.js';
 import { HomeView, createSampleWork } from './views-home.js';
 import { WorkView, CastView, ShareView } from './views-work.js';
 import { DraftView, SelectionBar } from './views-draft.js';
-import { EditorView } from './editor.js';
-import { PrintView, loadPrint, layoutPages, clearPages } from './print.js';
+import { EditorView, closeEditor, isEditorOpen } from './editor.js';
+import { PrintView, loadPrint, layoutPages, clearPages, autoExport } from './print.js';
 import { P } from './model.js';
-import { DialogView, isDialogOpen } from './dialog.js';
+import { DialogView, isDialogOpen, closeDialog } from './dialog.js';
 import { saveMyProfile, handleGroupResult } from './access.js';
 import { setPresence, PresenceBar, paintCarets } from './presence.js';
 import { ShowView, afterShow } from './show.js';
@@ -48,6 +48,8 @@ function onRoute() {
   const r = parseRoute();
   const same = JSON.stringify(r) === JSON.stringify(S.route);
   if (same && subs.length) return;
+  // 別のページに移ったら、前のページで開いていたダイアログや図の編集は閉じる
+  if (!same) { closeDialog(); if (isEditorOpen()) closeEditor(true); }
   S.route = r;
   unsubAll();
   S.d = {};
@@ -81,7 +83,10 @@ function onRoute() {
   }
   if (r.name === 'print' || r.name === 'show') {
     S.d.print = null; S.d.printError = null;
-    loadPrint(r.params).then((data) => { S.d.print = data; rerender(); })
+    // 「書き出す」から来たとき（#…?export）は、すぐに書き出しの画面を出す
+    const exp = r.name === 'print' && /\?export\b/.test(location.hash);
+    if (exp) window.history.replaceState(window.history.state, '', location.href.replace(/\?export\b/, ''));
+    loadPrint(r.params).then((data) => { S.d.print = data; rerender(); if (exp) autoExport(); })
       .catch((e) => { S.d.printError = e.message || String(e); rerender(); });
   }
   window.scrollTo(0, 0);
@@ -133,8 +138,11 @@ async function doSignIn() {
   try { await auth.signIn(); } catch (e) {
     const code = e && e.code ? e.code : '';
     if (code.includes('popup-blocked')) toast('ポップアップがブロックされました。ブラウザの設定で許可してください。', 'error', 8000);
-    else if (code.includes('unauthorized-domain')) toast('このURLがFirebaseで許可されていません（README 手順4）。', 'error', 8000);
-    else if (!code.includes('popup-closed') && !code.includes('cancelled')) toast('ログインできませんでした: ' + (e.message || e) + (IN_APP ? '（Safari や Chrome で開くとログインできます）' : ''), 'error', 10000);
+    else if (code.includes('unauthorized-domain')) toast(adminMsg('ログインできませんでした', 'E101'), 'error', 10000);
+    else if (!code.includes('popup-closed') && !code.includes('cancelled')) {
+      console.error(e);
+      toast(IN_APP ? 'ログインできませんでした。Safari や Chrome で開くとログインできます。' : adminMsg('ログインできませんでした', 'E102' + (code ? ' ' + code.replace(/^auth\//, '') : '')), 'error', 10000);
+    }
   }
 }
 
@@ -183,8 +191,8 @@ function Gate(title, body) {
 function PageView() {
   if (S.phase === 'loading') return h('div', { class: 'loading' }, '読み込み中…');
   if (S.phase === 'error') return Gate('うまく起動できませんでした', [
-    h('p', null, S.ui.error),
-    h('p', { class: 'muted' }, 'Firebase の設定（firebase-config.js）と Firestore のルールを確認してください。'),
+    h('p', null, adminMsg('うまく起動できませんでした', S.ui.errorCode || 'E201')),
+    h('p', { class: 'muted small' }, 'ページを読み込み直すと直ることもあります。'),
     h('button', { class: 'btn', onclick: () => auth.signOut() }, 'ログアウト'),
   ]);
   if (S.phase === 'login') return Gate('図解メーカー', [
@@ -241,7 +249,7 @@ function ImportProgress() {
 // 新しい版が公開されたときのお知らせ
 function renderUpdate() {
   const v = S.newVersion;
-  render($update, [VersionLink('corner-version' + (v ? ' is-old' : '')), ImportProgress(), v ? h('div', { class: 'update-bar' },
+  render($update, [ImportProgress(), v ? h('div', { class: 'update-bar' },
     h('span', null, `新しいバージョン ${v} が公開されました。`),
     h('button', { class: 'btn primary', onclick: () => reloadToLatest() }, '読み込み直す'),
     h('button', { class: 'icon-btn', title: 'あとで', 'aria-label': '閉じる', onclick: () => { S.newVersion = null; rerender(); } },
@@ -283,7 +291,8 @@ onDBError((e) => {
     await initDB();
   } catch (e) {
     S.phase = 'error';
-    S.ui.error = 'Firebase を読み込めませんでした: ' + (e.message || e);
+    console.error(e);
+    S.ui.errorCode = 'E201';
     rerender();
     return;
   }

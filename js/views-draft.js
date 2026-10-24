@@ -1,5 +1,6 @@
 // 稿の編集画面：テーマ活動の友＋《タイミング》＋動き・図・写真
 import { h } from './vdom.js';
+import { icon } from './icons.js';
 import { db, DEL, newId } from './db.js';
 import { S, rerender, toast, fmtTime, saveLater, flushAll, compressImage, pickFile, go } from './state.js';
 import { P, draftTitle, draftName, normalizeDraftName, saveScript, createBlock, createDiagram, createImage, copyDraft, deleteDraft, deleteTrack } from './model.js';
@@ -83,8 +84,7 @@ function FormatBar() {
     h('span', { class: 'fmt-sep' }),
     h('span', { class: 'fmt-label' }, '塗り'),
     sw('bg', 'gray', 'あ', BG_COLORS.gray, '灰色で塗る'),
-    h('button', { class: 'fmt-btn', title: '塗りを消す', onpointerdown: keep, onclick: () => apply('bg', null) }, '塗りを消す'),
-    h('span', { class: 'fmt-hint muted small' }, 'テマ友と説明は、その場で書き換えられます。文字をなぞって選んでから色を押してください。'));
+    h('button', { class: 'fmt-btn', title: '塗りを消す', onpointerdown: keep, onclick: () => apply('bg', null) }, '塗りを消す'));
 }
 
 // テマ友の段（行のまとまり）を、その場で書き換えられる欄にする
@@ -238,8 +238,9 @@ async function makeBlock(withCue) {
     else { offset = S.ui.lineSel; anchorText = ''; }
   } else return;
   const prev = lastDiagramBefore(offset);
-  const { itemId } = await createBlock(w, d, { cue, offset, anchorText, shapes: prev ? prev.shapes : {} });
+  const { id, itemId } = await createBlock(w, d, { cue, offset, anchorText, shapes: prev ? prev.shapes : {} });
   S.ui.focusItem = itemId;
+  S.ui.activeBlock = id;
   touch(w, d);
   clearSel();
 }
@@ -494,13 +495,15 @@ function NoteEditor(w, d, b, it) {
   });
 }
 
+const ITEM_NAME = { text: '説明', diagram: '図', image: '写真' };
 function ItemView(w, d, b, it, i, items, rows) {
+  const name = ITEM_NAME[it.kind] || '項目';
   const bar = (extra) => h('div', { class: 'item-tools' },
     extra,
     h('span', { class: 'grow' }),
-    h('button', { class: 'icon-btn', title: '上へ', disabled: i === 0, onclick: () => moveItem(w, b, items, i, -1) }, '↑'),
-    h('button', { class: 'icon-btn', title: '下へ', disabled: i === items.length - 1, onclick: () => moveItem(w, b, items, i, 1) }, '↓'),
-    h('button', { class: 'icon-btn', title: '削除', onclick: () => removeItem(w, d, b, it) }, '×'));
+    h('button', { class: 'icon-btn', title: `この${name}を上へ`, 'aria-label': `この${name}を上へ`, disabled: i === 0, onclick: () => moveItem(w, b, items, i, -1) }, icon('up', 16)),
+    h('button', { class: 'icon-btn', title: `この${name}を下へ`, 'aria-label': `この${name}を下へ`, disabled: i === items.length - 1, onclick: () => moveItem(w, b, items, i, 1) }, icon('down', 16)),
+    h('button', { class: 'btn tiny del-btn', onclick: () => removeItem(w, d, b, it) }, icon('trash', 14), `この${name}を削除`));
 
   if (it.kind === 'text') {
     return h('div', { key: it.id, class: 'item text' },
@@ -562,9 +565,16 @@ function BlockCard(w, d, b, r, rowIndex, indexInRow, rows) {
   const prevDia = previousDiagram(rows, b);
   const canMerge = rowIndex > 0 && indexInRow === 0;
   const { draft } = ctx();
+  const hasScript = !!scriptOf(draft).text;
   b._u = blockUpdates(draft, b, Object.fromEntries((S.d.diagrams || []).map((g) => [g.id, g])));
   const here = others().filter((p) => p.d === d && p.block === b.id && !p.g && !p.caret);
-  return h('div', { key: b.id, class: 'block' + (b.cue ? '' : ' nocue') + (here.length ? ' has-pres' : ''), 'data-pblock': b.id, style: ringStyle(here) },
+  // ボタンは、選んでいる（押した）図解にだけ出す（CSS で隠す。作り直すと入力中の欄が外れるため）
+  const active = S.ui.activeBlock === b.id;
+  const pick = () => { if (S.ui.activeBlock !== b.id) { S.ui.activeBlock = b.id; rerender(); } };
+  return h('div', {
+    key: b.id, class: 'block' + (b.cue ? '' : ' nocue') + (here.length ? ' has-pres' : '') + (active ? ' active' : ''), 'data-pblock': b.id, style: ringStyle(here),
+    onpointerdown: pick, onfocusin: pick,
+  },
     NameTags(here, 'on-block'),
     h('div', { class: 'block-head' },
       // タイミングはテマ友の文章そのもの。押すと、テマ友での位置を選び直せる
@@ -573,11 +583,11 @@ function BlockCard(w, d, b, r, rowIndex, indexInRow, rows) {
         h('button', {
           type: 'button', 'aria-label': 'タイミング（押すとテマ友での位置を付け替えます）', title: '押すと、テマ友での位置を付け替えます',
           class: 'cue-btn' + (b._u && b._u.cue && b.cue ? ' upd' : '') + (S.ui.reanchor === b.id ? ' picking' : '') + (b.cue ? '' : ' empty'),
-          onclick: () => { S.ui.reanchor = S.ui.reanchor === b.id ? null : b.id; S.ui.sel = null; S.ui.lineSel = null; rerender(); },
-        }, cueText(b, r) || 'タイミングなし（押して付ける）'),
+          onclick: () => { if (!hasScript) { toast('テマ友を貼り付けると、タイミングを付けられます'); return; } S.ui.reanchor = S.ui.reanchor === b.id ? null : b.id; S.ui.sel = null; S.ui.lineSel = null; rerender(); },
+        }, cueText(b, r) || (hasScript ? 'タイミングなし（押して付ける）' : 'タイミングなし')),
         h('span', { class: 'cue-br' }, '》')),
       h('details', { class: 'kebab' },
-        h('summary', { title: 'その他の操作' }, '⋯'),
+        h('summary', { title: 'その他の操作' }, icon('more')),
         h('div', { class: 'menu' },
           canMerge ? h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; db.update(blockPath(w, b), { newRow: false }); } }, '上の段とまとめる') : null,
           b.newRow === false ? h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; db.update(blockPath(w, b), { newRow: true }); } }, 'この位置で段を分ける') : null,
@@ -662,6 +672,57 @@ async function removeDraft(w, draft, track, siblings) {
   }
 }
 
+// 中身（テマ友・図解）がまだない稿
+export const isEmptyDraft = (d) => !d.script && !d.figs;
+
+// 稿を選ぶプルダウン。いちばん下の「＋ 新しい稿を作る」で稿を増やす（ライブラリーのページとトラックのページで共通）
+export function DraftPicker({ drafts, cur, edit, onPick, onNew, canNew = true }) {
+  const value = cur || (drafts[0] && drafts[0].id);
+  return h('select', {
+    class: 'draft-picker', value, 'aria-label': '稿を選ぶ・新しい稿を作る', title: '稿を選ぶ・新しい稿を作る',
+    onchange: (e) => {
+      const v = e.target.value;
+      e.target.value = value;
+      if (v === '__new') onNew(); else if (v && v !== value) onPick(v);
+    },
+  },
+  drafts.map((x, i) => h('option', { value: x.id }, `${draftName(x)}${i === 0 ? '（最新）' : ''}`)),
+  edit ? h('option', { value: '__new', disabled: !canNew }, '＋ 新しい稿を作る') : null);
+}
+
+// 「使い方」：最初の数回だけ開いておき、あとはたたんでおく
+const HOWTO_KEY = 'zukai.howtoViews';
+let howtoCountedFor = null;
+function howtoViews() { try { return +(localStorage.getItem(HOWTO_KEY) || 0); } catch (e) { return 99; } }
+function HowTo(d) {
+  if (howtoCountedFor !== d) {
+    howtoCountedFor = d;
+    try { localStorage.setItem(HOWTO_KEY, String(howtoViews() + 1)); } catch (e) { /* 使えない環境 */ }
+  }
+  return h('details', {
+    class: 'howto-box', open: howtoViews() <= 3,
+    ontoggle: (e) => { if (!e.target.open) { try { localStorage.setItem(HOWTO_KEY, '99'); } catch (er) { /* 使えない環境 */ } } },
+  },
+  h('summary', null, icon('help', 16), '使い方'),
+  h('ul', null,
+    h('li', null, 'テマ友の行をタップすると、その行の最初の数語をタイミングにして図解を追加できます。語句をなぞって選ぶと、選んだ語句をタイミングにできます。'),
+    h('li', null, '行をタップすると、キャラ名（薄い文字）や字下げも直せます。'),
+    h('li', null, 'テマ友と説明は、その場で書き換えられます。文字をなぞって選んでから、上の色のボタンを押してください。'),
+    h('li', null, '図解を押すと、その図解の「＋説明」「＋図」などのボタンが出ます。'),
+    h('li', null, 'Googleドキュメントの図解をコピーして、このページで Ctrl+V を押すと、このトラックに取り込めます。')));
+}
+
+// テマ友なしで図解を足す（図だけ先に描きたいとき）
+async function addBlockNoScript(w, d, rows) {
+  const prev = rows ? previousDiagram(rows, { id: null }) : null;
+  const g = prev && (S.d.diagrams || []).find((x) => x.id === prev.refId);
+  const { id, itemId, diagramId } = await createBlock(w, d, { cue: '', offset: 0, anchorText: '', shapes: g ? g.shapes : {} });
+  S.ui.focusItem = itemId;
+  S.ui.activeBlock = id;
+  touch(w, d);
+  openEditor(w, diagramId);
+}
+
 // 新しい稿を作る（稿の名前と「すべて黒字にする」を確かめてから）
 export async function newDraftFlow(w, draft, siblings) {
   const nextNo = Math.max(0, ...siblings.map((x) => x.no || 0)) + 1;
@@ -691,6 +752,8 @@ export function DraftView() {
   const siblings = drafts.filter((x) => x.trackId === draft.trackId).sort((a, b) => (b.no || 0) - (a.no || 0));
   const draftPath = P.doc(w, 'drafts', d);
   const isLatest = siblings[0] && siblings[0].id === d;
+  const empty = !text && !blocks.length;
+  const off = (on, title) => (on ? { class: ' is-off', title: 'まだ中身がありません', 'aria-disabled': 'true' } : { class: '', title });
 
   return h('main', { class: 'page draft-page' },
     h('div', { class: 'draft-head' },
@@ -698,23 +761,17 @@ export function DraftView() {
         h('div', { class: 'muted small' }, ep ? ep.title : '', ' ・ ', track ? track.title : ''),
         h('h1', { class: 'sheet-name' }, draftTitle(work, ep, track, draft))),
       h('div', { class: 'actions' },
-        siblings.length > 1 ? h('select', { value: d, onchange: (e) => go(`#/w/${w}/d/${e.target.value}`), 'aria-label': '稿を切り替える' },
-          siblings.map((x) => h('option', { value: x.id }, `${draftName(x)}${x.id === siblings[0].id ? '（最新）' : ''}`))) : null,
+        DraftPicker({ drafts: siblings, cur: d, edit: true, canNew: !empty, onPick: (id) => go(`#/w/${w}/d/${id}`), onNew: () => newDraftFlow(w, draft, siblings) }),
         h('button', { class: 'btn', onclick: () => { S.ui.scriptEdit = { value: text, base: text }; rerender(); } }, text ? 'テマ友を編集' : 'テマ友を貼り付け'),
-        h('a', { class: 'btn', href: `#/w/${w}/show/d/${d}`, title: '図を大きく、1枚ずつ見ます（プレゼンテーションのように）' }, '閲覧モード'),
-        h('a', { class: 'btn primary', href: `#/w/${w}/print/d/${d}`, title: 'PDF・Googleドキュメント・Wordで書き出します' }, '書き出す'),
-        h('button', {
-          class: 'btn', title: 'この稿を複製して次の稿を作ります', onclick: async () => {
-            await newDraftFlow(w, draft, siblings);
-          },
-        }, '新しい稿を作る'),
+        (() => { const o = off(empty, '図を大きく、1枚ずつ見ます（プレゼンテーションのように）'); return h('a', { class: 'btn' + o.class, href: empty ? null : `#/w/${w}/show/d/${d}`, title: o.title, 'aria-disabled': o['aria-disabled'] }, '閲覧モード'); })(),
+        (() => { const o = off(empty, 'PDF・Googleドキュメント・Wordで書き出します'); return h('a', { class: 'btn primary' + o.class, href: empty ? null : `#/w/${w}/print/d/${d}?export`, title: o.title, 'aria-disabled': o['aria-disabled'] }, '書き出す'); })(),
         h('details', { class: 'kebab' },
-          h('summary', { title: 'その他の操作', 'aria-label': 'その他の操作' }, '⋯'),
+          h('summary', { title: 'その他の操作', 'aria-label': 'その他の操作' }, icon('more')),
           h('div', { class: 'menu' },
             draft.updMark ? h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; db.update(draftPath, { updShow: draft.updShow === false }); } }, draft.updShow === false ? '更新箇所を青字にする' : '更新箇所を青字にしない') : null,
             h('button', { class: 'linklike danger', onclick: (e) => { e.target.closest('details').open = false; removeDraft(w, draft, track, siblings); } }, 'この稿を削除'))))),
     !isLatest ? h('div', { class: 'note' }, `これは古い稿（${draftName(draft)}）です。編集すると、この稿が書き換わります。`) : null,
-    showUpdates(draft) ? h('div', { class: 'howto small upd-note' }, `前の稿から変えたところ（新しいタイミング・書き足した説明の行・変えた図）は、書き出したPDFなどで青字になります。「⋯」から青字をやめられます。`) : null,
+    showUpdates(draft) ? h('div', { class: 'small upd-note' }, '青字は前の稿から変えたところです（書き出しでも青字。右上の「…」でやめられます）。') : null,
     h('section', { class: 'info-panel' },
       h('label', { class: 'field' }, h('span', null, '図解っ子'),
         h('input', { value: draft.zukaikko || '', placeholder: '例：C、B', 'data-pkey': 'zk', oninput: (e) => { saveLater(draftPath, { zukaikko: e.target.value }); touch(w, d); } })),
@@ -725,21 +782,27 @@ export function DraftView() {
         CastTable(work.cast),
         h('a', { class: 'small', href: `#/w/${w}/cast` }, 'メンバー一覧を編集')),
       draft.updatedAt ? h('div', { class: 'muted small' }, `最終更新 ${fmtTime(draft.updatedAt)} ${draft.updatedBy || ''}`) : null),
-    h('div', { class: 'howto small' }, 'テーマ活動の友の行をタップすると、その行の最初の数語をタイミングにして図解を追加できます。語句をなぞって選ぶと、選んだ語句をタイミングにできます。行をタップすると、キャラ名（薄い文字）や字下げも直せます。Googleドキュメントの図解をコピーしてこのページで Ctrl+V を押すと、このトラックに取り込めます。'),
-    text ? FormatBar() : null,
+    empty ? null : HowTo(d),
+    text || blocks.length ? FormatBar() : h('div', { class: 'format-bar empty-bar' }),
     Legend(),
-    !text ? h('div', { class: 'empty' },
-      h('p', null, 'まだテーマ活動の友がありません。'),
-      h('button', { class: 'btn primary', onclick: () => { S.ui.scriptEdit = { value: '', base: '' }; rerender(); } }, 'テマ友を貼り付ける'),
+    empty ? h('div', { class: 'empty' },
+      h('p', null, 'まだテマ友も図解もありません。'),
+      h('div', { class: 'actions center' },
+        h('button', { class: 'btn primary', onclick: () => { S.ui.scriptEdit = { value: '', base: '' }; rerender(); } }, 'テマ友を貼り付ける'),
+        h('button', { class: 'btn', onclick: () => addBlockNoScript(w, d, null) }, 'テマ友なしで図を追加')),
       h('p', { class: 'muted small' }, 'Googleドキュメントの図解を Ctrl+A → Ctrl+C でコピーして、このページで Ctrl+V を押すと、テマ友・タイミング・図をまとめて取り込めます。')) : null,
-    text ? h('div', { class: 'sheet-edit' }, rows.map((row, ri) => h('div', { key: 'row' + row.start, class: 'srow', 'data-prow': row.start },
+    !empty ? h('div', { class: 'sheet-edit' }, rows.map((row, ri) => h('div', { key: 'row' + row.start, class: 'srow', 'data-prow': row.start },
       (() => {
         const here = others().filter((p) => p.d === d && p.row === row.start && !p.block && !p.g && !p.caret);
-        return h('div', { class: 'scol' + (here.length ? ' has-pres' : ''), style: ringStyle(here) }, NameTags(here, 'on-row'), ScriptEditor(w, d, draft, row, hls, text, scriptOf(draft).marks));
+        return h('div', { class: 'scol' + (here.length ? ' has-pres' : ''), style: ringStyle(here) }, NameTags(here, 'on-row'),
+          text ? ScriptEditor(w, d, draft, row, hls, text, scriptOf(draft).marks)
+            : h('div', { class: 'no-script muted small' }, h('p', null, 'テマ友はまだありません。'),
+              h('button', { class: 'btn small', onclick: () => { S.ui.scriptEdit = { value: '', base: '' }; rerender(); } }, 'テマ友を貼り付ける')));
       })(),
       h('div', { class: 'ncol' },
         row.blocks.map(({ b, r }, k) => BlockCard(w, d, b, r, ri, k, rows)),
         row.blocks.length === 0 ? h('div', { class: 'ncol-empty muted small' }, ri === 0 ? '左のテーマ活動の友の行をタップすると、ここに図解ができます。' : '') : null)))) : null,
+    !text && blocks.length ? h('div', { class: 'actions pad-top' }, h('button', { class: 'btn', onclick: () => addBlockNoScript(w, d, rows) }, icon('plus', 16), '図解を追加（テマ友なし）')) : null,
     S.ui.scriptEdit ? ScriptModal(w, d, draft, blocks) : null,
   );
 }

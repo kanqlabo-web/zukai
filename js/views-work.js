@@ -1,12 +1,13 @@
 // ライブラリーページ（話・トラック・稿の一覧）とメンバー一覧
 import { h } from './vdom.js';
+import { icon } from './icons.js';
 import { db, auth } from './db.js';
 import { S, rerender, toast, fmtTime, saveLater, go, pickFile } from './state.js';
 import { readZukaiPdf, importZukai } from './pdfimport.js';
 import { analyzeDocHtml, sliceToHtml, SLICE_TYPE } from './docimport.js';
 import { pickDocHtml, pairFigures } from './gdrive.js';
 import { mode } from './db.js';
-import { newDraftFlow } from './views-draft.js';
+import { newDraftFlow, DraftPicker, isEmptyDraft } from './views-draft.js';
 import { P, draftName, createEpisode, createTrack, copyDraft, deleteDraft, deleteTrack, deleteEpisode, parseCast } from './model.js';
 import { confirmDeleteWork, confirmLeaveWork } from './views-home.js';
 import { ask, confirmBox } from './dialog.js';
@@ -33,11 +34,16 @@ async function swapOrder(w, col, list, i, dir) {
 
 function Menu(items) {
   return h('details', { class: 'kebab' },
-    h('summary', { title: 'その他の操作', 'aria-label': 'その他の操作' }, '⋯'),
+    h('summary', { title: 'その他の操作', 'aria-label': 'その他の操作' }, icon('more')),
     h('div', { class: 'menu' }, items.filter(Boolean).map((it) => h('button', {
       class: 'linklike' + (it.danger ? ' danger' : ''),
       onclick: (e) => { e.target.closest('details').open = false; it.fn(); },
     }, it.label))));
+}
+
+async function changePrefix(workPath, work) {
+  const r = await ask({ title: 'タイトルの頭につける文字', ok: '保存', fields: [{ key: 'v', label: '例：【表現活動】（空欄にもできます）', value: work.prefix ?? '【表現活動】' }] });
+  if (r) db.update(workPath, { prefix: r.v });
 }
 
 async function askName(title, label, value, ok = '保存') {
@@ -59,25 +65,25 @@ export function WorkView() {
 
   return h('main', { class: 'page' },
     h('div', { class: 'page-head' },
-      h('input', {
-        class: 'title-input', value: work.title, 'aria-label': 'ライブラリー名', readonly: !edit,
-        oninput: (e) => saveLater(workPath, { title: e.target.value, updatedAt: Date.now() }),
-      }),
+      h('label', { class: 'title-edit' + (edit ? ' can' : ''), title: edit ? '押すと名前を書き換えられます' : '' },
+        h('input', {
+          class: 'title-input', value: work.title, 'aria-label': 'ライブラリー名', readonly: !edit,
+          // 鉛筆が名前のすぐ横に来るよう、名前の長さに合わせる（全角1文字＝1em）
+          style: { width: `${Math.max(4, [...(work.title || '')].reduce((n, c) => n + (c.charCodeAt(0) > 255 ? 1 : 0.6), 0)) + 1}em` },
+          oninput: (e) => saveLater(workPath, { title: e.target.value, updatedAt: Date.now() }),
+        }),
+        edit ? icon('pencil', 18, 'title-pencil') : null),
       h('div', { class: 'actions' },
         h('span', { class: 'badge role-' + myRole(work) }, ROLE_LABEL[myRole(work)]),
         h('a', { class: 'btn primary share-btn', href: `#/w/${w}/people` }, '共有'),
         h('a', { class: 'btn', href: `#/w/${w}/cast` }, `メンバー一覧（${(work.cast || []).length}人）`),
         edit ? Menu([
-          {
-            label: 'タイトルの頭につける文字を変える', fn: async () => {
-              const r = await ask({ title: 'タイトルの頭につける文字', ok: '保存', fields: [{ key: 'v', label: '例：【表現活動】（空欄にもできます）', value: work.prefix ?? '【表現活動】' }] });
-              if (r) db.update(workPath, { prefix: r.v });
-            },
-          },
+          { label: 'タイトルの頭につける文字を変える', fn: () => changePrefix(workPath, work) },
           owner ? { label: 'このライブラリーを削除', danger: true, fn: () => confirmDeleteWork(w, work) } : null,
         ]) : null)),
     !edit ? h('div', { class: 'note' }, 'このライブラリーは閲覧のみで共有されています。見ることとPDFの書き出しができます。') : null,
-    h('p', { class: 'muted small' }, `PDFのタイトル例：${work.prefix ?? '【表現活動】'}2話図解_トラ1_第1稿`),
+    h('p', { class: 'muted small prefix-row' }, `PDFのタイトル例：${work.prefix ?? '【表現活動】'}2話図解_トラ1_第1稿`,
+      edit ? h('button', { class: 'btn tiny', onclick: () => changePrefix(workPath, work) }, '変える') : null),
     eps.length === 0 ? h('div', { class: 'empty' }, h('p', null, 'まだ話がありません。'), edit ? h('p', { class: 'muted' }, '「＋ 話を追加」から始めましょう（例：1話、2話）。') : null) : null,
     eps.map((ep, i) => {
       const ts = tracks.filter((t) => t.episodeId === ep.id).sort(byOrder);
@@ -85,8 +91,8 @@ export function WorkView() {
         h('div', { class: 'ep-head' },
           h('h2', null, ep.title),
           h('div', { class: 'actions' },
-            ts.length ? h('a', { class: 'btn small', href: `#/w/${w}/show/e/${ep.id}` }, 'この話を見る') : null,
-            ts.length ? h('a', { class: 'btn small', href: `#/w/${w}/print/e/${ep.id}` }, 'この話を書き出す') : null,
+            ts.length ? h('a', { class: 'btn small', href: `#/w/${w}/show/e/${ep.id}` }, 'この話の閲覧モード') : null,
+            ts.length ? h('a', { class: 'btn small', href: `#/w/${w}/print/e/${ep.id}?export` }, 'この話を書き出す') : null,
             edit ? h('button', {
               class: 'btn small primary', onclick: async () => {
                 const t = await askName('トラックを追加', 'トラックの名前', `トラック${ts.length + 1}`, '追加');
@@ -104,22 +110,29 @@ export function WorkView() {
           const ds = drafts.filter((d) => d.trackId === t.id).sort((a, b) => (b.no || 0) - (a.no || 0));
           const latest = ds[0];
           const here = others().filter((p) => p.d && ds.some((x) => x.id === p.d));
-          return h('li', { key: t.id, class: 'track' + (here.length ? ' has-pres' : '') },
-            h('a', { class: 'track-main', href: latest ? (edit ? `#/w/${w}/d/${latest.id}` : `#/w/${w}/print/d/${latest.id}`) : '#' },
+          const open = latest ? (edit ? `#/w/${w}/d/${latest.id}` : `#/w/${w}/print/d/${latest.id}`) : null;
+          const empty = !latest || isEmptyDraft(latest);
+          // 行のどこを押しても開く（右のボタン・プルダウンを除く）
+          return h('li', {
+            key: t.id, class: 'track' + (here.length ? ' has-pres' : '') + (open ? ' openable' : ''),
+            onclick: (e) => { if (open && !e.target.closest('.track-actions, a, button, select')) go(open); },
+          },
+            h('a', { class: 'track-main', href: open || '#' },
               h('div', { class: 'track-title' }, t.title, latest ? h('span', { class: 'badge' }, draftName(latest)) : null),
               h('div', { class: 'muted small' },
                 latest && latest.zukaikko ? `図解っ子：${latest.zukaikko}${latest.updatedAt ? ' ・ ' : ''}` : '',
                 latest && latest.updatedAt ? `更新 ${fmtTime(latest.updatedAt)}${latest.updatedBy ? '（' + latest.updatedBy + '）' : ''}` : ''),
               NameTags(here, 'in-track')),
+            open ? icon('chevron', 18, 'track-go') : null,
             h('div', { class: 'track-actions' },
-              ds.length > 1 ? h('select', {
-                class: 'small', 'aria-label': '稿を選ぶ', value: '',
-                onchange: (e) => { if (e.target.value) go(edit ? `#/w/${w}/d/${e.target.value}` : `#/w/${w}/print/d/${e.target.value}`); },
-              }, h('option', { value: '' }, '稿を選ぶ'), ds.map((d) => h('option', { value: d.id }, draftName(d)))) : null,
-              latest ? h('a', { class: 'btn small', href: `#/w/${w}/show/d/${latest.id}` }, '見る') : null,
-              latest ? h('a', { class: 'btn small', href: `#/w/${w}/print/d/${latest.id}` }, '書き出す') : null,
+              latest && (ds.length > 1 || edit) ? DraftPicker({
+                drafts: ds, cur: null, edit, canNew: !empty,
+                onPick: (id) => go(edit ? `#/w/${w}/d/${id}` : `#/w/${w}/print/d/${id}`),
+                onNew: () => newDraftFlow(w, latest, ds),
+              }) : null,
+              latest ? h('a', { class: 'btn small' + (empty ? ' is-off' : ''), href: empty ? null : `#/w/${w}/show/d/${latest.id}`, 'aria-disabled': empty ? 'true' : null, title: empty ? 'まだ中身がありません' : '図を大きく、1枚ずつ見ます' }, '閲覧モード') : null,
+              latest ? h('a', { class: 'btn small' + (empty ? ' is-off' : ''), href: empty ? null : `#/w/${w}/print/d/${latest.id}?export`, 'aria-disabled': empty ? 'true' : null, title: empty ? 'まだ中身がありません' : 'PDF・Googleドキュメント・Wordで書き出します' }, '書き出す') : null,
               !edit ? null : Menu([
-                latest ? { label: '新しい稿を作る（最新稿を複製）', fn: () => newDraftFlow(w, latest, ds) } : null,
                 { label: '名前を変える', fn: async () => { const n = await askName('トラックの名前を変える', 'トラックの名前', t.title); if (n) db.update(P.doc(w, 'tracks', t.id), { title: n }); } },
                 k > 0 ? { label: '上へ移動', fn: () => swapOrder(w, 'tracks', ts, k, -1) } : null,
                 k < ts.length - 1 ? { label: '下へ移動', fn: () => swapOrder(w, 'tracks', ts, k, 1) } : null,
@@ -546,7 +559,7 @@ async function addPeopleAsync(w, work, addrs, groups, pop) {
   const errors = [];
   let found = {};
   if (groups.length) {
-    if (!GROUP_LOOKUP_URL) errors.push('Googleグループで追加する機能が、まだ設定されていません（README 手順6）。');
+    if (!GROUP_LOOKUP_URL) errors.push(`Googleグループでまとめて追加することは、まだできません。メールアドレスを1人ずつ入れてください。グループで追加したいときは、管理者（${ADMIN_EMAILS[0]}）に知らせてください（エラー番号 E401）。`);
     else if (!pop) errors.push('ポップアップがブロックされました。ブラウザでこのサイトのポップアップを許可して、もう一度「追加」を押してください。');
     else {
       S.ui.shareBusy = true;
@@ -647,7 +660,7 @@ export function ShareView() {
     h('section', { class: 'panel' },
       h('h2', null, '一般的なアクセス'),
       h('div', { class: 'link-row' },
-        h('span', { class: 'link-ico' + (link === 'off' ? '' : ' on') }, link === 'off' ? '🔒' : '🔗'),
+        h('span', { class: 'link-ico' + (link === 'off' ? '' : ' on') }, icon(link === 'off' ? 'lock' : 'globe', 20)),
         h('div', { class: 'grow' },
           owner ? h('select', {
             value: link === 'off' ? 'off' : 'link',
@@ -661,7 +674,7 @@ export function ShareView() {
           onchange: (e) => db.update(P.work(w), { linkRole: e.target.value, updatedAt: Date.now() }),
         }, h('option', { value: 'viewer' }, '閲覧者'), h('option', { value: 'editor' }, '編集者')) : h('span', { class: 'badge' }, ROLE_LABEL[link])) : null),
       h('div', { class: 'actions' },
-        h('button', { class: 'btn', onclick: () => copyText(joinUrl(w, work)) }, '🔗 リンクをコピー'),
+        h('button', { class: 'btn', onclick: () => copyText(joinUrl(w, work)) }, icon('link', 16), 'リンクをコピー'),
         owner && link !== 'off' ? h('button', {
           class: 'btn small ghost', onclick: async () => {
             if (!(await confirmBox('今のリンクを無効にして、新しいリンクを作りますか？\nすでに参加している人はそのまま使えます。', { ok: '作り直す' }))) return;

@@ -216,7 +216,7 @@ async function sheetXml(data, t, idx, ids) {
   parts.push(para(run('《》タイミング　●動き　☆意味　＊ポイント', { size: 20, bold: true, shade: 'CFCFCF' })));
   const S1 = 15, N1 = 6; // 線の太さ（テーマ活動の友の列は太く、図解の列は細く）
   const trs = [];
-  const list = text ? rows : [{ lines: [], blocks: [] }];
+  const list = text || (t.blocks || []).length ? rows : [{ lines: [], blocks: [] }];
   for (let k = 0; k < list.length; k++) {
     const row = list[k];
     const first = k === 0, last = k === list.length - 1;

@@ -1,5 +1,6 @@
 // アプリ全体の状態と再描画の管理
 import { db } from './db.js';
+import { ADMIN_EMAILS } from './settings.js';
 
 export const S = {
   phase: 'loading', // loading | login | setup | pending | ready | error
@@ -11,6 +12,11 @@ export const S = {
   toasts: [],
   saving: 0,
 };
+
+// 利用者には技術的な中身を見せず、管理者に知らせてもらう。何のエラーかは番号で分かるようにする（番号の一覧は HANDOFF.md）
+export function adminMsg(what, code) {
+  return `${what}。管理者（${ADMIN_EMAILS[0] || '管理者'}）に知らせてください（エラー番号 ${code}）。`;
+}
 
 let renderers = [];
 let scheduled = false;
