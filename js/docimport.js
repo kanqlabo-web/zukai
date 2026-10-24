@@ -308,7 +308,8 @@ export function sliceToHtml(sliceText, html) {
   const flush = () => { out += `<p>${para}</p>`; para = ''; out += after.splice(0).join(''); };
   for (let i = 0; i < sp.length; i++) {
     const ch = sp[i];
-    if (posAt[i]) for (const k of posAt[i]) after.push(`<p>${objHtml(k)}</p>`);
+    // 同じ段落に付いた位置固定の写真が2枚以上なら、横に並んでいる（1つの段落にまとめる）
+    if (posAt[i]) after.push(`<p>${posAt[i].map(objHtml).join('')}</p>`);
     if (ch === '\x10') { const pt = tblAt(i); out += '<table' + (pt ? ` data-colpt="${pt}"` : '') + '>' + (colgroups[tableIdx++] || '') + '<tbody>'; cellOpen.push(false); rowOpen.push(false); continue; }
     if (ch === '\x12') { const d = rowOpen.length - 1; if (cellOpen[d]) out += '</td>'; if (rowOpen[d]) out += '</tr>'; out += '<tr>'; rowOpen[d] = true; cellOpen[d] = false; continue; }
     if (ch === '\x1c') { const d = cellOpen.length - 1; if (cellOpen[d]) out += '</td>'; out += '<td>'; cellOpen[d] = true; continue; }
