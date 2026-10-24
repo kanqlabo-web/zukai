@@ -288,3 +288,10 @@ body.cmt-side .draft-page { width: var(--pw); max-width: none; margin-left: max(
 .cmt-side-col > .cmt-card.on { transform: translateX(-8px); }
 ::highlight(zukai-cmt) { background-color: rgba(251, 188, 4, .25); }
 ::highlight(zukai-cmt-on) { background-color: rgba(251, 188, 4, .6); }
+/* トラックのページの上：題名とメニューが狭くなって折り返さないように（狭いときはボタンの列が下に回る） */
+@media (min-width: 701px) {
+  .draft-head > .grow { flex: 1 1 auto; min-width: min(100%, 470px); }
+  .draft-head .sheet-name { word-break: normal; overflow-wrap: anywhere; }
+  .draft-head .menubar { flex-wrap: nowrap; white-space: nowrap; }
+  .draft-head .actions { flex-wrap: wrap; justify-content: flex-end; }
+}
