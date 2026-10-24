@@ -300,3 +300,11 @@
 .cmt-side-col > .cmt-card:not(.on) { background: #fff; border: 1px solid var(--line); box-shadow: 0 1px 4px rgba(20, 15, 40, .12); }
 .cmt-side-col > .cmt-card.on { transform: none; }
 .cmt-done-title { margin: 6px 2px 0; font-weight: 700; }
+/* ライブラリーのページのコメントの一覧 */
+.cmt-group { display: flex; flex-direction: column; gap: 8px; }
+.cmt-group + .cmt-group { margin-top: 10px; }
+.cmt-group-title { font-weight: 700; font-size: 13px; padding: 2px 2px 0; }
+.cmt-card.no-open { cursor: default; }
+.cmt-done-box summary { cursor: pointer; padding: 2px; }
+.cmt-done-box > .cmt-card { margin-top: 8px; }
+.track > .cmt-chip { margin-left: 0; margin-right: 6px; align-self: center; }

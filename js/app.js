@@ -13,8 +13,9 @@ import { DialogView, isDialogOpen, closeDialog } from './dialog.js';
 import { saveMyProfile, handleGroupResult } from './access.js';
 import { setPresence, PresenceBar, paintCarets, paintPointers } from './presence.js';
 import { ShowView, afterShow } from './show.js';
-import { CommentsPanel, paintCommentMarks } from './comments.js';
+import { CommentsPanel, paintCommentMarks, WorkCommentsPanel } from './comments.js';
 import { ContextMenu } from './menubar.js';
+import { canEdit as canEditWork } from './access.js';
 import { versionLabel, CHANGELOG_URL, watchForUpdate, reloadToLatest } from './version.js';
 
 const $app = document.getElementById('app');
@@ -78,6 +79,7 @@ function onRoute() {
     watch('tracks', (cb) => db.watchList(P.col(w, 'tracks'), null, cb, denied));
     watch('drafts', (cb) => db.watchList(P.col(w, 'drafts'), null, cb, denied));
   }
+  if (r.name === 'work') watch('comments', (cb) => db.watchList(P.col(w, 'comments'), null, cb, () => {}));
   if (r.name === 'draft') {
     watch('blocks', (cb) => db.watchList(P.col(w, 'blocks'), ['draftId', d], cb, () => { S.d.work = null; rerender(); }));
     watch('diagrams', (cb) => db.watchList(P.col(w, 'diagrams'), ['draftId', d], cb, () => { S.d.work = null; rerender(); }));
@@ -228,7 +230,7 @@ function PageView() {
   else if (r.name === 'cast') page = CastView();
   else if (r.name === 'people') page = ShareView();
   else if (r.name === 'draft') page = DraftView();
-  return [Header(), page, r.name === 'draft' ? SelectionBar() : null, r.name === 'draft' ? CommentsPanel() : null, r.name === 'draft' && !S.ui.editDiagram ? ContextMenu() : null];
+  return [Header(), page, r.name === 'draft' ? SelectionBar() : null, r.name === 'draft' ? CommentsPanel() : null, r.name === 'draft' && !S.ui.editDiagram ? ContextMenu() : null, r.name === 'work' ? WorkCommentsPanel(!!(S.d.work && canEditWork(S.d.work))) : null];
 }
 
 function renderPage() {

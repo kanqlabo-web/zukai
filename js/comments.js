@@ -8,7 +8,7 @@
 import { h } from './vdom.js';
 import { db, DEL, newId } from './db.js';
 import { S, rerender, toast, fmtTime } from './state.js';
-import { P } from './model.js';
+import { P, draftName } from './model.js';
 import { icon } from './icons.js';
 import { pointAt, selectionIn, lastRichEditor } from './richtext.js';
 import { buildRows } from './script.js';
@@ -244,6 +244,7 @@ function goTo(c) {
 
 // 画面を描いたあとに、コメントの付いた文字を黄色く塗る（CSS Custom Highlight。使えないブラウザでは塗らない）
 export function paintCommentMarks() {
+  openPendingComment();
   queueSide();
   if (!window.CSS || !CSS.highlights || typeof Highlight === 'undefined') return;
   if (S.route.name !== 'draft') { CSS.highlights.delete('zukai-cmt'); CSS.highlights.delete('zukai-cmt-on'); return; }
@@ -514,4 +515,88 @@ export function CommentsButton() {
     class: 'btn cmt-btn' + (commentsOpen() ? ' on' : ''), title: 'コメントの一覧（解決済みも）を開く・閉じる', 'aria-pressed': commentsOpen() ? 'true' : 'false',
     onclick: () => toggleComments(),
   }, icon('comment', 16), 'コメント', n ? h('span', { class: 'cmt-count' }, String(n)) : null);
+}
+
+// ---------- ライブラリーのページ：すべてのトラックのコメントの一覧 ----------
+// 押すと、そのトラック（稿）のページに移って、そのコメントを開く
+let pendingOpen = null; // { d, id }
+function openCommentAfter(w, d, id) {
+  pendingOpen = { d, id };
+  W.open = false;
+  location.hash = `#/w/${w}/d/${d}`;
+}
+// 稿のページを描いたあと、待っていたコメントを開く（paintCommentMarks から呼ぶ）
+function openPendingComment() {
+  if (!pendingOpen || S.route.name !== 'draft') return;
+  if (S.route.params.d !== pendingOpen.d) { pendingOpen = null; return; }
+  const c = commentsOf().find((x) => x.id === pendingOpen.id);
+  if (!c || !S.d.blocks) return;
+  pendingOpen = null;
+  reset(S.route.params.d);
+  if (c.done) { C.list = true; C.open = true; }
+  C.open = true;
+  goTo(c);
+}
+
+const W = { open: false, track: null };
+const workComments = () => (S.d.comments || []).filter((c) => (S.d.drafts || []).some((d) => d.id === c.draftId));
+export function WorkCommentsButton() {
+  const n = workComments().filter((c) => !c.done).length;
+  return h('button', {
+    class: 'btn cmt-btn' + (W.open ? ' on' : ''), title: 'このライブラリーのコメントの一覧', 'aria-pressed': W.open ? 'true' : 'false',
+    onclick: () => { W.open = !W.open; W.track = null; rerender(); },
+  }, icon('comment', 16), 'コメント', n ? h('span', { class: 'cmt-count' }, String(n)) : null);
+}
+// トラックの行：そのトラック（どの稿でも）の未解決のコメントの数。押すと一覧をそのトラックだけにして開く
+export function TrackCommentChip(trackId) {
+  const ids = new Set((S.d.drafts || []).filter((d) => d.trackId === trackId).map((d) => d.id));
+  const n = (S.d.comments || []).filter((c) => !c.done && ids.has(c.draftId)).length;
+  if (!n) return null;
+  return h('button', {
+    class: 'cmt-chip', title: 'このトラックのコメントを見る', 'aria-label': `このトラックのコメント ${n}件`,
+    onclick: (e) => { e.stopPropagation(); W.open = true; W.track = trackId; rerender(); },
+  }, icon('comment', 14), String(n));
+}
+export function WorkCommentsPanel(canOpen) {
+  if (S.route.name !== 'work' || !W.open) return null;
+  const w = S.route.params.w;
+  const byOrder = (a, b) => (a.order || 0) - (b.order || 0);
+  const eps = (S.d.episodes || []).slice().sort(byOrder);
+  const groups = [];
+  for (const ep of eps) {
+    for (const t of (S.d.tracks || []).filter((x) => x.episodeId === ep.id).sort(byOrder)) {
+      if (W.track && t.id !== W.track) continue;
+      const ds = (S.d.drafts || []).filter((d) => d.trackId === t.id);
+      const list = (S.d.comments || []).filter((c) => ds.some((d) => d.id === c.draftId)).sort((a, b) => (a.ts || 0) - (b.ts || 0));
+      if (list.length) groups.push({ ep, t, ds, list });
+    }
+  }
+  const total = groups.reduce((n, g) => n + g.list.filter((c) => !c.done).length, 0);
+  const row = (g, c) => {
+    const d = g.ds.find((x) => x.id === c.draftId);
+    const nr = Object.keys(c.replies || {}).length;
+    return h('div', {
+      key: c.id, class: 'cmt-card' + (c.done ? ' done' : '') + (canOpen ? '' : ' no-open'), title: canOpen ? 'このコメントの所を開く' : null,
+      onclick: () => { if (canOpen) openCommentAfter(w, c.draftId, c.id); },
+    },
+      h('div', { class: 'cmt-quote' }, preview(c.at && c.at.k === 'block' ? '図解全体' : (c.at && c.at.q) || '')),
+      c.done ? h('div', { class: 'cmt-resolved' }, `${(c.doneBy && c.doneBy.name) || ''}さんが解決にしました`) : null,
+      Who(c.by, c.ts, c.edited),
+      h('div', { class: 'cmt-text' }, c.text),
+      h('div', { class: 'cmt-more' }, [nr ? `返信 ${nr}件` : '', g.ds.length > 1 && d ? `（${draftName(d)}）` : ''].filter(Boolean).join(' ')));
+  };
+  return h('aside', { class: 'cmt-panel', 'aria-label': 'コメントの一覧' },
+    h('div', { class: 'cmt-head' },
+      h('strong', null, `コメント（未解決 ${total}件）`),
+      W.track ? h('button', { class: 'btn tiny', onclick: () => { W.track = null; rerender(); } }, 'すべてのトラック') : null,
+      h('button', { class: 'icon-btn', title: '閉じる', 'aria-label': 'コメントの一覧を閉じる', style: { marginLeft: 'auto' }, onclick: () => { W.open = false; rerender(); } }, icon('close', 18))),
+    h('div', { class: 'cmt-list' },
+      groups.length ? null : h('div', { class: 'cmt-empty muted small' }, h('p', null, 'コメントはまだありません。トラックのページで、テマ友や図解の文章をなぞって選ぶとコメントできます。')),
+      groups.map((g) => {
+        const open = g.list.filter((c) => !c.done), done = g.list.filter((c) => c.done);
+        return h('section', { key: g.t.id, class: 'cmt-group' },
+          h('div', { class: 'cmt-group-title' }, `${g.ep.title}・${g.t.title}`, h('span', { class: 'muted small' }, ` 未解決 ${open.length}件`)),
+          open.map((c) => row(g, c)),
+          done.length ? h('details', { class: 'cmt-done-box' }, h('summary', { class: 'muted small' }, `解決済み ${done.length}件`), done.map((c) => row(g, c))) : null);
+      })));
 }

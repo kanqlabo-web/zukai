@@ -1,4 +1,5 @@
 // ライブラリーページ（話・トラック・稿の一覧）とメンバー一覧
+import { WorkCommentsButton, TrackCommentChip } from './comments.js';
 import { h } from './vdom.js';
 import { icon } from './icons.js';
 import { db, auth } from './db.js';
@@ -77,6 +78,7 @@ export function WorkView() {
         h('span', { class: 'badge role-' + myRole(work) }, ROLE_LABEL[myRole(work)]),
         h('a', { class: 'btn primary share-btn', href: `#/w/${w}/people` }, '共有'),
         h('a', { class: 'btn', href: `#/w/${w}/cast` }, `メンバー一覧（${(work.cast || []).length}人）`),
+        WorkCommentsButton(),
         edit ? Menu([
           { label: 'タイトルの頭につける文字を変える', fn: () => changePrefix(workPath, work) },
           owner ? { label: 'このライブラリーを削除', danger: true, fn: () => confirmDeleteWork(w, work) } : null,
@@ -123,6 +125,7 @@ export function WorkView() {
                 latest && latest.zukaikko ? `図解っ子：${latest.zukaikko}${latest.updatedAt ? ' ・ ' : ''}` : '',
                 latest && latest.updatedAt ? `更新 ${fmtTime(latest.updatedAt)}${latest.updatedBy ? '（' + latest.updatedBy + '）' : ''}` : ''),
               NameTags(here, 'in-track')),
+            TrackCommentChip(t.id),
             open ? icon('chevron', 18, 'track-go') : null,
             h('div', { class: 'track-actions' },
               latest && (ds.length > 1 || edit) ? DraftPicker({
