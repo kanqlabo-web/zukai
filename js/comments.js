@@ -457,14 +457,14 @@ export function layoutSide() {
   const sheet = document.querySelector('.sheet-edit');
   const top0 = (page ? page.getBoundingClientRect().top : 0) + window.scrollY;
   box.style.top = top0 + 'px';
-  // 本文（図解）の右に置く（Googleドキュメントと同じ。狭い画面は横にスクロール）
+  // 本文（図解）の右に置く（Googleドキュメントと同じ。本文は画面の右に約200pxを残す幅にする）
   const content = sheet || page;
   const right = content ? content.getBoundingClientRect().right : 0;
   const vw = document.documentElement.clientWidth;
   const mini = false; // Googleドキュメントと同じく、いつも本文の右に出す（狭い画面は横にスクロール）
   box.classList.toggle('mini', mini);
   if (mini) { box.style.left = (vw - 38 + window.scrollX) + 'px'; box.style.width = '30px'; }
-  else { box.style.left = (right + 24 + window.scrollX) + 'px'; box.style.width = '256px'; }
+  else { box.style.left = (right + 14 + window.scrollX) + 'px'; box.style.width = Math.max(170, Math.min(300, vw - right - 14 - 12)) + 'px'; }
   const head = box.querySelector('.cmt-head');
   const minY = head ? head.offsetHeight + 12 : 0;
   const fallback = sheet ? sheet.getBoundingClientRect().top + window.scrollY - top0 : minY;

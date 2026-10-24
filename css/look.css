@@ -268,8 +268,8 @@ body.cmt-side .draft-page { margin-left: max(0px, calc((100vw - 1240px - 300px) 
 .cmt-side-col.mini > .cmt-card:not(.on) > .cmt-bubble { display: inline-flex; align-items: center; gap: 1px; color: #5a4500; font-size: 10px; font-weight: 700; }
 .cmt-side-col.mini > .cmt-card.on { left: auto; right: 0; width: 270px; transform: none; }
 /* Googleドキュメントと同じ配置：本文（幅はそのまま）の右にコメント欄。画面が狭いときは横にスクロール */
-body.cmt-side { --pw: clamp(1000px, calc(100vw - 330px), 1240px); min-width: calc(var(--pw) + 300px); }
-body.cmt-side .draft-page { width: var(--pw); max-width: none; margin-left: max(0px, calc((100vw - var(--pw) - 290px) / 2)); margin-right: 0; }
+body.cmt-side { --pw: min(1240px, calc(100vw - 230px)); }
+body.cmt-side .draft-page { width: var(--pw); max-width: none; margin-left: max(0px, calc((100vw - var(--pw) - 320px) / 2)); margin-right: 0; }
 /* カードの見た目（Googleドキュメント風）：選んでいないときは薄い青灰色、選ぶと白く浮く。引用は出さない */
 .cmt-side-col > .cmt-card { background: #f0f4f9; border: 0; border-radius: 10px; padding: 12px 12px 10px; box-shadow: none; }
 .cmt-side-col > .cmt-card.on { background: #fff; box-shadow: 0 1px 3px rgba(60, 64, 67, .3), 0 4px 8px 3px rgba(60, 64, 67, .15); }
@@ -285,6 +285,6 @@ body.cmt-side .draft-page { width: var(--pw); max-width: none; margin-left: max(
 .cmt-side-col .cmt-reply { border-top-color: #dde3ea; }
 .cmt-side-col .cmt-card:not(.on):not(:hover) .cmt-msg-head .icon-btn, .cmt-side-col .cmt-card:not(.on):not(:hover) .cmt-menu { visibility: hidden; }
 .cmt-side-col > .cmt-head { background: transparent; border: 0; padding: 0 4px; }
-.cmt-side-col > .cmt-card.on { transform: translateX(-16px); }
+.cmt-side-col > .cmt-card.on { transform: translateX(-8px); }
 ::highlight(zukai-cmt) { background-color: rgba(251, 188, 4, .25); }
 ::highlight(zukai-cmt-on) { background-color: rgba(251, 188, 4, .6); }
