@@ -602,7 +602,7 @@ function shapeOf(p, M, scale, fc, noline) {
   const pts = dedupe(main.pts.map(M));
   // 線で描いた形でも、始まりと終わりがほぼ同じなら閉じた形（白抜き矢印の外形など）
   const nearlyClosed = pts.length >= 4 && Math.hypot(pts[0][0] - pts[pts.length - 1][0], pts[0][1] - pts[pts.length - 1][1]) < 6;
-  if ((main.closed || nearlyClosed) && pts.length >= 3) return { t: 'blob', sharp: true, pts, ...base };
+  if ((main.closed || nearlyClosed) && pts.length >= 3) return blockArrowOf(pts) || { t: 'blob', sharp: true, pts, ...base };
   if (pts.length >= 2) { const s = { t: 'line', pts, ...base }; delete s.fill; delete s.noline; return s; }
   return null;
 }
@@ -611,6 +611,67 @@ function dedupe(pts) {
   for (const q of pts) { const l = out[out.length - 1]; if (!l || Math.hypot(l[0] - q[0], l[1] - q[1]) > 0.8) out.push(q); }
   if (out.length > 2) { const a = out[0], b = out[out.length - 1]; if (Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.8) out.pop(); }
   return out;
+}
+
+// 白抜きの太い矢印の外形（片方向は角7つ、両方向は角10）なら、図解メーカーの太い矢印にする。違えば null
+// 向き・長さ・位置（矢の元から先まで）と軸の太さを元のまま使う。先の三角の大きさは図解メーカーの決まりの形になる
+function blockArrowOf(pts) {
+  // 角だけを残す（まっすぐ並んだ点・ごく近い点は除く）
+  let q = pts.slice();
+  if (q.length > 3 && Math.hypot(q[0][0] - q[q.length - 1][0], q[0][1] - q[q.length - 1][1]) < 6) q.pop();
+  for (let changed = true; changed && q.length > 3;) {
+    changed = false;
+    for (let i = 0; i < q.length; i++) {
+      const a = q[(i + q.length - 1) % q.length], b = q[i], c = q[(i + 1) % q.length];
+      const ab = Math.hypot(b[0] - a[0], b[1] - a[1]), bc = Math.hypot(c[0] - b[0], c[1] - b[1]);
+      const turn = ab && bc ? Math.abs((b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])) / (ab * bc) : 0;
+      const dot = (b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1]);
+      if (ab < 1 || (turn < 0.1 && dot > 0)) { q.splice(i, 1); changed = true; break; }
+    }
+  }
+  const n = q.length;
+  if (n !== 7 && n !== 10) return null;
+  const P = (i) => q[((i % n) + n) % n];
+  const r1 = (v) => Math.round(v * 10) / 10;
+  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  // 軸 s→e に対して、a と b が向かい合っているか（中点が軸の上、a-b が軸に直角）。ずれの大きさを返す
+  const pairErr = (s, e, a, b) => {
+    const L = dist(s, e), ux = (e[0] - s[0]) / L, uy = (e[1] - s[1]) / L;
+    const m = mid(a, b), w = dist(a, b) || 1;
+    const off = Math.abs((m[0] - s[0]) * -uy + (m[1] - s[1]) * ux);
+    const tilt = Math.abs((b[0] - a[0]) * ux + (b[1] - a[1]) * uy) / w;
+    return { off, tilt, w, along: (m[0] - s[0]) * ux + (m[1] - s[1]) * uy };
+  };
+  let best = null;
+  for (let i = 0; i < n; i++) {
+    if (n === 7) {
+      // 先・返し・首・元・元・首・返し
+      const tip = P(i), T = mid(P(i + 3), P(i + 4)), L = dist(T, tip);
+      if (L < 10) continue;
+      const pr = [[P(i + 1), P(i + 6)], [P(i + 2), P(i + 5)], [P(i + 3), P(i + 4)]].map(([a, b]) => pairErr(T, tip, a, b));
+      const [barb, neck, tail] = pr;
+      const tol = Math.max(1.5, barb.w * 0.12);
+      if (pr.some((x) => x.off > tol || x.tilt > 0.12)) continue;
+      if (Math.abs(neck.w - tail.w) > tol || barb.w < neck.w * 1.15) continue;
+      if (Math.abs(neck.along - barb.along) > tol || neck.along < L * 0.1 || neck.along > L - 3) continue;
+      const err = pr.reduce((a, x) => a + x.off + x.tilt * x.w, 0);
+      if (!best || err < best.err) best = { err, s: { t: 'arrow', style: 'block', head: 'end', width: Math.max(6, Math.round(neck.w)), x1: r1(T[0]), y1: r1(T[1]), x2: r1(tip[0]), y2: r1(tip[1]) } };
+    } else {
+      // 先A・返し・首・首・返し・先B・返し・首・首・返し
+      const A = P(i), B = P(i + 5), L = dist(A, B);
+      if (L < 10) continue;
+      const pr = [[P(i + 1), P(i + 9)], [P(i + 2), P(i + 8)], [P(i + 3), P(i + 7)], [P(i + 4), P(i + 6)]].map(([a, b]) => pairErr(A, B, a, b));
+      const [ba, na, nb, bb] = pr;
+      const tol = Math.max(1.5, Math.max(ba.w, bb.w) * 0.12);
+      if (pr.some((x) => x.off > tol || x.tilt > 0.12)) continue;
+      if (Math.abs(na.w - nb.w) > tol || ba.w < na.w * 1.15 || bb.w < nb.w * 1.15) continue;
+      if (Math.abs(na.along - ba.along) > tol || Math.abs(nb.along - bb.along) > tol || !(na.along > 3 && na.along < nb.along && nb.along < L - 3)) continue;
+      const err = pr.reduce((a, x) => a + x.off + x.tilt * x.w, 0);
+      if (!best || err < best.err) best = { err, s: { t: 'line', style: 'block', head: 'both', width: Math.max(6, Math.round((na.w + nb.w) / 2)), pts: [[r1(A[0]), r1(A[1])], [r1(B[0]), r1(B[1])]] } };
+    }
+  }
+  return best ? best.s : null;
 }
 
 // ---------- Googleの図形描画（SVG）を、PDFのページと同じ形にする ----------
