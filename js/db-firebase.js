@@ -2,7 +2,7 @@
 const V = '12.19.0';
 const BASE = `https://www.gstatic.com/firebasejs/${V}/`;
 
-let F, A, fs, auth, DEL;
+let F, A, fs, auth, DEL, app, cfgNow;
 
 export async function init(cfg, del) {
   DEL = del;
@@ -13,7 +13,8 @@ export async function init(cfg, del) {
   ]);
   F = fsMod;
   A = authMod;
-  const app = appMod.initializeApp(cfg);
+  cfgNow = cfg;
+  app = appMod.initializeApp(cfg);
   try {
     fs = F.initializeFirestore(app, {
       localCache: F.persistentLocalCache({ tabManager: F.persistentMultipleTabManager() }),
@@ -128,4 +129,45 @@ export async function driveToken(readAll = false) {
   if (!c || !c.accessToken) throw new Error('Googleドライブの許可をもらえませんでした');
   driveTok[k] = { token: c.accessToken, until: Date.now() + 50 * 60 * 1000 };
   return driveTok[k].token;
+}
+
+// ---------- 同時に開いている人の表示（Realtime Database） ----------
+// 回数ではなく通信量で数えるので、カーソルを細かく送っても Firestore の無料枠を使わない。
+// 接続が切れたら（タブを閉じた・電波が切れた）、サーバーが自動で消す（onDisconnect）。
+let R = null, rdb = null, mine = null;
+async function rt() {
+  if (!rdb) {
+    R = await import(BASE + 'firebase-database.js');
+    rdb = R.getDatabase(app);
+    // つなぎ直したら、切れたときに消す予約をし直して、自分の分を書き直す
+    R.onValue(R.ref(rdb, '.info/connected'), (s) => {
+      if (s.val() !== true || !mine) return;
+      const r = R.ref(rdb, mine.path);
+      R.onDisconnect(r).remove().then(() => R.set(r, mine.data)).catch(() => {});
+    });
+  }
+  return R;
+}
+export const hasRoom = () => !!(cfgNow && cfgNow.databaseURL);
+export async function roomSet(path, d) {
+  await rt();
+  const r = R.ref(rdb, path);
+  if (!mine || mine.path !== path) await R.onDisconnect(r).remove();
+  mine = { path, data: d };
+  await R.set(r, d);
+}
+export async function roomRemove(path) {
+  await rt();
+  if (mine && mine.path === path) mine = null;
+  const r = R.ref(rdb, path);
+  await R.onDisconnect(r).cancel().catch(() => {});
+  await R.remove(r);
+}
+export function roomWatch(path, cb, onErr) {
+  let off = null, stop = false;
+  rt().then(() => {
+    if (stop) return;
+    off = R.onValue(R.ref(rdb, path), (s) => cb(Object.entries(s.val() || {}).map(([id, v]) => ({ id, ...v }))), onErr);
+  }, onErr);
+  return () => { stop = true; if (off) off(); };
 }

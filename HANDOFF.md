@@ -13,7 +13,7 @@
 |---|---|
 | コード | GitHub `kanqlabo-web/zukai`（main ブランチ）。**公開リポジトリ** |
 | サイト配信 | **GitHub Pages**（2026-10-24 から。Firebase Hosting はもう使わない） |
-| データ・ログイン | Firebase プロジェクト `zukai-8a392`（Firestore ＋ Authentication の Google ログイン） |
+| データ・ログイン | Firebase プロジェクト `zukai-8a392`（Firestore ＋ Authentication の Google ログイン ＋ 同時編集の表示用の Realtime Database（シンガポール）） |
 | 管理者アカウント | kanq.labo@gmail.com（`js/settings.js` の `ADMIN_EMAILS`） |
 | 作業フォルダ（PC） | `C:\Users\kanql\Downloads\zukai_firebase\zukai`（中身はリポジトリと同じ。`公開する.bat` は Firebase 用で、もう使わない） |
 | 料金 | Firebase 無料枠（Spark）。Firestore 1日 読み 5万・書き 2万。Drive / Picker API も無料 |
@@ -36,7 +36,8 @@
 - ビルドなしの静的サイト。`index.html` ＋ ES モジュール（`js/*.js`）。
 - 自作の仮想 DOM（`js/vdom.js` の `h()` / `render()`）。状態は `js/state.js` の `S`（`S.d` データ、`S.ui` 画面の状態、`S.route`）。`rerender()` で描き直し（rAF でまとめる）。
 - `js/firebase-config.js` の `apiKey` を空にすると「デモモード」（データはブラウザの localStorage）。手元の動作確認はこれで行う。**コミット前に apiKey を必ず戻す**（`AIzaSyDFBoS_DMNN9EB7ohza1ijwHpDzFD93WBA`）。
-- Firestore の構造：`works/{w}`（ライブラリー。cast＝メンバー一覧、participants / owners / viewers、linkRole / linkKey）と、その下の `episodes`（話）・`tracks`（トラック）・`drafts`（稿。script＝テマ友）・`blocks`（タイミングの段。anchor＝{offset, text}、items＝説明・図・写真）・`diagrams`（図。shapes）・`images`（写真）・`presence`（同時編集の表示）。ルールは `firestore.rules`。
+- Firestore の構造：`works/{w}`（ライブラリー。cast＝メンバー一覧、participants / owners / viewers、linkRole / linkKey）と、その下の `episodes`（話）・`tracks`（トラック）・`drafts`（稿。script＝テマ友）・`blocks`（タイミングの段。anchor＝{offset, text}、items＝説明・図・写真）・`diagrams`（図。shapes）・`images`（写真）・`presence`（同時編集の表示。Realtime Database が使えないときだけ）。ルールは `firestore.rules`。
+- 同時編集の表示（1.6.0〜）：Realtime Database の `presence/{w}_{presenceKey}/{uid}`。`presenceKey` は作品（`works/{w}`）にあり、編集できる人が最初に作る（履歴には残さない）。接続が切れたら onDisconnect で消える。書けない・10秒つながらないときは、その回は Firestore の `works/{w}/presence` に切り替える。ルールは `database.rules.json`（コンソールの Realtime Database → ルールに貼る）。
 
 ### 主なファイル
 | ファイル | 役割 |

@@ -43,6 +43,14 @@ export const db = {
   get: (path) => guard(impl.get(path)),
   getQuiet: (path) => impl.get(path).catch(() => null),
   setQuiet: (path, data) => impl.set(path, clean(data)),
+  updateQuiet: (path, patch) => impl.update(path, clean(patch)),
+  // 同時に開いている人の表示用（Realtime Database。使えないときは available() が false）
+  room: {
+    available: () => !!(impl.hasRoom && impl.hasRoom()),
+    set: (path, data) => impl.roomSet(path, clean(data)),
+    remove: (path) => impl.roomRemove(path),
+    watch: (path, cb, onErr) => impl.roomWatch(path, cb, onErr || (() => {})),
+  },
   joinWork: (w, key, email) => impl.joinWork(w, key, email),
   set: (path, data) => track([path], () => raw.set(path, data)),
   update: (path, patch) => track([path], () => raw.update(path, patch)),
@@ -102,8 +110,8 @@ function track(paths, write) {
   return run;
 }
 
-// 比べるときは、最終更新の記録は見ない
-const strip = (d) => { if (!d) return d; const o = { ...d }; delete o.updatedAt; delete o.updatedBy; return o; };
+// 比べるときは、最終更新の記録と、同時編集の表示の合言葉（履歴に残さず書く）は見ない
+const strip = (d) => { if (!d) return d; const o = { ...d }; delete o.updatedAt; delete o.updatedBy; delete o.presenceKey; return o; };
 const stable = (o) => (o == null ? 'null' : typeof o !== 'object' ? JSON.stringify(o) : Array.isArray(o) ? '[' + o.map(stable).join(',') + ']' : '{' + Object.keys(o).sort().map((k) => k + ':' + stable(o[k])).join(',') + '}');
 function same(a, b) { return stable(strip(a)) === stable(strip(b)); }
 
@@ -112,12 +120,21 @@ async function writeBack(path, target, current) {
   if (current == null) { await raw.set(path, target); return; }
   const patch = {};
   for (const k of new Set([...Object.keys(target), ...Object.keys(current)])) {
+    if (k === 'presenceKey') continue;
     if (stable(target[k]) !== stable(current[k])) patch[k] = k in target ? target[k] : DEL;
   }
   if (Object.keys(patch).length) await raw.update(path, patch);
 }
 
-async function step(from, to, field, other, ask) {
+// 続けて押されたときは、前の「元に戻す」が書き終わってから次を始める
+// （同時に進めると、前の戻しが書き終わる前の内容と比べてしまい、ほかの人が書き換えたと誤って確かめていた）
+let stepping = Promise.resolve();
+function step(...a) {
+  const run = stepping.then(() => stepNow(...a));
+  stepping = run.catch(() => {});
+  return run;
+}
+async function stepNow(from, to, field, other, ask) {
   closeGroup();
   await queue;
   closeGroup();

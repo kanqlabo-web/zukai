@@ -1,8 +1,10 @@
 // 同時に開いている人の表示（Googleドキュメントのように）
-// works/{w}/presence/{メール} に「いまどこを開いているか」を数秒おきに書き、ほかの人の分を読んで表示する。
-// 書き込みは「元に戻す」の履歴に残さない。閲覧者は書き込めないので、表示されない。
+// 「いまどこを開いているか」を数秒おきに書き、ほかの人の分を読んで表示する。
+// 書く先は Realtime Database の presence/{作品}_{合言葉}/{uid}。合言葉（works/{w} の presenceKey）は共有されている人しか読めない。
+// Realtime Database が使えないとき（設定がない・ルールで断られた・つながらない）は、前と同じ Firestore の works/{w}/presence に書く。
+// 書き込みは「元に戻す」の履歴に残さない。
 import { h } from './vdom.js';
-import { db, mode } from './db.js';
+import { db, mode, newId } from './db.js';
 import { S, rerender, go } from './state.js';
 import { draftName } from './model.js';
 import { selectionIn, pointAt } from './richtext.js';
@@ -17,17 +19,76 @@ export function colorOf(email) {
   return COLORS[x % COLORS.length];
 }
 const docPath = (w, email) => `works/${w}/presence/${String(email).replace(/\//g, '_')}`;
-export const presenceCol = (w) => `works/${w}/presence`;
 
 let curW = null;
 let me = {};
 let timer = null;
+let room = null;   // いま書いている場所 { rt, key, base, path }
+let unwatch = null;
+let list = [];     // 読んだ全員の分（画面を移っても消えないよう、S.d とは別に持つ）
+let useRT = null;  // Realtime Database を使うか（null：まだ分からない）
+let seq = 0;
+
+// いま開いているライブラリーの作品データ（あれば）
+const workHere = (w) => (S.route.params && S.route.params.w === w ? S.d.work : null);
+
+async function enterRoom(w) {
+  const my = ++seq;
+  leaveRoom();
+  if (!w || !S.user || mode === 'local') return;
+  let r;
+  if (useRT !== false && db.room.available()) {
+    const work = workHere(w) || await db.getQuiet(`works/${w}`);
+    if (my !== seq || !work) return;
+    let key = work.presenceKey;
+    // 合言葉がまだない作品：編集できる人が作る（閲覧者は、だれかが作るまで待つ）
+    if (!key && !(work.viewers || []).includes(S.user.email)) {
+      key = newId(20);
+      try { await db.updateQuiet(`works/${w}`, { presenceKey: key }); } catch (e) { key = null; }
+      if (my !== seq) return;
+    }
+    if (!key) return;
+    r = { rt: true, key, base: `presence/${w}_${key}`, path: `presence/${w}_${key}/${S.user.uid}` };
+  } else {
+    r = { rt: false, base: `works/${w}/presence`, path: docPath(w, S.user.email) };
+  }
+  room = r;
+  const got = (v) => { list = v; rerender(); };
+  unwatch = r.rt ? db.room.watch(r.base, got) : db.watchList(r.base, null, got, () => {});
+  send(false);
+}
+function leaveRoom() {
+  if (unwatch) unwatch();
+  unwatch = null;
+  if (room) send(true);
+  room = null;
+  if (list.length) { list = []; rerender(); }
+}
+
+// Realtime Database に書けなかったら、この先は Firestore を使う
+function fallBack(e) {
+  if (useRT === false) return;
+  console.warn('Realtime Database が使えないため、同時に開いている人の表示は Firestore で行います', e);
+  useRT = false;
+  enterRoom(curW);
+}
+function putRT(r, data) {
+  const p = db.room.set(r.path, data);
+  if (useRT !== null) { p.catch(() => {}); return; }
+  const t = setTimeout(() => { if (useRT === null) fallBack('timeout'); }, 10000);
+  p.then(() => { clearTimeout(t); if (useRT === null) useRT = true; }, (e) => { clearTimeout(t); fallBack(e); });
+}
 
 function send(leave) {
-  if (!curW || !S.user || mode === 'local') return;
+  if (!room || !S.user) return;
   const u = S.user;
   const data = { ...me, email: u.email, name: u.name || u.email, photo: u.photo || '', at: leave ? 0 : Date.now() };
-  db.setQuiet(docPath(curW, u.email), data).catch(() => { /* 閲覧者などは書けない */ });
+  if (room.rt) {
+    if (leave) db.room.remove(room.path).catch(() => {});
+    else putRT(room, data);
+  } else {
+    db.setQuiet(room.path, data).catch(() => { /* 閲覧者などは書けない */ });
+  }
 }
 function sendSoon() {
   clearTimeout(timer);
@@ -37,9 +98,10 @@ function sendSoon() {
 // いまの場所を知らせる（w が変わったら、前のライブラリーからは抜ける）
 export function setPresence(w, patch) {
   if (w !== curW) {
-    if (curW) { clearTimeout(timer); send(true); }
+    clearTimeout(timer);
     curW = w || null;
     me = {};
+    enterRoom(curW);
   }
   if (!curW) return;
   const next = { ...me, ...patch };
@@ -49,9 +111,15 @@ export function setPresence(w, patch) {
 }
 export function presenceHere() { return me; }
 
-setInterval(() => { if (curW && document.visibilityState !== 'hidden') send(false); }, BEAT);
+setInterval(() => {
+  if (!curW) return;
+  // ほかの人が合言葉を作った・変えたときは、そちらに移る
+  const wk = workHere(curW);
+  if (useRT !== false && wk && wk.presenceKey && (!room || (room.rt && room.key !== wk.presenceKey))) { enterRoom(curW); return; }
+  if (document.visibilityState !== 'hidden') send(false);
+}, BEAT);
 // 来なくなった人を消すために、ときどき描き直す
-setInterval(() => { if ((S.d.presence || []).length) rerender(); }, 10000);
+setInterval(() => { if (list.length) rerender(); }, 10000);
 window.addEventListener('pagehide', () => { if (curW) send(true); });
 document.addEventListener('visibilitychange', () => { if (curW && document.visibilityState === 'visible') send(false); });
 
@@ -70,7 +138,7 @@ document.addEventListener('focusin', (e) => {
 export function others() {
   const now = Date.now();
   const mine = S.user && S.user.email;
-  return (S.d.presence || []).filter((p) => p.email && p.email !== mine && now - (p.at || 0) < TTL)
+  return list.filter((p) => p.email && p.email !== mine && now - (p.at || 0) < TTL)
     .sort((a, b) => String(a.email).localeCompare(String(b.email)));
 }
 

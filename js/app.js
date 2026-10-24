@@ -11,7 +11,7 @@ import { PrintView, loadPrint, layoutPages, clearPages } from './print.js';
 import { P } from './model.js';
 import { DialogView, isDialogOpen } from './dialog.js';
 import { saveMyProfile, handleGroupResult } from './access.js';
-import { setPresence, PresenceBar, presenceCol, paintCarets } from './presence.js';
+import { setPresence, PresenceBar, paintCarets } from './presence.js';
 import { ShowView, afterShow } from './show.js';
 import { versionLabel, CHANGELOG_URL, watchForUpdate, reloadToLatest } from './version.js';
 
@@ -65,7 +65,6 @@ function onRoute() {
   // 同時に開いている人の表示：自分の場所を知らせ、ほかの人の場所を読む
   const pw = r.name === 'join' ? null : (w || null);
   setPresence(pw, { view: r.name, d: d || ((r.name === 'print' || r.name === 'show') && r.params.kind === 'd' ? r.params.id : null), block: null, row: null, g: null, sel: null });
-  if (w && r.name !== 'print' && r.name !== 'show' && mode !== 'local') watch('presence', (cb) => db.watchList(presenceCol(w), null, cb, () => {}));
   if (r.name === 'join') { joinByLink(r.params); return; }
   if (w && r.name !== 'print' && r.name !== 'show') {
     // 参加していないライブラリーは読めない（その場合は「見つかりません」と表示）

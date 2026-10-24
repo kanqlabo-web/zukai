@@ -1,0 +1,16 @@
+{
+  "rules": {
+    // 同時に開いている人の表示（js/presence.js）。presence/{作品}_{合言葉}/{uid}
+    // 合言葉は Firestore の作品（works/{w} の presenceKey）にあり、共有されている人しか知らない。
+    // 一覧は読めないので、場所の名前を知っている人だけが、その作品の分を読める。
+    "presence": {
+      "$room": {
+        ".read": "auth != null && auth.token.email_verified == true && $room.length > 20",
+        "$uid": {
+          ".write": "auth != null && auth.uid === $uid && auth.token.email_verified == true",
+          ".validate": "newData.hasChildren(['email', 'at']) && newData.child('email').val() === auth.token.email.toLowerCase()"
+        }
+      }
+    }
+  }
+}

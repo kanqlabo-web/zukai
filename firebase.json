@@ -1,7 +1,8 @@
 {
+  "database": { "rules": "database.rules.json" },
   "hosting": {
     "public": ".",
-    "ignore": ["firebase.json", "**/.*", "gas/**", "README.md", "firestore.rules"],
+    "ignore": ["firebase.json", "**/.*", "gas/**", "README.md", "firestore.rules", "database.rules.json"],
     "headers": [
       { "source": "**/*.@(html|js|css)", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] }
     ]
