@@ -2,7 +2,8 @@
 // 返すもの：新しく置く図形の配列（id なし）／ 'internal'（この図解メーカーの中でコピーした図形）／ null（貼れるものがない）
 import { SLICE_TYPE, sliceToHtml, figureOf } from './docimport.js';
 import { drawingSvg } from './pdfimport.js';
-import { diagramFromSvg, svgToPng } from './drawimport.js';
+import { diagramFromSvg, svgToPng, diagramFromShapes } from './drawimport.js';
+import { SLIDES_TYPE, parseSlidesClip, slidesToShapes } from './slidesclip.js';
 import { auth, mode } from './db.js';
 import { W, H } from './stage.js';
 
@@ -67,7 +68,17 @@ export async function shapesFromClipboard(dt, at, opts = {}) {
   const files = [...(dt.files || [])].filter((f) => /^image\//.test(f.type));
   if (files.length) return blobsToShapes(files, at);
 
-  // 2) Googleドキュメント：図形描画は Google から取り出す、写真はそのまま
+  // 2) Googleスライド：図形の形・位置・文字がそのまま入っている（丸→人、丸の中の文字→名前）
+  if (types.includes(SLIDES_TYPE)) {
+    const list = slidesToShapes(parseSlidesClip(dt.getData(SLIDES_TYPE)), at);
+    if (list.length) {
+      const d = await diagramFromShapes(list, { cast: opts.cast || [] });
+      const out = d ? Object.values(d.shapes).map(({ id, z, ...s }) => s) : list.map(({ seq, ...s }) => s);
+      if (out.length) return out;
+    }
+  }
+
+  // 3) Googleドキュメント：図形描画は Google から取り出す、写真はそのまま
   let html = types.includes('text/html') ? dt.getData('text/html') : '';
   if (types.includes(SLICE_TYPE)) {
     try { html = sliceToHtml(dt.getData(SLICE_TYPE), html) || html; } catch (e) { console.warn(e); }
@@ -99,7 +110,7 @@ export async function shapesFromClipboard(dt, at, opts = {}) {
     if (out.length) return out;
   }
 
-  // 3) 文字だけなら、文字の図形にする
+  // 4) 文字だけなら、文字の図形にする
   if (text && text.trim()) {
     const t = text.replace(/\r/g, '').trim().slice(0, 400);
     return [{ t: 'text', text: t, x: Math.round(at[0]), y: Math.round(at[1]), size: 24, rot: 0 }];

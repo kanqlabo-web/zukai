@@ -52,6 +52,8 @@ export function svgToPng(svg) {
     im.src = url;
   });
 }
+// すでに舞台の座標になっている形の並びから（Googleスライドの図形など）
+export function diagramFromShapes(list, opts = {}) { return toDiagram(list, opts); }
 async function toDiagram(list, { cast = [] } = {}) {
   const persons = list.filter((s) => s.t === 'person');
   if (persons.length + list.filter((s) => s.t !== 'person' && s.t !== 'text').length < 1) return null;
