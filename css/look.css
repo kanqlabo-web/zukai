@@ -218,3 +218,6 @@ body.cmt-open .draft-page { margin-right: 340px; }
 .track-nav:hover { border-color: var(--accent-2); background: var(--accent-soft); }
 .ed-show { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; }
 @media (max-width: 700px) { .ed-show span { display: none; } }
+.cmt-float { position: fixed; z-index: 44; width: 40px; height: 40px; border-radius: 50%; border: 0; background: #fff; color: #3c3a48; box-shadow: 0 2px 8px rgba(20, 15, 40, .28); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.cmt-float:hover { background: var(--accent-soft); color: var(--accent); }
+.cmt-float[hidden] { display: none; }

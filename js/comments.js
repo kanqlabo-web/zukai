@@ -275,6 +275,47 @@ document.addEventListener('contextmenu', (e) => {
   ].filter(Boolean), rerender);
 });
 
+// 文字を選んだら、そのすぐ下にコメントのボタンを出す（Googleドキュメントと同じ）
+// 画面全体を描き直さないよう、ボタンは1つだけ作って位置だけ動かす
+let floatBtn = null;
+function floatingButton() {
+  if (floatBtn) return floatBtn;
+  floatBtn = document.createElement('button');
+  floatBtn.type = 'button';
+  floatBtn.className = 'cmt-float';
+  floatBtn.title = 'コメントを追加（' + MOD + 'Alt+M）';
+  floatBtn.setAttribute('aria-label', 'コメントを追加');
+  floatBtn.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H10l-4 3.5V16H4z"/><path d="M12 8v5M9.5 10.5h5"/></svg>';
+  floatBtn.addEventListener('pointerdown', (e) => e.preventDefault()); // 選んだ文字が外れないように
+  floatBtn.addEventListener('mousedown', (e) => e.preventDefault());
+  floatBtn.addEventListener('click', () => { floatBtn.hidden = true; startComment(); });
+  floatBtn.hidden = true;
+  document.body.appendChild(floatBtn);
+  return floatBtn;
+}
+function placeFloat() {
+  const btn = floatingButton();
+  const ds = window.getSelection();
+  const ok = S.route.name === 'draft' && !S.ui.editDiagram && ds && ds.rangeCount && !ds.isCollapsed && ds.toString().trim();
+  const r = ok ? ds.getRangeAt(0) : null;
+  const host = r && (r.commonAncestorContainer.nodeType === 1 ? r.commonAncestorContainer : r.commonAncestorContainer.parentElement);
+  if (!host || !host.closest || !host.closest('.script-ed, .note-ed')) { btn.hidden = true; return; }
+  const rects = r.getClientRects();
+  const last = rects.length ? rects[rects.length - 1] : r.getBoundingClientRect();
+  if (!last || (!last.width && !last.height)) { btn.hidden = true; return; }
+  btn.hidden = false;
+  const x = Math.min(window.innerWidth - 48, Math.max(8, last.right - 18));
+  const y = Math.min(window.innerHeight - 48, last.bottom + 8);
+  btn.style.left = x + 'px';
+  btn.style.top = y + 'px';
+}
+let floatRaf = 0;
+const queueFloat = () => { if (!floatRaf) floatRaf = requestAnimationFrame(() => { floatRaf = 0; placeFloat(); }); };
+document.addEventListener('selectionchange', queueFloat);
+window.addEventListener('scroll', queueFloat, true);
+window.addEventListener('resize', queueFloat);
+window.addEventListener('hashchange', queueFloat);
+
 // Ctrl+Alt+M（Mac は ⌘+Option+M）でコメント（Googleドキュメントと同じ）
 document.addEventListener('keydown', (e) => {
   if (S.route.name !== 'draft' || S.ui.editDiagram) return;
