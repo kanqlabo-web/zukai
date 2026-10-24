@@ -400,6 +400,7 @@ function Card(c) {
     key: c.id, 'data-cid': c.id, class: 'cmt-card' + (on ? ' on' : '') + (c.done ? ' done' : ''),
     onclick: (e) => { if (e.target.closest('button, textarea, details, a')) return; if (!on) goTo(c); },
   },
+    h('span', { class: 'cmt-bubble', 'aria-hidden': 'true' }, icon('comment', 13), replies.length ? String(replies.length + 1) : ''),
     h('div', { class: 'cmt-quote' + (lost ? ' lost' : '') }, lost ? '元の文字は削除されたか、書き換えられました：' + preview(quoteOf(c), 40) : preview(quoteOf(c))),
     c.done ? h('div', { class: 'cmt-resolved' }, `${(c.doneBy && c.doneBy.name) || ''}さんが解決にしました`) : null,
     body(c.by, c.ts, c.edited, c.text, null),
@@ -456,6 +457,15 @@ export function layoutSide() {
   const sheet = document.querySelector('.sheet-edit');
   const top0 = (page ? page.getBoundingClientRect().top : 0) + window.scrollY;
   box.style.top = top0 + 'px';
+  // 本文（図解）の右の余白に置く。余白が狭ければ、吹き出しの印だけにする
+  const content = sheet || page;
+  const right = content ? content.getBoundingClientRect().right : 0;
+  const vw = document.documentElement.clientWidth;
+  const room = vw - right - 20;
+  const mini = room < 170;
+  box.classList.toggle('mini', mini);
+  if (mini) { box.style.left = (vw - 38 + window.scrollX) + 'px'; box.style.width = '30px'; }
+  else { box.style.left = (right + 12 + window.scrollX) + 'px'; box.style.width = Math.min(300, room) + 'px'; }
   const head = box.querySelector('.cmt-head');
   const minY = head ? head.offsetHeight + 12 : 0;
   const fallback = sheet ? sheet.getBoundingClientRect().top + window.scrollY - top0 : minY;
