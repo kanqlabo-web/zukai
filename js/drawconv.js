@@ -523,18 +523,29 @@ export async function convertDrawing(page, fig, { chars = '', frame = null, word
   const fillOnly = rest.filter((p) => p.fill && !p.stroke);
   const strokes = rest.filter((p) => p.stroke);
   const bboxArea = (p) => (p.x1 - p.x0) * (p.y1 - p.y0);
+  // 囲み・線になった形が曲がった太い矢印なら、矢印にする（sibs：同じ図形の塗りの部分。矢印に含めて捨てる）
+  const asBent = (p, list, sibs) => {
+    if (list.length !== 1 || !(list[0].t === 'blob' || (list[0].t === 'line' && !list[0].style))) return list;
+    const a = bentArrowFor(p, sibs, M);
+    if (!a) return list;
+    for (const f of sibs) used.add(f);
+    return [a];
+  };
   for (const p of strokes) {
     // 同じ形の塗り（別の命令で塗っていることがある）
     let fc = p.fill && (p.fa ?? 1) > 0.05 ? p.fc : null;
     const twin = fillOnly.find((f) => !used.has(f) && Math.abs(f.x0 - p.x0) < 1.5 && Math.abs(f.x1 - p.x1) < 1.5 && Math.abs(f.y0 - p.y0) < 1.5 && Math.abs(f.y1 - p.y1) < 1.5);
     if (twin) { fc = twin.fc; used.add(twin); }
     used.add(p);
-    for (const s of shapesOf(p, M, scale, fc, false)) { s.seq = p.seq; shapes.push(s); }
+    // 同じ図形の塗りの部分：すぐ前後に描かれていて、線の枠の中に入っているもの
+    const e = Math.max(3, Math.max(p.x1 - p.x0, p.y1 - p.y0) * 0.1);
+    const sibs = [...(twin ? [twin] : []), ...fillOnly.filter((f) => !used.has(f) && Math.abs(f.seq - p.seq) <= 3 && f.x0 > p.x0 - e && f.x1 < p.x1 + e && f.y0 > p.y0 - e && f.y1 < p.y1 + e)];
+    for (const s of asBent(p, shapesOf(p, M, scale, fc, false), sibs)) { s.seq = p.seq; shapes.push(s); }
   }
   for (const p of fillOnly) {
     if (used.has(p) || bboxArea(p) < 4) continue;
     used.add(p);
-    for (const s of shapesOf(p, M, scale, p.fc, true)) { s.seq = p.seq; shapes.push(s); }
+    for (const s of asBent(p, shapesOf(p, M, scale, p.fc, true), [])) { s.seq = p.seq; shapes.push(s); }
   }
   shapes.sort((a, b) => a.seq - b.seq);
   // 人のそばの文字（キャラ名かもしれない）
@@ -720,6 +731,134 @@ function blockArrowOf(pts) {
     }
   }
   return best ? best.s : null;
+}
+
+// 曲がった白抜きの太い矢印（U ターン矢印・曲がり矢印・上へ曲がって横を向く矢印など）なら、中心線に沿った太い矢印にする。違えば null
+// p：外形の線の形、sibs：同じ図形の塗りの部分（曲がり矢印の裏側など）
+function bentArrowFor(p, sibs, M) {
+  const lines = subpaths(p.path, 8).map((x) => {
+    const pts = dedupe(x.pts.map(M));
+    const near = pts.length >= 4 && Math.hypot(pts[0][0] - pts[pts.length - 1][0], pts[0][1] - pts[pts.length - 1][1]) < 6;
+    return { pts, closed: x.closed || near || p.fill };
+  });
+  const regions = [...lines.filter((l) => l.closed).map((l) => l.pts), ...sibs.flatMap((f) => subpaths(f.path, 8).map((x) => dedupe(x.pts.map(M))))].filter((q) => q.length >= 3);
+  return bentArrowOf(lines, regions);
+}
+// lines：外形の線（{ pts, closed } の並び）、regions：矢印の中の範囲（多角形の並び。どれかの中なら矢印の中）
+// 矢の先（首・返し・先・返し・首）を見つけ、首の真ん中から元のほうへ、矢印の中の幅の真ん中をたどって中心線を作る
+// 矢印の外に出たところ（元の端）まで行けたら矢印とする
+function bentArrowOf(lines, regions) {
+  if (!regions.length) return null;
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  // 矢の先：首・返し・先・返し・首 が続き、返しどうし・首どうしが先の向きに対して向かい合っている
+  let head = null;
+  for (const l of lines) {
+    const p = l.pts, n = p.length;
+    if (n < 5) continue;
+    for (let i = 0; i < n; i++) {
+      if (!l.closed && (i < 2 || i > n - 3)) continue;
+      const Q = (k) => p[(((i + k) % n) + n) % n];
+      const n1 = Q(-2), b1 = Q(-1), tip = Q(0), b2 = Q(1), n2 = Q(2);
+      const Nm = mid(n1, n2), L = dist(Nm, tip), wn = dist(n1, n2), wb = dist(b1, b2);
+      if (L < 3 || wn < 4 || wb < wn * 1.15) continue;
+      const ux = (tip[0] - Nm[0]) / L, uy = (tip[1] - Nm[1]) / L;
+      const along = (q) => (q[0] - Nm[0]) * ux + (q[1] - Nm[1]) * uy;
+      const off = (q) => (q[0] - Nm[0]) * -uy + (q[1] - Nm[1]) * ux;
+      const tol = Math.max(1.5, wb * 0.15);
+      const Bm = mid(b1, b2);
+      if (Math.abs(off(Bm)) > tol || Math.abs(along(b1)) > tol || Math.abs(along(b2)) > tol) continue;
+      if (Math.abs(dist(tip, b1) - dist(tip, b2)) > Math.max(dist(tip, b1), dist(tip, b2)) * 0.2) continue;
+      if (Math.sign(off(b1)) === Math.sign(off(b2)) || Math.sign(off(n1)) !== Math.sign(off(b1))) continue;
+      const err = Math.abs(off(Bm)) + Math.abs(along(b1)) + Math.abs(along(b2));
+      if (!head || err < head.err) head = { err, tip, Nm, wn, wb, u: [ux, uy] };
+    }
+  }
+  if (!head) return null;
+  const inPoly = (q, poly) => {
+    let c = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const a = poly[i], b = poly[j];
+      if ((a[1] > q[1]) !== (b[1] > q[1]) && q[0] < ((b[0] - a[0]) * (q[1] - a[1])) / (b[1] - a[1]) + a[0]) c = !c;
+    }
+    return c;
+  };
+  const inside = (q) => regions.some((r) => inPoly(q, r));
+  const w = head.wn, step = Math.max(2, w * 0.25), fine = Math.max(0.5, w / 24);
+  // q から向き d へ、矢印の外に出るまでの長さ（far まで）
+  const reach = (q, d, far) => { let t = 0; while (t < far && inside([q[0] + d[0] * (t + fine), q[1] + d[1] * (t + fine)])) t += fine; return t; };
+  let C = head.Nm, dir = [-head.u[0], -head.u[1]];
+  const center = [C];
+  let total = 0, done = false;
+  const widths = [];
+  for (let it = 0; it < 4000 && total < 5000; it++) {
+    let P = [C[0] + dir[0] * step, C[1] + dir[1] * step];
+    if (!inside(P)) {
+      // 少し先（向きを少し変えた先も）がまた矢印の中なら、ねじれて細くなったところなので進む。そうでなければ元の端
+      let next = null;
+      for (const a of [0, 15, -15, 30, -30, 45, -45, 60, -60]) {
+        const r = (a * Math.PI) / 180, d = [dir[0] * Math.cos(r) - dir[1] * Math.sin(r), dir[0] * Math.sin(r) + dir[1] * Math.cos(r)];
+        for (let k = a ? 3 : 2; k <= 6 && !next; k++) { const Q = [C[0] + d[0] * step * k, C[1] + d[1] * step * k]; if (inside(Q)) next = Q; }
+        if (next) break;
+      }
+      if (!next) {
+        const t = reach(C, dir, step);
+        center.push([C[0] + dir[0] * t, C[1] + dir[1] * t]);
+        done = true;
+        break;
+      }
+      P = next;
+    }
+    // 向きに直角に両側へ、矢印の外までの長さ。幅の真ん中へ寄せる
+    const nx = -dir[1], ny = dir[0];
+    const da = reach(P, [nx, ny], w * 2), db = reach(P, [-nx, -ny], w * 2);
+    widths.push([total, da + db]);
+    const sh = (da - db) / 2;
+    const Cn = [P[0] + nx * sh, P[1] + ny * sh];
+    const d = dist(C, Cn);
+    if (d < 1e-6) return null;
+    dir = [(Cn[0] - C[0]) / d, (Cn[1] - C[1]) / d];
+    total += d;
+    C = Cn;
+    center.push(C);
+  }
+  if (!done || total < w) return null;
+  // 元の端の手前で幅が広がっていたら、そこにも矢の先がある（両方向・曲がった両方向の矢印など）ので、矢印にしない
+  if (widths.some(([d, ww]) => d > total - w * 1.5 && ww > w * 1.35)) return null;
+  // 元 → 先 の順。ねじれたところのがたつきをならし（両端はそのまま）、点を間引く（まっすぐなところは端だけ）
+  let pts = center.reverse();
+  for (let r = 0; r < 3; r++) pts = pts.map((q, i) => (i === 0 || i === pts.length - 1 ? q : [(pts[i - 1][0] + q[0] * 2 + pts[i + 1][0]) / 4, (pts[i - 1][1] + q[1] * 2 + pts[i + 1][1]) / 4]));
+  pts.push(head.tip);
+  // 矢印の中が、ほぼ中心線のまわり（軸の幅。矢の先は返しの幅）に収まること。収まらない（先が2つある矢印など）なら矢印にしない
+  {
+    const segD = (q, a, b) => {
+      const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1;
+      const t = Math.max(0, Math.min(1, ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / L2));
+      return Math.hypot(q[0] - a[0] - dx * t, q[1] - a[1] - dy * t);
+    };
+    const xs = regions.flat().map((q) => q[0]), ys = regions.flat().map((q) => q[1]);
+    const g = Math.max(1, w / 6), r = w / 2 + g * 1.5, rh = head.wb / 2 + g;
+    let all = 0, near = 0;
+    for (let x = Math.min(...xs) + g / 2; x < Math.max(...xs); x += g) for (let y = Math.min(...ys) + g / 2; y < Math.max(...ys); y += g) {
+      if (!inside([x, y])) continue;
+      all++;
+      if (segD([x, y], head.Nm, head.tip) <= rh) { near++; continue; }
+      for (let i = 0; i + 1 < pts.length; i++) if (segD([x, y], pts[i], pts[i + 1]) <= r) { near++; break; }
+    }
+    if (!all || near / all < 0.95) return null;
+  }
+  const keep = (a, z) => {
+    let k = -1, dm = 0;
+    const L = dist(pts[a], pts[z]) || 1;
+    for (let i = a + 1; i < z; i++) {
+      const dd = Math.abs((pts[z][0] - pts[a][0]) * (pts[a][1] - pts[i][1]) - (pts[a][0] - pts[i][0]) * (pts[z][1] - pts[a][1])) / L;
+      if (dd > dm) { dm = dd; k = i; }
+    }
+    return dm > 1 ? [...keep(a, k), ...keep(k, z).slice(1)] : [pts[a], pts[z]];
+  };
+  const r1 = (v) => Math.round(v * 10) / 10;
+  const out = keep(0, pts.length - 1).map((q) => [r1(q[0]), r1(q[1])]);
+  return { t: 'line', style: 'block', head: 'end', width: Math.max(6, Math.round(w)), ...(out.length > 2 ? { mode: 'smooth' } : {}), pts: out };
 }
 
 // ---------- Googleの図形描画（SVG）を、PDFのページと同じ形にする ----------
