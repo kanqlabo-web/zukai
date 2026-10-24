@@ -458,13 +458,14 @@ function editRoleList(w, list) {
 }
 let roleTimer = null;
 const normRole = (v) => String(v || '').replace(/\s/g, '');
-// 「ルーシィ（ルー）」「ルーシィ<TAB>ルー」を1行に1役
+// 「ダルシン：ダル」「ルーシィ（ルー）」「ルーシィ<TAB>ルー」を1行に1役
 function parseRoles(text) {
   const out = [];
   for (let line of String(text || '').split('\n')) {
     line = line.replace(/\u3000/g, ' ').trim();
     if (!line) continue;
-    let [name, label = ''] = line.split('\t').map((x) => x.trim());
+    const sep = line.includes('\t') ? '\t' : /[：:]/.test(line) ? /[：:]/ : null;
+    let [name, label = ''] = (sep ? line.split(sep) : [line]).map((x) => x.trim());
     const m = name.match(/^(.*?)\s*[（(](.*)[）)]\s*$/);
     if (m && !label) { name = m[1]; label = m[2]; }
     if (name || label) out.push({ id: newId(8), name, label });
@@ -524,15 +525,21 @@ function RoleListSection(w, cast, roleList) {
     h('div', { class: 'actions' },
       h('button', { class: 'btn', onclick: () => editRoleList(w, [...curRoles(), { id: newId(8), name: '', label: '' }]) }, '＋ 役を追加'),
       missing.length ? h('button', { class: 'btn', title: missing.map((r) => r.name).join('、'), onclick: () => { editRoleList(w, [...roleList, ...missing]); toast(`${missing.length}個の役を追加しました`); } }, `メンバーの役から追加（${missing.length}）`) : null),
-    h('details', { class: 'role-paste' },
+    h('details', { class: 'role-paste', open: !roleList.length },
       h('summary', null, 'まとめて貼り付け'),
-      h('p', { class: 'muted small' }, '1行に1役。「ルーシィ（ルー）」や、表計算ソフトからコピーした「役・キャラクターの表記」の列に対応しています。'),
-      h('textarea', { rows: 5, value: S.ui.rolePaste || '', oninput: (e) => { S.ui.rolePaste = e.target.value; }, placeholder: 'ルーシィ（ルー）\nエドマンド（エド）\n白い魔女' }),
+      h('p', { class: 'muted small' }, '1行に1役。「ダルシン：ダル」（役名：表記）や「ルーシィ（ルー）」、表計算ソフトからコピーした「役・キャラクターの表記」の列に対応しています。すでにある役は、表記だけ書き換えます。'),
+      h('textarea', { rows: 5, value: S.ui.rolePaste || '', oninput: (e) => { S.ui.rolePaste = e.target.value; }, placeholder: 'ダルシン：ダル\nコンラ王：コン\n兵士A：兵A' }),
       h('div', { class: 'actions' },
         h('button', { class: 'btn', onclick: () => {
-          const add = parseRoles(S.ui.rolePaste).filter((r) => !roleList.some((x) => normRole(x.name) === normRole(r.name)));
-          if (!add.length) return;
-          editRoleList(w, [...roleList, ...add]); S.ui.rolePaste = ''; toast(`${add.length}個の役を追加しました`);
+          const list = curRoles().slice();
+          let added = 0, changed = 0;
+          for (const r of parseRoles(S.ui.rolePaste)) {
+            const i = list.findIndex((x) => normRole(x.name) && normRole(x.name) === normRole(r.name));
+            if (i < 0) { list.push(r); added++; } else if (r.label && r.label !== list[i].label) { list[i] = { ...list[i], label: r.label }; changed++; }
+          }
+          if (!added && !changed) return;
+          editRoleList(w, list); S.ui.rolePaste = '';
+          toast([added ? `${added}個の役を追加しました` : '', changed ? `${changed}個の表記を書き換えました` : ''].filter(Boolean).join('。'));
         } }, '後ろに追加'))));
 }
 
