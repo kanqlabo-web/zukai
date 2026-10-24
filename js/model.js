@@ -251,3 +251,10 @@ export function extractEmails(text) {
   const m = (text || '').match(/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/g) || [];
   return [...new Set(m.map((s) => s.toLowerCase()))];
 }
+
+// ホームのカードに出す図（ライブラリーの works/{w}.thumb に入れる）。写真の図形は大きいので入れない
+export function thumbOf(g) {
+  const shapes = {};
+  for (const [id, s] of Object.entries((g && g.shapes) || {})) if (s && s.t !== 'image') shapes[id] = s;
+  return { g: g.id || null, shapes, roleVis: (g && g.roleVis) || {}, at: Date.now() };
+}

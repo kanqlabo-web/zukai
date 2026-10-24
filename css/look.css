@@ -144,7 +144,7 @@ a.crumb:hover { background: var(--hover); }
 .work-card:hover { border-color: #a8c7fa; transform: none; }
 .work-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .work-thumb { height: 150px; border-bottom: 1px solid var(--line); border-radius: 6px 6px 0 0; background: #fff; display: grid; place-items: center; overflow: hidden; }
-.work-thumb svg { width: 72%; height: auto; }
+.work-thumb svg { width: 90%; height: auto; display: block; pointer-events: none; }
 .work-body { padding: 10px 6px 10px 14px; }
 .work-card-head { align-items: center; }
 .work-title { font-family: var(--ui-font); font-weight: 500; font-size: 14px; line-height: 1.4; margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }

@@ -2,7 +2,7 @@
 import { h, render } from './vdom.js';
 import { db, DEL, newId } from './db.js';
 import { S, rerender, toast, pickFile } from './state.js';
-import { P, createImage } from './model.js';
+import { P, createImage, thumbOf } from './model.js';
 import { loadPhoto, warpToStage, TracePicker, initialCorners } from './trace.js';
 import { textInRegion } from './drawimport.js';
 import { shapesFromClipboard, MARK } from './clippaste.js';
@@ -57,6 +57,8 @@ export const isEditorOpen = () => !!E;
 export function closeEditor(noBack) {
   if (!noBack && window.history.state && window.history.state.zukaiEditor) window.history.back();
   if (E) setPresence(E.w, { g: null, sel: null });
+  // 直した図を、ホームのカードの絵にする（履歴には残さない）
+  if (E && E.changed) db.updateQuiet(P.work(E.w), { thumb: thumbOf({ id: E.id, shapes: E.shapes, roleVis: E.roleVis }) }).catch(() => {});
   if (unsub) unsub();
   unsub = null;
   E = null;
@@ -309,6 +311,7 @@ async function commit(changes, record = true) {
   if (prop.skipped && prop.skipped.size) {
     toast(`${[...prop.skipped].join('・')}は、あとの図で離れた場所にいるため、あとの図は変えていません`, 'info', 5000);
   }
+  E.changed = true;
   try { await db.update(path(), patch); } catch (e) { toast('図を保存できませんでした: ' + (e.message || e), 'error', 6000); }
 }
 

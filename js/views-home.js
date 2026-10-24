@@ -4,7 +4,9 @@ import { icon, brandIcon } from './icons.js';
 import { versionLabel, CHANGELOG_URL } from './version.js';
 import { db, mode } from './db.js';
 import { S, rerender, toast, fmtTime, go, adminMsg } from './state.js';
-import { P, createWork, deleteWork, exportWork } from './model.js';
+import { P, createWork, deleteWork, exportWork, thumbOf } from './model.js';
+import { StageSVG, shapeCenter, W } from './stage.js';
+import { castIndex } from './cast.js';
 import { myRole, ROLE_LABEL } from './access.js';
 import { buildSample, buildSampleFrom } from './sample.js';
 import { SAMPLE_LINK, ADMIN_EMAILS } from './settings.js';
@@ -59,16 +61,28 @@ async function newWorkDialog() {
   go(`#/w/${id}`);
 }
 
-// カードの上の絵（舞台と人の小さな図。ライブラリーの中身ではなく飾り）
-function CardArt() {
-  const ppl = [[34, 62], [52, 40], [70, 60], [92, 44], [110, 64], [126, 40]];
-  return h('svg', { viewBox: '0 0 160 100' },
-    h('rect', { x: 8, y: 14, width: 144, height: 72, fill: '#fff', stroke: '#c4c7c5', 'stroke-width': 1.5 }),
-    h('path', { d: 'M24 14v72M136 14v72', stroke: '#c4c7c5', 'stroke-width': 1.5 }),
-    h('path', { d: 'M80 14v72M24 50h112', stroke: '#dadce0', 'stroke-width': 1.2, 'stroke-dasharray': '4 3' }),
-    ppl.map(([x, y], i) => h('g', { key: i },
-      h('circle', { cx: x, cy: y, r: 7, fill: '#fff', stroke: '#e60012', 'stroke-width': 1.4 }),
-      h('text', { x, y: y + 3.4, 'text-anchor': 'middle', 'font-size': 9, 'font-family': 'Arial, sans-serif', fill: '#e60012' }, String(i + 1)))));
+// カードの上の絵：そのライブラリーの図（最後に直した図。まだなければ、舞台に人がよく並んでいる図を一度だけ探して覚えておく）
+const thumbs = {};
+async function findThumb(w) {
+  thumbs[w.id] = 'loading';
+  try {
+    const list = await db.list(P.col(w.id, 'diagrams'));
+    // 舞台の上（袖ではない所）に図形や人がいちばん多く並んでいる図を選ぶ
+    const onStage = (g) => Object.values(g.shapes || {}).filter((sh) => { try { const [x] = shapeCenter(sh); return x > W * 0.12 && x < W * 0.88; } catch (e) { return false; } }).length;
+    const score = (g) => [onStage(g), g.updatedAt || g.createdAt || 0];
+    const better = (a, b) => { const x = score(a), y = score(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] > y[i]; return false; };
+    const best = list.reduce((m, g) => (!m || better(g, m) ? g : m), null);
+    thumbs[w.id] = best ? thumbOf(best) : 'none';
+    // 編集できる人なら、次からは探さずに済むようライブラリーに覚えておく
+    if (best && myRole(w) !== 'viewer') db.updateQuiet(P.work(w.id), { thumb: thumbs[w.id] }).catch(() => {});
+  } catch (e) { thumbs[w.id] = 'none'; }
+  rerender();
+}
+function CardArt(w) {
+  const t = w.thumb || thumbs[w.id];
+  if (!t) findThumb(w);
+  const shapes = t && typeof t === 'object' ? t.shapes : {};
+  return StageSVG(shapes || {}, { cls: 'stage card-stage', idx: castIndex(w.cast || []), roleVis: (t && t.roleVis) || {} });
 }
 
 export function HomeView() {
@@ -105,7 +119,7 @@ export function HomeView() {
           onclick: (e) => { if (!e.target.closest('.kebab')) go(`#/w/${w.id}`); },
           onkeydown: (e) => { if (e.key === 'Enter' && e.target === e.currentTarget) go(`#/w/${w.id}`); },
         },
-          h('div', { class: 'work-thumb', 'aria-hidden': 'true' }, CardArt()),
+          h('div', { class: 'work-thumb', 'aria-hidden': 'true' }, CardArt(w)),
           h('div', { class: 'work-body' },
             h('div', { class: 'work-card-head' },
               h('div', { class: 'work-title' }, w.title || '無題のライブラリー')),
