@@ -19,11 +19,13 @@ import { openContextMenu, MOD } from './menubar.js';
 const C = { d: null, open: false, hidden: false, active: null, filter: 'open', compose: null, reply: {}, editing: null };
 function reset(d) { if (C.d !== d) Object.assign(C, { d, open: false, active: null, compose: null, reply: {}, editing: null }); }
 // 広い画面では、コメントを本文の右に、付けた所の高さにそろえていつも出す（Googleドキュメントと同じ）。狭い画面では下に開く
-const wide = () => window.innerWidth > 1100;
+// パソコン（マウスで使う端末）は幅に関係なく右に。指だけの端末は、広い画面（タブレットの横向きなど）のときだけ右に
+const fine = () => !!(window.matchMedia && window.matchMedia('(any-pointer: fine)').matches);
+const wide = () => window.innerWidth > (fine() ? 700 : 1100);
 function shown() {
   if (S.route.name !== 'draft' || C.d !== S.route.params.d) return false;
   if (!wide()) return C.open;
-  return !C.hidden && (C.open || !!C.compose || commentsOf().length > 0);
+  return C.open || !!C.compose || commentsOf().length > 0; // 右に出すときは隠せない（コメントがあればいつも出す）
 }
 
 const path = (id) => P.doc(S.route.params.w, 'comments', id);
@@ -134,6 +136,12 @@ function focusLater(sel) { requestAnimationFrame(() => requestAnimationFrame(() 
 
 export function toggleComments(v) {
   reset(S.route.params.d);
+  // 右に出しているときは隠さない。ボタンを押したら、最初の未解決のコメントへ移る
+  if (wide() && commentsOf().length) {
+    const first = sorted(commentsOf().filter((c) => !c.done))[0];
+    if (v !== false && first) goTo(first);
+    return;
+  }
   const on = v == null ? !shown() : v;
   C.open = on; C.hidden = !on;
   if (!on) { C.compose = null; C.active = null; }
@@ -416,7 +424,7 @@ export function CommentsPanel() {
     h('div', { class: 'seg cmt-seg' },
       h('button', { class: 'seg-btn' + (C.filter === 'open' ? ' on' : ''), onclick: () => { C.filter = 'open'; rerender(); } }, `未解決（${all.filter((c) => !c.done).length}）`),
       h('button', { class: 'seg-btn' + (C.filter === 'all' ? ' on' : ''), onclick: () => { C.filter = 'all'; rerender(); } }, `すべて（${all.length}）`)),
-    h('button', { class: 'icon-btn', title: side ? 'コメントを隠す（上の「コメント」でまた出せます）' : '閉じる', 'aria-label': 'コメントを閉じる', onclick: () => toggleComments(false) }, icon('close', 18)));
+    side ? null : h('button', { class: 'icon-btn', title: '閉じる', 'aria-label': 'コメントを閉じる', onclick: () => toggleComments(false) }, icon('close', 18)));
   const compose = m ? h('div', { key: '__new', 'data-cid': '__new', class: 'cmt-card on cmt-compose' },
     h('div', { class: 'cmt-quote' }, preview(m.at.k === 'block' ? quoteOf({ at: m.at }) : m.at.q)),
     Who(me(), Date.now()),
