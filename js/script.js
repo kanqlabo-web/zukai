@@ -216,6 +216,31 @@ export function findCue(script, cue, { from = 0, near = 0, end = Infinity } = {}
     const fz = [];
     for (let k = ns.indexOf(nc); k >= 0; k = ns.indexOf(nc, k + 1)) fz.push([map[k], map[k + nc.length - 1] + 1]);
     h = pick(fz);
+    // それでもなければ、書き間違い（Durshyn と Dursyn のような1〜2字の違い）を許して探す
+    if (!h) {
+      const m = nc.length, tol = m >= 8 ? 2 : m >= 4 ? 1 : 0;
+      const ap = [];
+      for (let k = 0; tol && k < ns.length; k++) {
+        if (ns[k] !== nc[0] && ns[k] !== nc[1]) continue;
+        let best = Infinity, bl = 0;
+        for (let L = Math.max(2, m - tol); L <= m + tol && k + L <= ns.length; L++) {
+          const d = editDist(nc, ns.slice(k, k + L));
+          if (d < best) { best = d; bl = L; }
+        }
+        if (best <= tol) ap.push({ d: best, h: [map[k], map[k + bl - 1] + 1] });
+      }
+      const dmin = Math.min(...ap.map((x) => x.d));
+      h = pick(ap.filter((x) => x.d === dmin).map((x) => x.h));
+    }
   }
   return h ? { i: h[0], text: script.slice(h[0], h[1]) } : null;
+}
+function editDist(a, b) {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
 }
