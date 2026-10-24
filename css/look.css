@@ -311,3 +311,43 @@
 /* 「…」のメニューを開いたカードは次のカードより手前に（解決済みの薄さも外してメニューを読みやすく） */
 .cmt-card:has(.cmt-menu[open]) { position: relative; z-index: 5; opacity: 1; }
 .cmt-side-col > .cmt-card:has(.cmt-menu[open]) { position: absolute; }
+
+/* ---------- 動きの変更（moves.js） ---------- */
+.mv-me { fill: none; stroke: #f59e0b; stroke-width: 5; opacity: .85; }
+.mv-line { stroke: #ea580c; stroke-width: 3; stroke-dasharray: 8 6; fill: none; }
+.mv-from { fill: none; stroke: #ea580c; stroke-width: 2; stroke-dasharray: 4 4; opacity: .7; }
+.mv-moved { fill: none; stroke: #ea580c; stroke-width: 4; }
+.mv-target { fill: rgba(234, 88, 12, .12); stroke: #ea580c; }
+.show-fig.is-moving { cursor: default; }
+.show-stage.mv-editing { touch-action: none; cursor: grab; outline: 3px solid #ea580c; outline-offset: 2px; }
+.btn.mv-start { border-color: #ea580c; color: #9a3412; }
+.mv-sheet { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); width: min(560px, calc(100vw - 24px)); max-height: 55vh; overflow: auto; z-index: 30;
+  background: #fff; border: 1px solid #f3c39b; border-radius: 12px; box-shadow: 0 8px 28px rgba(0,0,0,.18); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.mv-sheet-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.mv-hint { margin: 0; color: var(--ink-2); }
+.mv-me-row { display: flex; align-items: center; gap: 8px; }
+.mv-me-row select { flex: 1; min-width: 0; }
+.mv-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; width: 100%; }
+.mv-list li { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+.mv-list li > span { flex: 1 1 auto; min-width: 0; writing-mode: horizontal-tb; }
+.mv-note { width: 100%; resize: vertical; }
+.mv-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+@media (min-width: 900px) {
+  .mv-sheet { left: auto; right: 12px; transform: none; width: min(420px, 31vw); max-height: calc(100vh - 90px); }
+}
+.mv-sent { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 30; background: rgba(40,36,70,.85); color: #fff; font-size: 13px; padding: 4px 14px; border-radius: 99px; pointer-events: none; max-width: calc(100vw - 24px); }
+.mv-chip { display: inline-flex; align-items: center; border: 1px solid #ea580c; background: #fff1e6; color: #9a3412; border-radius: 99px; padding: 1px 8px; font-size: 12px; font-weight: 700; cursor: pointer; margin-right: 6px; align-self: center; white-space: nowrap; }
+.mv-bar { background: #fff7ef; border: 1px solid #f3c39b; border-radius: var(--radius); padding: 8px 14px; margin: 12px 0; }
+.mv-bar > summary { cursor: pointer; }
+.mv-items { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.mv-items li { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; background: #fff; border: 1px solid #f6dcc6; border-radius: 8px; padding: 8px 10px; flex-wrap: wrap; }
+.mv-item-main { min-width: 0; flex: 1; }
+.mv-item-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.mv-quote { border-left: 3px solid #f3c39b; padding-left: 8px; margin-top: 2px; white-space: pre-wrap; }
+.mv-ed { border: 1px solid #f3c39b; background: #fff7ef; border-radius: 10px; padding: 10px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }
+.mv-ed h3 { margin: 0; font-size: 14px; color: #9a3412; }
+.mv-ed p { margin: 0; }
+.mv-ed-item { background: #fff; border: 1px solid #f6dcc6; border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+.mv-warn { color: var(--danger); }
+.mv-list li > .linklike { flex: none; width: auto; }
+.mv-list li > .linklike { color: var(--accent-2); }

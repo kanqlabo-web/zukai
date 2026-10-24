@@ -8,6 +8,7 @@ import { buildRows, highlightRanges, parseLines } from './script.js';
 import { StageSVG, W, H } from './stage.js';
 import { CastTable, Legend, ScriptLines, DotText } from './sheet.js';
 import { openEditor, PresenceMarks } from './editor.js';
+import { DraftMovesBar } from './moves.js';
 import { confirmBox, ask } from './dialog.js';
 import { MenuBar, MOD } from './menubar.js';
 import { undoAll, redoAll } from './undo.js';
@@ -984,6 +985,18 @@ async function duplicateDiagram(w, d, b, it) {
   openEditor(w, gid);
 }
 
+// 練習で送られてきた動きの変更（図のないタイミング）：前の図を写し、動いた人を新しい位置にした図を、そのタイミングのいちばん下に足す
+async function figFromMove(w, d, m, base) {
+  const b = (S.d.blocks || []).find((x) => x.id === m.blockId);
+  if (!b) { toast('そのタイミングが見つかりません（消された可能性があります）', 'error'); return false; }
+  const shapes = JSON.parse(JSON.stringify(base.shapes || {}));
+  for (const [id, p] of Object.entries(m.moves || {})) if (shapes[id] && shapes[id].t === 'person') shapes[id] = { ...shapes[id], x: p.x, y: p.y };
+  const gid = await createDiagram(w, d, shapes);
+  await insertItems(w, d, b, { at: Infinity }, [{ kind: 'diagram', refId: gid, caption: '' }]);
+  openEditor(w, gid);
+  return true;
+}
+
 // ページに写真のファイルを落としたら、落とした項目の下（項目の外ならいちばん下）に差し込む
 function onDocDrop(e, w, d, b) {
   const files = [...((e.dataTransfer && e.dataTransfer.files) || [])].filter((f) => /^image\//.test(f.type));
@@ -1318,6 +1331,7 @@ export function DraftView() {
           h('div', { class: 'menu' },
             draft.updMark ? h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; db.update(draftPath, { updShow: draft.updShow === false }); } }, draft.updShow === false ? '更新箇所を青字にする' : '更新箇所を青字にしない') : null,
             h('button', { class: 'linklike danger', onclick: (e) => { e.target.closest('details').open = false; removeDraft(w, draft, track, siblings); } }, 'この稿を削除'))))),
+    DraftMovesBar(w, d, draft, (gid) => openEditor(w, gid), (m, base) => figFromMove(w, d, m, base)),
     !isLatest ? h('div', { class: 'note' }, `これは古い稿（${draftName(draft)}）です。編集すると、この稿が書き換わります。`) : null,
     showUpdates(draft) ? h('div', { class: 'small upd-note' }, '青字は前の稿から変えたところです（書き出しでも青字。右上の「…」でやめられます）。') : null,
     h('section', { class: 'info-panel' },

@@ -17,6 +17,7 @@ import { ask } from './dialog.js';
 import { previousShapes, minCostAssign, diagramSequence } from './assign.js';
 import { neighborDrafts, loadNeighbor, edgeDiagram } from './neighbors.js';
 import { setPresence, others, colorOf, sharePointer } from './presence.js';
+import { EditorMovesSection, EditorMovesLayer } from './moves.js';
 
 let E = null;
 let unsub = null;
@@ -2348,6 +2349,17 @@ function GhostLayer(shapes, ix, upx) {
     h('g', { class: 'ghost-shapes', opacity: 0.22 }, list.map((s) => shapeNode({ ...s, id: 'ghost-' + s.id }, { idx: ix }))),
     h('g', null, lines));
 }
+// 練習で送られてきた動きの変更を、この図に反映する（ふつうに動かしたのと同じく、元に戻せる。「あとの図にも反映」も効く）
+function applyMoves(moves) {
+  const ch = {};
+  for (const [id, p] of Object.entries(moves || {})) {
+    const s = E.shapes[id];
+    if (s && s.t === 'person') ch[id] = { ...s, x: p.x, y: p.y };
+  }
+  if (!Object.keys(ch).length) { toast('動かす人が、この図にもういません', 'error'); return false; }
+  commit(ch);
+  return true;
+}
 function switchDiagram(id) {
   const w = E.w, zoom = E.zoom, tool = E.tool;
   closeEditor(true);
@@ -2453,6 +2465,7 @@ export function EditorView() {
           h('g', { class: 'trace-layer', 'pointer-events': 'none' }, E.trace && E.traceSrc && !E.traceHidden
             ? h('image', { href: E.traceSrc, x: 0, y: 0, width: W, height: H, preserveAspectRatio: 'none', opacity: E.trace.op == null ? 0.5 : E.trace.op }) : null),
           GhostLayer(shapes, ix, upx),
+          EditorMovesLayer(E.id, shapes, upx),
           h('g', null, list.map((s) => shapeNode(s, { selected: E.sel.has(s.id), interactive: true, idx: ix }))),
           h('g', null, layoutLabels(list, ix, E.roleVis, E.tool === 'select')),
           h('g', { class: 'pres-marks' }, PresenceMarks(shapes, here, upx)),
@@ -2463,6 +2476,7 @@ export function EditorView() {
         prevNote ? h('div', { class: 'ghost-note' }, prevNote) : null),
       h('aside', { class: 'ed-panel' + (E.hidePanel ? ' is-hidden' : '') },
         h('div', { class: 'rotate-hint' }, '2本指で広げると拡大、2本指で動かすとスクロールします。横向きにすると大きく編集できます。'),
+        EditorMovesSection(E.w, E.id, shapes, ix, applyMoves),
         E.hmode ? HeightPanel() : E.tool === 'person' ? PersonPanel(shapes) : ['line', 'curve', 'carrow', 'cblock'].includes(E.tool) ? PolyPanel() : E.tool === 'block' ? BlockToolPanel() : SelPanel())),
     E.xf ? XfHint() : null,
     ContextMenu(),

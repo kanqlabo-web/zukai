@@ -79,6 +79,8 @@ function onRoute() {
     watch('tracks', (cb) => db.watchList(P.col(w, 'tracks'), null, cb, denied));
     watch('drafts', (cb) => db.watchList(P.col(w, 'drafts'), null, cb, denied));
   }
+  // 練習で送られてきた動きの変更（moves.js）
+  if (w && (r.name === 'work' || r.name === 'draft' || r.name === 'show')) watch('moves', (cb) => db.watchList(P.col(w, 'moves'), ['state', 'open'], cb, () => {}));
   if (r.name === 'work') watch('comments', (cb) => db.watchList(P.col(w, 'comments'), null, cb, () => {}));
   if (r.name === 'draft') {
     watch('blocks', (cb) => db.watchList(P.col(w, 'blocks'), ['draftId', d], cb, () => { S.d.work = null; rerender(); }));

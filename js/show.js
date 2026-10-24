@@ -6,11 +6,11 @@ import { S, rerender, go } from './state.js';
 import { draftTitle } from './model.js';
 import { workIndex } from './cast.js';
 import { buildRows, highlightRanges, sortBlocks } from './script.js';
-import { StageSVG } from './stage.js';
 import { DotText, CueTitle, ScriptLines } from './sheet.js';
 import { openEditorAfter } from './editor.js';
 import { canEdit } from './access.js';
 import { icon } from './icons.js';
+import { ShowFigure, ShowMoveButton, MoveSheet, moveEditing } from './moves.js';
 
 const byOrder = (a, b) => (a.order || 0) - (b.order || 0) || (a.createdAt || 0) - (b.createdAt || 0);
 const V = { key: '', i: 0, scrolled: -1, side: null };
@@ -83,8 +83,7 @@ function jumpToText(ti, off) {
 
 function Figure(data, t, s, idx) {
   if (!s.fig) return h('div', { class: 'show-empty' }, 'このタイミングには図がありません');
-  const g = t.diagrams[s.fig.refId];
-  return g ? StageSVG(g.shapes, { cls: 'stage show-stage', idx, roleVis: g.roleVis || {} }) : null;
+  return ShowFigure(data, t, s, idx);
 }
 
 export function ShowView() {
@@ -135,15 +134,17 @@ export function ShowView() {
         class: 'show-side', title: '説明とテーマ活動の友の位置', value: side,
         onchange: (e) => { V.side = e.target.value === 'auto' ? null : e.target.value; try { localStorage.setItem('zukai.showSide', V.side || ''); } catch (er) { /* noop */ } V.scrolled = -1; rerender(); },
       }, h('option', { value: 'auto' }, '説明の位置：自動'), h('option', { value: 'right' }, '説明の位置：右'), h('option', { value: 'bottom' }, '説明の位置：下')),
+      ShowMoveButton(data, t, s),
       s.fig && canEdit(data.work) ? h('button', { class: 'btn', title: 'この図を編集する', onclick: () => openEditorAfter(data.w, t.draft.id, s.fig.refId) }, icon('pencil', 16), '図を編集') : null,
       h('button', { class: 'btn', title: '全画面（F）', onclick: toggleFull }, '全画面')),
     h('div', { class: 'show-body' },
-      h('div', { class: 'show-fig', onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX - r.left < r.width * 0.35) prev(); else next(); } },
+      h('div', { class: 'show-fig' + (moveEditing() ? ' is-moving' : ''), onclick: (e) => { if (moveEditing()) return; const r = e.currentTarget.getBoundingClientRect(); if (e.clientX - r.left < r.width * 0.35) prev(); else next(); } },
         Figure(data, t, s, idx),
         s.carried ? h('div', { class: 'show-carried' }, '前の図のまま') : null,
         s.part ? h('div', { class: 'show-carried' }, `このタイミングの図 ${s.part[0]} / ${s.part[1]}`) : null,
-        V.i > 0 ? h('div', { class: 'show-arrow left' }, '‹') : null,
-        V.i < list.length - 1 ? h('div', { class: 'show-arrow right' }, '›') : null),
+        V.i > 0 && !moveEditing() ? h('div', { class: 'show-arrow left' }, '‹') : null,
+        V.i < list.length - 1 && !moveEditing() ? h('div', { class: 'show-arrow right' }, '›') : null),
+      MoveSheet(data, t, s, idx),
       h('div', { class: 'show-side-pane' },
         h('div', { class: 'show-notes' },
           s.b && s.b.cue ? CueTitle(s.b.cue, false, s.b.cueEnd) : h('div', { class: 'cue muted' }, s.b ? '（タイミングの語句なし）' : ''),
@@ -185,7 +186,7 @@ export function afterShow() {
 }
 
 document.addEventListener('keydown', (e) => {
-  if (S.route.name !== 'show' || e.target.closest('input,select,textarea')) return;
+  if (S.route.name !== 'show' || e.target.closest('input,select,textarea') || moveEditing()) return;
   if (V.zoom) { if (e.key === 'Escape' || e.key === ' ' || e.key === 'Enter') { e.preventDefault(); V.zoom = null; rerender(); } return; }
   if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ' || e.key === 'ArrowDown') { e.preventDefault(); next(); }
   else if (e.key === 'ArrowLeft' || e.key === 'PageUp' || e.key === 'ArrowUp') { e.preventDefault(); prev(); }
@@ -198,7 +199,7 @@ document.addEventListener('keydown', (e) => {
 // スマホ：図を左右にスワイプ
 let tx = null, ty = null;
 document.addEventListener('touchstart', (e) => {
-  if (S.route.name !== 'show' || !e.target.closest('.show-fig')) { tx = null; return; }
+  if (S.route.name !== 'show' || !e.target.closest('.show-fig') || moveEditing()) { tx = null; return; }
   tx = e.touches[0].clientX; ty = e.touches[0].clientY;
 }, { passive: true });
 document.addEventListener('touchend', (e) => {

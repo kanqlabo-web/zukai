@@ -84,6 +84,14 @@ service cloud.firestore {
       // 作品の削除はオーナーだけ
       allow delete: if signedIn() && me() in owners(resource.data);
 
+      // 練習で送る動きの変更（moves.js）：閲覧者も含めて参加者全員が、自分の名前で新しく送れる
+      // 反映・見送り（書き換え）は、ふだんどおり閲覧者以外（下の {sub=**}）。送った本人は自分のものを消せる
+      match /moves/{id} {
+        allow create: if inWork(w) && request.resource.data.by.email == me()
+          && request.resource.data.state == 'open';
+        allow delete: if inWork(w) && resource.data.by.email == me();
+      }
+
       // 作品の中身：共有されている人は読める。閲覧者以外は書ける
       match /{sub=**} {
         allow read: if inWork(w);

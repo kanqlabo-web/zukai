@@ -1,5 +1,6 @@
 // ライブラリーページ（話・トラック・稿の一覧）とメンバー一覧
 import { WorkCommentsButton, TrackCommentChip } from './comments.js';
+import { TrackMoveChip } from './moves.js';
 import { h } from './vdom.js';
 import { icon } from './icons.js';
 import { db, auth } from './db.js';
@@ -125,6 +126,7 @@ export function WorkView() {
                 latest && latest.zukaikko ? `図解っ子：${latest.zukaikko}${latest.updatedAt ? ' ・ ' : ''}` : '',
                 latest && latest.updatedAt ? `更新 ${fmtTime(latest.updatedAt)}${latest.updatedBy ? '（' + latest.updatedBy + '）' : ''}` : ''),
               NameTags(here, 'in-track')),
+            edit ? TrackMoveChip(w, t.id, latest && latest.id) : null,
             TrackCommentChip(t.id),
             open ? icon('chevron', 18, 'track-go') : null,
             h('div', { class: 'track-actions' },
