@@ -13,6 +13,7 @@ import { icon } from './icons.js';
 import { pointAt, selectionIn, lastRichEditor } from './richtext.js';
 import { buildRows } from './script.js';
 import { confirmBox } from './dialog.js';
+import { openContextMenu, MOD } from './menubar.js';
 
 // 画面の状態（ページを移ると閉じる）
 const C = { d: null, open: false, active: null, filter: 'open', compose: null, reply: {}, editing: null };
@@ -253,6 +254,25 @@ document.addEventListener('click', (e) => {
   C.open = true; C.active = hit.id; C.compose = null;
   rerender();
   requestAnimationFrame(() => { const el = document.querySelector(`.cmt-card[data-cid="${CSS.escape(hit.id)}"]`); if (el) el.scrollIntoView({ block: 'nearest' }); });
+});
+
+// 右クリック：選んだ語句・押した図解にコメント（Googleドキュメントのように、右クリックのメニューから）
+document.addEventListener('contextmenu', (e) => {
+  if (S.route.name !== 'draft' || S.ui.editDiagram) return;
+  const t = e.target;
+  if (!t.closest || !t.closest('.sheet-edit') || t.closest('input, textarea')) return;
+  const ds = window.getSelection();
+  const hasSel = !!(ds && ds.rangeCount && !ds.isCollapsed && t.closest('.script-ed, .note-ed'));
+  const block = t.closest('[data-pblock]');
+  if (!hasSel && !block) return;
+  e.preventDefault();
+  const copy = () => { try { document.execCommand('copy'); } catch (err) { /* noop */ } };
+  openContextMenu(e.clientX, e.clientY, [
+    hasSel ? { label: 'コピー', kbd: MOD + 'C', onclick: copy } : null,
+    hasSel ? '-' : null,
+    hasSel ? { label: 'コメント', kbd: MOD + 'Alt+M', onclick: startComment } : null,
+    block ? { label: 'この図解にコメント', onclick: () => commentOnBlock(block.getAttribute('data-pblock')) } : null,
+  ].filter(Boolean), rerender);
 });
 
 // Ctrl+Alt+M（Mac は ⌘+Option+M）でコメント（Googleドキュメントと同じ）

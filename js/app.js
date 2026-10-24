@@ -14,6 +14,7 @@ import { saveMyProfile, handleGroupResult } from './access.js';
 import { setPresence, PresenceBar, paintCarets, paintPointers } from './presence.js';
 import { ShowView, afterShow } from './show.js';
 import { CommentsPanel, paintCommentMarks } from './comments.js';
+import { ContextMenu } from './menubar.js';
 import { versionLabel, CHANGELOG_URL, watchForUpdate, reloadToLatest } from './version.js';
 
 const $app = document.getElementById('app');
@@ -227,7 +228,7 @@ function PageView() {
   else if (r.name === 'cast') page = CastView();
   else if (r.name === 'people') page = ShareView();
   else if (r.name === 'draft') page = DraftView();
-  return [Header(), page, r.name === 'draft' ? SelectionBar() : null, r.name === 'draft' ? CommentsPanel() : null];
+  return [Header(), page, r.name === 'draft' ? SelectionBar() : null, r.name === 'draft' ? CommentsPanel() : null, r.name === 'draft' && !S.ui.editDiagram ? ContextMenu() : null];
 }
 
 function renderPage() {
