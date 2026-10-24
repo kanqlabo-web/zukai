@@ -1,6 +1,6 @@
 // ライブラリー一覧
 import { h } from './vdom.js';
-import { icon } from './icons.js';
+import { icon, brandIcon } from './icons.js';
 import { versionLabel, CHANGELOG_URL } from './version.js';
 import { db, mode } from './db.js';
 import { S, rerender, toast, fmtTime, go, adminMsg } from './state.js';
@@ -59,6 +59,18 @@ async function newWorkDialog() {
   go(`#/w/${id}`);
 }
 
+// カードの上の絵（舞台と人の小さな図。ライブラリーの中身ではなく飾り）
+function CardArt() {
+  const ppl = [[34, 62], [52, 40], [70, 60], [92, 44], [110, 64], [126, 40]];
+  return h('svg', { viewBox: '0 0 160 100' },
+    h('rect', { x: 8, y: 14, width: 144, height: 72, fill: '#fff', stroke: '#c4c7c5', 'stroke-width': 1.5 }),
+    h('path', { d: 'M24 14v72M136 14v72', stroke: '#c4c7c5', 'stroke-width': 1.5 }),
+    h('path', { d: 'M80 14v72M24 50h112', stroke: '#dadce0', 'stroke-width': 1.2, 'stroke-dasharray': '4 3' }),
+    ppl.map(([x, y], i) => h('g', { key: i },
+      h('circle', { cx: x, cy: y, r: 7, fill: '#fff', stroke: '#e60012', 'stroke-width': 1.4 }),
+      h('text', { x, y: y + 3.4, 'text-anchor': 'middle', 'font-size': 9, 'font-family': 'Arial, sans-serif', fill: '#e60012' }, String(i + 1)))));
+}
+
 export function HomeView() {
   const works = (S.d.works || []).slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   const hasWorks = works.length > 0;
@@ -93,20 +105,23 @@ export function HomeView() {
           onclick: (e) => { if (!e.target.closest('.kebab')) go(`#/w/${w.id}`); },
           onkeydown: (e) => { if (e.key === 'Enter' && e.target === e.currentTarget) go(`#/w/${w.id}`); },
         },
-          h('div', { class: 'work-card-head' },
-            h('div', { class: 'work-title' }, w.title || '無題のライブラリー'),
-            h('details', { class: 'kebab' },
-              h('summary', { title: 'その他の操作', 'aria-label': 'その他の操作' }, icon('more')),
-              h('div', { class: 'menu' },
-                myRole(w) === 'owner' && ADMIN_EMAILS.includes(String((S.user && S.user.email) || '').toLowerCase()) ? h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; exportSample(w.id, w); } }, 'サンプル用に書き出す') : null,
-                myRole(w) === 'owner'
-                  ? h('button', { class: 'linklike danger', onclick: (e) => { e.target.closest('details').open = false; confirmDeleteWork(w.id, w); } }, 'ライブラリーを削除')
-                  : h('button', { class: 'linklike danger', onclick: (e) => { e.target.closest('details').open = false; confirmLeaveWork(w.id, w); } }, '共有を解除')))),
-          h('div', { class: 'work-meta' },
-            h('span', { class: 'badge role-' + myRole(w) }, ROLE_LABEL[myRole(w)] || ''),
-            (w.participants || []).length > 1 ? h('span', { class: 'muted small' }, `${w.participants.length}人で共有`) : null,
-            w.linkRole && w.linkRole !== 'off' ? h('span', { class: 'muted small' }, 'リンク共有') : null),
-          h('div', { class: 'muted small' }, `更新 ${fmtTime(w.updatedAt)}`)))),
+          h('div', { class: 'work-thumb', 'aria-hidden': 'true' }, CardArt()),
+          h('div', { class: 'work-body' },
+            h('div', { class: 'work-card-head' },
+              h('div', { class: 'work-title' }, w.title || '無題のライブラリー')),
+            h('div', { class: 'work-sub' },
+              brandIcon(18),
+              h('span', { class: 'badge role-' + myRole(w) }, ROLE_LABEL[myRole(w)] || ''),
+              h('span', { class: 'grow' }, `更新 ${fmtTime(w.updatedAt)}`),
+              h('details', { class: 'kebab' },
+                h('summary', { title: 'その他の操作', 'aria-label': 'その他の操作' }, icon('more')),
+                h('div', { class: 'menu' },
+                  myRole(w) === 'owner' && ADMIN_EMAILS.includes(String((S.user && S.user.email) || '').toLowerCase()) ? h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; exportSample(w.id, w); } }, 'サンプル用に書き出す') : null,
+                  myRole(w) === 'owner'
+                    ? h('button', { class: 'linklike danger', onclick: (e) => { e.target.closest('details').open = false; confirmDeleteWork(w.id, w); } }, 'ライブラリーを削除')
+                    : h('button', { class: 'linklike danger', onclick: (e) => { e.target.closest('details').open = false; confirmLeaveWork(w.id, w); } }, '共有を解除')))),
+            (w.participants || []).length > 1 || (w.linkRole && w.linkRole !== 'off') ? h('div', { class: 'work-share muted small' },
+              [(w.participants || []).length > 1 ? `${w.participants.length}人で共有` : null, w.linkRole && w.linkRole !== 'off' ? 'リンク共有' : null].filter(Boolean).join('・')) : null)))),
     hasWorks ? h('p', { class: 'home-foot muted small' },
       h('button', { class: 'linklike inline', onclick: createSampleWork, disabled: !!S.ui.makingSample }, S.ui.makingSample ? 'サンプルを作っています…' : 'サンプルを作る'),
       ' ・ ',

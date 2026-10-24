@@ -11,6 +11,7 @@ import { fillWeight, pointsFor } from './fill.js';
 import { castIndex, personCast, personNo, rolesOf, roleText, roleVisible, roleKey } from './cast.js';
 import { isDialogOpen } from './dialog.js';
 import { UndoButtons, undoAll, redoAll } from './undo.js';
+import { icon, brandIcon } from './icons.js';
 import { previousShapes, minCostAssign, diagramSequence } from './assign.js';
 import { setPresence, others, colorOf, sharePointer } from './presence.js';
 
@@ -1758,36 +1759,33 @@ export function EditorView() {
   const zoomOut = [...ZOOMS].reverse().find((z) => z < E.zoom - 0.01);
   const zoomIn = ZOOMS.find((z) => z > E.zoom + 0.01);
   return h('div', { class: 'ed-root', role: 'dialog', 'aria-label': '図の編集' },
+    // Googleスライドのように、上に名前と「完了」、その下に丸い帯の道具バー
     h('header', { class: 'ed-top' },
-      h('button', { class: 'btn primary', onclick: () => closeEditor() }, '完了'),
+      h('span', { class: 'ed-brand' }, brandIcon(32)),
       h('div', { class: 'ed-title' }, '図の編集'),
       here.length ? h('div', { class: 'pres-tags in-editor', title: 'この図を開いている人' }, here.map((p) => h('span', { key: p.pid, class: 'pres-tag', style: { background: colorOf(p.email) } }, p.name))) : null,
       CountChip(shapes, ix),
-      h('label', { class: 'prop-toggle', title: 'この図で直したこと（動かす・足す・消す・色・キャラ名の表示など）を、あとの図にも反映します。図を開くたびにオフに戻ります' },
-        h('input', { type: 'checkbox', checked: E.propagate, onchange: (e) => setPropPref(e.target.checked) }),
-        h('span', null, 'あとの図にも反映')),
-      h('label', { class: 'prop-toggle', title: '楕円・四角・囲み・線を動かすと、その中（線ならそば）にいる人も一緒に動きます' },
-        h('input', { type: 'checkbox', checked: E.linkPeople, onchange: (e) => { E.linkPeople = e.target.checked; draw(); } }),
-        h('span', null, '図と人を連動')),
+      h('button', { class: 'btn primary ed-done', onclick: () => closeEditor() }, '完了')),
+    h('div', { class: 'ed-bar' },
       h('div', { class: 'ed-top-btns' },
-        UndoButtons('icon-btn lg'),
+        UndoButtons('icon-btn'),
         h('span', { class: 'sep' }),
-        h('button', { class: 'icon-btn lg', title: '縮小', disabled: !zoomOut, onclick: () => { E.zoom = zoomOut; draw(); } }, '−'),
+        h('button', { class: 'icon-btn', 'data-tip': '縮小', 'aria-label': '縮小', disabled: !zoomOut, onclick: () => { E.zoom = zoomOut; draw(); } }, icon('minus', 18)),
         h('span', { class: 'zoom-val' }, Math.round(E.zoom * 100) + '%'),
-        h('button', { class: 'icon-btn lg', title: '拡大', disabled: !zoomIn, onclick: () => { E.zoom = zoomIn; draw(); } }, '＋'))),
-    h('div', { class: 'ed-body' },
-      h('nav', { class: 'ed-tools' },
+        h('button', { class: 'icon-btn', 'data-tip': '拡大', 'aria-label': '拡大', disabled: !zoomIn, onclick: () => { E.zoom = zoomIn; draw(); } }, icon('plus', 18)),
+        h('span', { class: 'sep' })),
+      h('nav', { class: 'ed-tools', 'aria-label': '道具' },
         TOOLS.map(([t, label]) => h('button', {
-          key: t, class: 'tool' + (E.tool === t ? ' on' : ''), onclick: () => setTool(t), title: label, 'aria-pressed': E.tool === t ? 'true' : 'false',
+          key: t, class: 'tool' + (E.tool === t ? ' on' : ''), onclick: () => setTool(t), 'data-tip': label, 'aria-label': label, 'aria-pressed': E.tool === t ? 'true' : 'false',
         }, h('svg', { viewBox: '0 0 24 24', width: 24, height: 24, 'aria-hidden': 'true' }, ICONS[t]()), h('span', null, label))),
-        h('button', { class: 'tool' + (E.multi ? ' on' : ''), onclick: () => { E.multi = !E.multi; draw(); }, title: 'タップで1つずつ追加選択' },
+        h('button', { class: 'tool' + (E.multi ? ' on' : ''), onclick: () => { E.multi = !E.multi; draw(); }, 'data-tip': '複数選択（タップで1つずつ追加）', 'aria-label': '複数選択', 'aria-pressed': E.multi ? 'true' : 'false' },
           h('svg', { viewBox: '0 0 24 24', width: 24, height: 24, 'aria-hidden': 'true' },
             h('rect', { x: 3, y: 3, width: 9, height: 9, fill: 'none', stroke: 'currentColor', 'stroke-width': 2 }),
             h('rect', { x: 12, y: 12, width: 9, height: 9, fill: 'currentColor' })),
           h('span', null, '複数選択')),
         // 下絵：まだなければ写真を選ぶ。あれば表示・非表示を切り替える
         h('button', {
-          class: 'tool' + (E.trace && !E.traceHidden ? ' on' : ''), title: E.trace ? '下絵を見せる・隠す' : '写真を下絵にして、なぞって描く',
+          class: 'tool' + (E.trace && !E.traceHidden ? ' on' : ''), 'data-tip': E.trace ? '下絵を見せる・隠す' : '下絵（写真をなぞって描く）', 'aria-label': '下絵',
           onclick: () => { if (!E.trace) pickTrace(); else { E.traceHidden = !E.traceHidden; draw(); } },
         },
           h('svg', { viewBox: '0 0 24 24', width: 24, height: 24, 'aria-hidden': 'true', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.8, 'stroke-linejoin': 'round' },
@@ -1795,6 +1793,15 @@ export function EditorView() {
             h('path', { d: 'M3 16l5-5 4 4 3-3 6 6' }),
             h('circle', { cx: 16, cy: 9, r: 1.6 })),
           h('span', null, '下絵'))),
+      h('div', { class: 'ed-bar-end' },
+        h('span', { class: 'sep' }),
+        h('label', { class: 'prop-toggle', title: 'この図で直したこと（動かす・足す・消す・色・キャラ名の表示など）を、あとの図にも反映します。図を開くたびにオフに戻ります' },
+          h('input', { type: 'checkbox', checked: E.propagate, onchange: (e) => setPropPref(e.target.checked) }),
+          h('span', null, 'あとの図にも反映')),
+        h('label', { class: 'prop-toggle', title: '楕円・四角・囲み・線を動かすと、その中（線ならそば）にいる人も一緒に動きます' },
+          h('input', { type: 'checkbox', checked: E.linkPeople, onchange: (e) => { E.linkPeople = e.target.checked; draw(); } }),
+          h('span', null, '図と人を連動')))),
+    h('div', { class: 'ed-body' },
       h('div', { class: 'ed-canvas-wrap' + (E.tool === 'pan' ? ' panning' : '') },
         !E.loaded ? h('div', { class: 'muted pad' }, '読み込み中…') : null,
         h('svg', {

@@ -15,6 +15,7 @@ const P = {
   chevron: 'M9 6l6 6-6 6',
   trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6',
   plus: 'M12 5v14M5 12h14',
+  minus: 'M5 12h14',
   text: 'M5 6h14M5 11h14M5 16h14M5 21h8',
   stage: 'M3 6h18v12H3zM8 6v12M16 6v12M12 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3',
   photo: 'M4 5h16v14H4zM4 16l5-5 4 4 2.5-2.5L20 17M15.5 8.5h.01',
@@ -33,4 +34,13 @@ export function icon(name, size = 18, cls = '') {
       h('circle', { cx: 5, cy: 12, r: 1.8 }), h('circle', { cx: 12, cy: 12, r: 1.8 }), h('circle', { cx: 19, cy: 12, r: 1.8 }));
   }
   return h('svg', attrs, h('path', { d: P[name] }));
+}
+
+// アプリの印（角を折った紙に、舞台の人2人）。ヘッダー・ログイン画面・図の編集画面で使う
+export function brandIcon(size = 32) {
+  return h('svg', { class: 'ico brand-ico', viewBox: '0 0 24 24', width: size, height: size, 'aria-hidden': 'true' },
+    h('path', { d: 'M6.5 1.5h8.5l5.5 5.5v13.5a2 2 0 0 1-2 2h-12a2 2 0 0 1-2-2v-17a2 2 0 0 1 2-2z', fill: '#0b57d0' }),
+    h('path', { d: 'M15 1.5v4a1.5 1.5 0 0 0 1.5 1.5h4z', fill: '#a8c7fa' }),
+    h('circle', { cx: 9.3, cy: 15.2, r: 2.3, fill: '#fff' }),
+    h('circle', { cx: 14.7, cy: 11.6, r: 2.3, fill: '#fff' }));
 }
