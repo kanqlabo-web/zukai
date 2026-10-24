@@ -221,3 +221,10 @@ body.cmt-open .draft-page { margin-right: 340px; }
 .cmt-float { position: fixed; z-index: 44; width: 40px; height: 40px; border-radius: 50%; border: 0; background: #fff; color: #3c3a48; box-shadow: 0 2px 8px rgba(20, 15, 40, .28); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
 .cmt-float:hover { background: var(--accent-soft); color: var(--accent); }
 .cmt-float[hidden] { display: none; }
+/* 広い画面：コメントを本文の右に、付けた所の高さで並べる */
+.cmt-side-col { position: absolute; right: 16px; width: 310px; z-index: 30; }
+.cmt-side-col > .cmt-head { position: absolute; top: 0; left: 0; right: 0; border: 1px solid var(--line); border-radius: 10px; }
+.cmt-side-col > .cmt-card, .cmt-side-col > .cmt-empty { position: absolute; left: 0; right: 0; transition: top .15s ease, transform .15s ease; }
+.cmt-side-col > .cmt-card.on { transform: translateX(-12px); z-index: 2; }
+.cmt-side-col > .cmt-empty { background: #fff; border: 1px dashed var(--line-2); border-radius: 10px; padding: 8px 12px; }
+.cmt-side-col .cmt-card:not(.on) .cmt-text { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }

@@ -16,8 +16,15 @@ import { confirmBox } from './dialog.js';
 import { openContextMenu, MOD } from './menubar.js';
 
 // 画面の状態（ページを移ると閉じる）
-const C = { d: null, open: false, active: null, filter: 'open', compose: null, reply: {}, editing: null };
+const C = { d: null, open: false, hidden: false, active: null, filter: 'open', compose: null, reply: {}, editing: null };
 function reset(d) { if (C.d !== d) Object.assign(C, { d, open: false, active: null, compose: null, reply: {}, editing: null }); }
+// 広い画面では、コメントを本文の右に、付けた所の高さにそろえていつも出す（Googleドキュメントと同じ）。狭い画面では下に開く
+const wide = () => window.innerWidth > 1100;
+function shown() {
+  if (S.route.name !== 'draft' || C.d !== S.route.params.d) return false;
+  if (!wide()) return C.open;
+  return !C.hidden && (C.open || !!C.compose || commentsOf().length > 0);
+}
 
 const path = (id) => P.doc(S.route.params.w, 'comments', id);
 const me = () => ({ name: (S.user && S.user.name) || '', email: (S.user && S.user.email) || '' });
@@ -109,7 +116,7 @@ export function startComment() {
   if (!at && S.ui.activeBlock && blockOf(S.ui.activeBlock)) at = { k: 'block', b: S.ui.activeBlock };
   if (!at) { toast('コメントを付ける語句をなぞって選ぶか、図解を押して選んでから、もう一度押してください', 'info', 5000); return; }
   if (at.q != null && !at.q.trim()) { toast('空白ではなく、文字を選んでください'); return; }
-  C.open = true;
+  C.open = true; C.hidden = false;
   C.compose = { at, text: '' };
   C.active = null;
   S.ui.sel = null; S.ui.lineSel = null; // 下の「タイミング」の帯は閉じる
@@ -118,7 +125,7 @@ export function startComment() {
 }
 export function commentOnBlock(blockId) {
   reset(S.route.params.d);
-  C.open = true; C.active = null;
+  C.open = true; C.hidden = false; C.active = null;
   C.compose = { at: { k: 'block', b: blockId }, text: '' };
   rerender();
   focusLater('.cmt-compose textarea');
@@ -127,11 +134,12 @@ function focusLater(sel) { requestAnimationFrame(() => requestAnimationFrame(() 
 
 export function toggleComments(v) {
   reset(S.route.params.d);
-  C.open = v == null ? !C.open : v;
-  if (!C.open) { C.compose = null; C.active = null; }
+  const on = v == null ? !shown() : v;
+  C.open = on; C.hidden = !on;
+  if (!on) { C.compose = null; C.active = null; }
   rerender();
 }
-export const commentsOpen = () => S.route.name === 'draft' && C.d === S.route.params.d && C.open;
+export const commentsOpen = () => shown();
 
 // ---------- 保存 ----------
 async function post() {
@@ -227,6 +235,7 @@ function goTo(c) {
 
 // 画面を描いたあとに、コメントの付いた文字を黄色く塗る（CSS Custom Highlight。使えないブラウザでは塗らない）
 export function paintCommentMarks() {
+  queueSide();
   if (!window.CSS || !CSS.highlights || typeof Highlight === 'undefined') return;
   if (S.route.name !== 'draft') { CSS.highlights.delete('zukai-cmt'); CSS.highlights.delete('zukai-cmt-on'); return; }
   const all = [], on = [];
@@ -249,9 +258,13 @@ document.addEventListener('click', (e) => {
   const list = commentsOf().filter((c) => !c.done);
   if (!list.length) return;
   const hit = list.find((c) => { const cr = rangeOf(c); try { return cr && cr.comparePoint(r.startContainer, r.startOffset) === 0; } catch (err) { return false; } });
-  if (!hit) return;
+  if (!hit) {
+    // 本文のほかの所を押したら、選んでいたコメントを外す（Googleドキュメントと同じ）
+    if (C.active && !C.compose && e.target.closest && !e.target.closest('.cmt-side-col, .cmt-panel, .cmt-chip, .menu-pop')) { C.active = null; rerender(); }
+    return;
+  }
   reset(S.route.params.d);
-  C.open = true; C.active = hit.id; C.compose = null;
+  C.open = true; C.hidden = false; C.active = hit.id; C.compose = null;
   rerender();
   requestAnimationFrame(() => { const el = document.querySelector(`.cmt-card[data-cid="${CSS.escape(hit.id)}"]`); if (el) el.scrollIntoView({ block: 'nearest' }); });
 });
@@ -390,30 +403,79 @@ function Card(c) {
 export function CommentsPanel() {
   if (S.route.name !== 'draft') return null;
   reset(S.route.params.d);
-  document.body.classList.toggle('cmt-open', C.open);
-  if (!C.open) return null;
+  const on = shown();
+  const side = on && wide();
+  document.body.classList.toggle('cmt-open', on);
+  document.body.classList.toggle('cmt-side', side);
+  if (!on) return null;
   const all = sorted(commentsOf());
   const list = C.filter === 'open' ? all.filter((c) => !c.done) : all;
   const m = C.compose;
-  return h('aside', { class: 'cmt-panel', 'aria-label': 'コメント' },
-    h('div', { class: 'cmt-head' },
-      h('strong', null, 'コメント'),
-      h('div', { class: 'seg cmt-seg' },
-        h('button', { class: 'seg-btn' + (C.filter === 'open' ? ' on' : ''), onclick: () => { C.filter = 'open'; rerender(); } }, `未解決（${all.filter((c) => !c.done).length}）`),
-        h('button', { class: 'seg-btn' + (C.filter === 'all' ? ' on' : ''), onclick: () => { C.filter = 'all'; rerender(); } }, `すべて（${all.length}）`)),
-      h('button', { class: 'icon-btn', title: '閉じる', 'aria-label': 'コメントを閉じる', onclick: () => toggleComments(false) }, icon('close', 18))),
-    h('div', { class: 'cmt-list' },
-      m ? h('div', { class: 'cmt-card on cmt-compose' },
-        h('div', { class: 'cmt-quote' }, preview(m.at.k === 'block' ? quoteOf({ at: m.at }) : m.at.q)),
-        Who(me(), Date.now()),
-        Box(m.text, (v) => { m.text = v; }, post, () => { C.compose = null; rerender(); }, 'コメントを書く（Ctrl+Enter で送信）', 'コメント')) : null,
-      !m && !list.length ? h('div', { class: 'cmt-empty muted small' },
-        h('p', null, C.filter === 'open' ? '未解決のコメントはありません。' : 'コメントはまだありません。'),
-        h('p', null, 'テマ友や図解の文章をなぞって選び、「コメント」を押すか ', h('kbd', null, 'Ctrl+Alt+M'), ' でコメントできます。図解全体へは、図解を押して選んでから同じように。')) : null,
-      list.map(Card)),
+  const head = h('div', { class: 'cmt-head' },
+    h('strong', null, 'コメント'),
+    h('div', { class: 'seg cmt-seg' },
+      h('button', { class: 'seg-btn' + (C.filter === 'open' ? ' on' : ''), onclick: () => { C.filter = 'open'; rerender(); } }, `未解決（${all.filter((c) => !c.done).length}）`),
+      h('button', { class: 'seg-btn' + (C.filter === 'all' ? ' on' : ''), onclick: () => { C.filter = 'all'; rerender(); } }, `すべて（${all.length}）`)),
+    h('button', { class: 'icon-btn', title: side ? 'コメントを隠す（上の「コメント」でまた出せます）' : '閉じる', 'aria-label': 'コメントを閉じる', onclick: () => toggleComments(false) }, icon('close', 18)));
+  const compose = m ? h('div', { key: '__new', 'data-cid': '__new', class: 'cmt-card on cmt-compose' },
+    h('div', { class: 'cmt-quote' }, preview(m.at.k === 'block' ? quoteOf({ at: m.at }) : m.at.q)),
+    Who(me(), Date.now()),
+    Box(m.text, (v) => { m.text = v; }, post, () => { C.compose = null; rerender(); }, 'コメントを書く（Ctrl+Enter で送信）', 'コメント')) : null;
+  const empty = !m && !list.length ? h('div', { class: 'cmt-empty muted small' },
+    h('p', null, C.filter === 'open' ? '未解決のコメントはありません。' : 'コメントはまだありません。'),
+    h('p', null, 'テマ友や図解の文章をなぞって選ぶと出るボタンか、右クリック、', h('kbd', null, 'Ctrl+Alt+M'), ' でコメントできます。')) : null;
+  // 広い画面：本文の右の余白。カードの高さは、描いたあとに layoutSide で付けた所にそろえる
+  if (side) return h('aside', { class: 'cmt-side-col', 'aria-label': 'コメント' }, head, empty, compose, list.map(Card));
+  return h('aside', { class: 'cmt-panel', 'aria-label': 'コメント' }, head,
+    h('div', { class: 'cmt-list' }, compose, empty, list.map(Card)),
     h('div', { class: 'cmt-foot' },
       h('button', { class: 'btn small', onpointerdown: keep, onclick: startComment }, icon('comment', 16), '選んだ所にコメント')));
 }
+
+// 本文の右のカードを、付けた所の高さに並べる（重なるときは下へずらす。選んでいるカードはちょうどの高さに）
+function anchorTop(c) {
+  if (!c) return null;
+  const r = rangeOf(c);
+  const rect = r ? r.getBoundingClientRect() : (targetEl(c) ? targetEl(c).getBoundingClientRect() : null);
+  return rect && (rect.width || rect.height) ? rect.top + window.scrollY : null;
+}
+export function layoutSide() {
+  const box = document.querySelector('.cmt-side-col');
+  if (!box) return;
+  const page = document.querySelector('.draft-page');
+  const sheet = document.querySelector('.sheet-edit');
+  const top0 = (page ? page.getBoundingClientRect().top : 0) + window.scrollY;
+  box.style.top = top0 + 'px';
+  const head = box.querySelector('.cmt-head');
+  const minY = head ? head.offsetHeight + 12 : 0;
+  const fallback = sheet ? sheet.getBoundingClientRect().top + window.scrollY - top0 : minY;
+  const byId = new Map(commentsOf().map((c) => [c.id, c]));
+  const cards = [...box.querySelectorAll(':scope > .cmt-card, :scope > .cmt-empty')].map((el, i) => {
+    const id = el.getAttribute('data-cid');
+    const c = id === '__new' ? (C.compose ? { at: C.compose.at } : null) : byId.get(id);
+    const y = anchorTop(c);
+    return { el, id, i, want: y == null ? null : y - top0, h: el.offsetHeight };
+  });
+  // 付けた所が見つからないものは、前のカードのすぐあとに
+  let last = fallback;
+  for (const k of cards) { if (k.want == null) k.want = last; last = k.want; }
+  cards.sort((a, b) => a.want - b.want || a.i - b.i);
+  const gap = 10;
+  let a = cards.findIndex((k) => k.id === (C.compose ? '__new' : C.active));
+  if (a < 0) a = 0;
+  if (!cards.length) { box.style.height = '0px'; return; }
+  const pos = new Array(cards.length);
+  pos[a] = Math.max(minY, cards[a].want);
+  for (let i = a + 1; i < cards.length; i++) pos[i] = Math.max(cards[i].want, pos[i - 1] + cards[i - 1].h + gap);
+  for (let i = a - 1; i >= 0; i--) pos[i] = Math.min(cards[i].want, pos[i + 1] - cards[i].h - gap);
+  if (pos[0] < minY) { pos[0] = minY; for (let i = 1; i < cards.length; i++) pos[i] = Math.max(pos[i], pos[i - 1] + cards[i - 1].h + gap); }
+  cards.forEach((k, i) => { k.el.style.top = pos[i] + 'px'; });
+  box.style.height = (pos[cards.length - 1] + cards[cards.length - 1].h + 40) + 'px';
+}
+let sideRaf = 0;
+const queueSide = () => { if (!sideRaf) sideRaf = requestAnimationFrame(() => { sideRaf = 0; layoutSide(); }); };
+window.addEventListener('resize', () => { rerender(); queueSide(); });
+document.addEventListener('input', (e) => { if (e.target.closest && e.target.closest('.cmt-side-col, .sheet-edit')) queueSide(); });
 
 // 図解の見出しの横：その図解（中の文章も含む）の未解決のコメントの数
 export function BlockCommentChip(blockId) {
@@ -421,7 +483,7 @@ export function BlockCommentChip(blockId) {
   if (!list.length) return h('span', { class: 'cmt-chip-ph' });
   return h('button', {
     class: 'cmt-chip', title: 'この図解のコメントを見る', 'aria-label': `この図解のコメント ${list.length}件`,
-    onclick: (e) => { e.stopPropagation(); reset(S.route.params.d); C.open = true; C.compose = null; goTo(sorted(list)[0]); },
+    onclick: (e) => { e.stopPropagation(); reset(S.route.params.d); C.open = true; C.hidden = false; C.compose = null; goTo(sorted(list)[0]); },
   }, icon('comment', 14), String(list.length));
 }
 
