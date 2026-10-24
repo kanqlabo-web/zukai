@@ -219,6 +219,43 @@ textarea { resize: vertical; line-height: 1.55; }
 .seg-btn.on { background: var(--accent); color: #fff; }
 .add-bar { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
 
+/* 図解のページ（2.0.0〜）：タイミングごとに文章・図・写真を1枚のページのように並べる */
+.doc { margin-top: 6px; padding: 4px 8px; border: 1px solid #ecebf3; border-radius: 6px; background: #fff; min-height: 44px; }
+.doc.is-empty::before { content: 'ここに文章・図・写真を足せます'; display: block; color: var(--muted); font-size: 13px; padding: 8px 4px; }
+.doc .item { margin: 0; position: relative; }
+.doc .item.text .rich.note-ed { border: 1px solid transparent; border-radius: 6px; padding: 3px 8px; background: transparent; }
+.doc .item.text .rich.note-ed:hover { background: #faf9fd; }
+.doc .item.text .rich.note-ed:focus { border-color: var(--line); background: #fff; box-shadow: none; }
+.doc .item.diagram, .doc .item.image { padding: 4px 0; }
+.doc .caption { background: transparent; font-weight: 700; padding: 2px 8px; margin-bottom: 2px; }
+.doc .caption:hover, .doc .caption:focus { background: #f6f5fa; }
+.doc .caption::placeholder { font-weight: 400; }
+.block:not(.active) .caption.is-empty { display: none; }
+.text-gutter { position: absolute; right: 2px; top: 0; z-index: 2; display: none; }
+.block.active .item.text:hover .text-gutter, .block.active .item.text:focus-within .text-gutter { display: block; }
+.text-gutter .item-grip { background: #fff; }
+.ins-slot { position: relative; height: 4px; }
+.block:not(.active) .ins-slot.last { display: none; }
+.ins-btn { display: none; }
+.block.active .ins-slot { height: 18px; display: flex; align-items: center; justify-content: center; }
+.block.active .ins-slot::before { content: ''; position: absolute; left: 0; right: 0; top: 50%; border-top: 1px dashed transparent; }
+.block.active .ins-slot:hover::before { border-top-color: var(--accent-2); }
+.block.active .ins-btn { display: grid; place-items: center; position: relative; width: 22px; height: 22px; padding: 0; border-radius: 50%; border: 1px solid var(--line-2); background: #fff; color: var(--muted); cursor: pointer; opacity: .35; }
+.block.active .ins-slot:hover .ins-btn, .ins-slot.open .ins-btn, .ins-btn:focus-visible { opacity: 1; color: var(--accent); border-color: var(--accent-2); }
+.block.active .ins-slot.open { height: auto; flex-direction: column; gap: 4px; padding: 4px 0; }
+.ins-slot.open::before { display: none; }
+.ins-menu { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 8px; background: #fff; border: 1px solid var(--accent-2); border-radius: 8px; box-shadow: 0 4px 14px rgba(30, 25, 60, .12); }
+.ins-menu .btn .ico, .doc-tools .btn .ico { margin-right: 2px; }
+.doc-tools { flex-direction: column; gap: 6px; }
+.doc-tools-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.doc-tools-row > .muted { min-width: 2.5em; }
+.doc-hint { line-height: 1.5; }
+@media (pointer: coarse) {
+  .block.active .ins-slot { height: 32px; }
+  .block.active .ins-btn { width: 30px; height: 30px; opacity: .75; }
+  .block.active .item.text .text-gutter { display: block; }
+}
+
 @media (max-width: 760px) {
   .info-panel { grid-template-columns: 1fr; }
   .srow { grid-template-columns: 1fr; }

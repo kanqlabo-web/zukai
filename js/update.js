@@ -31,20 +31,19 @@ export const showUpdates = (draft) => !!(draft && draft.updMark && draft.updShow
 export function blockUpdates(draft, b, diagramsById) {
   if (!showUpdates(draft)) return null;
   const o = b.orig;
-  const lineSets = {};
+  // 元の説明文の行（図解の中のどの文章の欄にあってもよい。ページの中で文章を分けたり、つなげたりしても青字にならないように）
+  let lineSet = null;
+  const known = (ln) => {
+    if (!lineSet) lineSet = new Set(Object.values((o && o.texts) || {}).flatMap((t) => String(t).split('\n').map((x) => x.trim())));
+    return lineSet.has(String(ln).trim());
+  };
   return {
     cue: !o || (o.cue || '') !== (b.cue || '') || !!b.cueBlue, // cueBlue：前の稿の青字をそのままにした
     line: (itemId, ln) => {
       if (!String(ln).trim()) return false;
-      if (!o || o.texts[itemId] == null) return true;
-      if (!lineSets[itemId]) lineSets[itemId] = new Set(String(o.texts[itemId]).split('\n').map((x) => x.trim()));
-      return !lineSets[itemId].has(String(ln).trim());
+      return !o || !known(ln);
     },
-    text: (itemId, text) => String(text || '').split('\n').some((ln) => {
-      if (!ln.trim()) return false;
-      if (!o || o.texts[itemId] == null) return true;
-      return !String(o.texts[itemId]).split('\n').map((x) => x.trim()).includes(ln.trim());
-    }),
+    text: (itemId, text) => String(text || '').split('\n').some((ln) => ln.trim() && (!o || !known(ln))),
     diagram: (itemId, refId) => {
       const g = diagramsById[refId];
       if (!g) return false;

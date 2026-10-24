@@ -2,7 +2,7 @@
 import { h } from './vdom.js';
 import { icon } from './icons.js';
 import { db, DEL, newId } from './db.js';
-import { S, rerender, toast, fmtTime, saveLater, flushAll, compressImage, pickFile, go } from './state.js';
+import { S, rerender, toast, fmtTime, saveLater, takePending, flushAll, compressImage, pickFile, go } from './state.js';
 import { P, draftTitle, draftName, normalizeDraftName, saveScript, createBlock, createDiagram, createImage, copyDraft, deleteDraft, deleteTrack } from './model.js';
 import { buildRows, highlightRanges, parseLines } from './script.js';
 import { StageSVG, W, H } from './stage.js';
@@ -399,15 +399,6 @@ function lastDiagramBefore(offset) {
 // ---------- 図解の項目操作 ----------
 function blockPath(w, b) { return P.doc(w, 'blocks', b.id); }
 
-async function addItem(w, d, b, item) {
-  const items = itemsOf(b);
-  const id = newId(8);
-  const order = items.length ? Math.max(...items.map((i) => i.order || 0)) + 1 : 1;
-  await db.update(blockPath(w, b), { [`items.${id}`]: { order, ...item } });
-  touch(w, d);
-  return id;
-}
-
 async function moveItem(w, b, items, i, to) {
   if (to < 0 || to >= items.length || to === i) return;
   const a = items.slice();
@@ -499,33 +490,167 @@ function previousDiagram(rows, block, beforeOrder = Infinity) {
   return last;
 }
 
-async function addDiagram(w, d, b, copyFromId) {
-  let shapes = {};
-  if (copyFromId) {
-    const src = (S.d.diagrams || []).find((g) => g.id === copyFromId) || await db.get(P.doc(w, 'diagrams', copyFromId));
-    shapes = (src && src.shapes) || {};
+// ---------- 図解のページ（タイミングごとに、文章・図・写真を1枚のページのように並べる） ----------
+// 中身はこれまでどおり items（order の順に並べたもの）。文章の途中に図や写真を差し込むときは、その文章を2つに分ける
+
+// 差し込む先を決める。at を渡せばその位置（何番目の前か）。なければ、この図解の文章の欄にカーソルがあればその位置、それもなければいちばん下
+function insertTarget(b, at) {
+  if (at != null) return { at };
+  const el = document.activeElement;
+  const pk = el && el._rtSetup && el.dataset.pkey;
+  const blk = el && el.closest && el.closest('[data-pblock]');
+  if (pk && pk.startsWith('note:') && blk && blk.dataset.pblock === b.id) {
+    const sel = selectionIn(el) || el._lastSel;
+    if (sel) return { itemId: pk.slice(5), pos: sel[0] };
   }
-  const gid = await createDiagram(w, d, shapes);
-  await addItem(w, d, b, { kind: 'diagram', refId: gid, caption: '' });
-  openEditor(w, gid);
+  return { at: Infinity };
 }
 
-async function addImage(w, d, b) {
-  const f = await pickFile('image/*');
-  if (!f) return;
+// 文章を行の区切りで2つに分ける（カーソルが行の途中なら、その行の終わりで分ける）
+function splitText(text, marks, pos) {
+  const lines = text.split('\n');
+  let li = 0, st = 0;
+  while (li < lines.length - 1 && pos > st + lines[li].length) { st += lines[li].length + 1; li++; }
+  const cutLine = pos <= st ? li : li + 1;
+  const beforeLen = lines.slice(0, cutLine).reduce((n, ln) => n + ln.length + 1, 0) - 1;
+  const at = attrsOf(text, marks);
+  const part = (a, z) => ({ text: text.slice(a, z), marks: marksOf(at.c.slice(a, z), at.bg.slice(a, z), at.b.slice(a, z)) });
+  const before = cutLine > 0 ? part(0, beforeLen) : null;
+  const after = cutLine < lines.length ? part(beforeLen + 1, text.length) : null;
+  return { before, after: after && after.text.trim() ? after : null };
+}
+
+// newOnes（{ kind, ... } の配列）を差し込み、新しい項目の id を返す
+async function insertItems(w, d, b, target, newOnes) {
+  const items = itemsOf(b);
+  const path = blockPath(w, b);
+  const patch = { ...takePending(path) }; // 打ち込み中でまだ保存していない文章も、ここで一緒に保存する
+  let at = Math.min(target.at == null ? items.length : target.at, items.length);
+  let tail = null;
+  if (target.itemId) {
+    const idx = items.findIndex((x) => x.id === target.itemId);
+    if (idx < 0) at = items.length;
+    else {
+      const raw = (b.items && b.items[target.itemId]) || items[idx];
+      const { before, after } = splitText(raw.text || '', raw.marks || [], target.pos || 0);
+      if (!before) at = idx;
+      else {
+        at = idx + 1;
+        if (after) {
+          patch[`items.${target.itemId}.text`] = before.text;
+          patch[`items.${target.itemId}.marks`] = before.marks;
+          tail = { id: newId(8), kind: 'text', ...after };
+        }
+      }
+    }
+  }
+  const added = newOnes.map((it) => ({ id: newId(8), ...it }));
+  const seq = [...items.slice(0, at), ...added, ...(tail ? [tail] : []), ...items.slice(at)];
+  const fresh = new Set([...added, ...(tail ? [tail] : [])]);
+  seq.forEach((it, k) => {
+    if (fresh.has(it)) { const { id, ...rest } = it; patch[`items.${id}`] = { ...rest, order: k + 1 }; }
+    else patch[`items.${it.id}.order`] = k + 1;
+  });
+  await db.update(path, patch);
+  touch(w, d);
+  return added.map((x) => x.id);
+}
+
+// 差し込む位置より前にある、いちばん近い図
+function diagramBefore(rows, b, target) {
+  const items = itemsOf(b);
+  let order = Infinity;
+  if (target.itemId) { const it = items.find((x) => x.id === target.itemId); if (it) order = (it.order || 0) + 0.5; }
+  else if (target.at < items.length) order = items[target.at].order || 0;
+  return previousDiagram(rows, b, order);
+}
+
+// 文章・図・写真をページに足す
+async function insertNew(w, d, b, kind, target, rows) {
+  if (kind === 'text') {
+    const [id] = await insertItems(w, d, b, target, [{ kind: 'text', text: '● ' }]);
+    S.ui.focusItem = id;
+    return;
+  }
+  if (kind === 'diagram' || kind === 'copy') {
+    let shapes = {};
+    if (kind === 'copy') {
+      const prev = diagramBefore(rows, b, target);
+      const src = prev && ((S.d.diagrams || []).find((g) => g.id === prev.refId) || await db.get(P.doc(w, 'diagrams', prev.refId)));
+      shapes = (src && src.shapes) || {};
+    }
+    const gid = await createDiagram(w, d, shapes);
+    await insertItems(w, d, b, target, [{ kind: 'diagram', refId: gid, caption: '' }]);
+    openEditor(w, gid);
+    return;
+  }
+  if (kind === 'image') {
+    const f = await pickFile('image/*');
+    if (f) await insertImages(w, d, b, target, [f]);
+  }
+}
+
+async function insertImages(w, d, b, target, files) {
   try {
     toast('写真を縮小して保存しています…');
-    const img = await compressImage(f);
-    const iid = await createImage(w, d, img);
-    await addItem(w, d, b, { kind: 'image', refId: iid, caption: '', size: 'm' });
+    const refs = [];
+    for (const f of files) refs.push(await createImage(w, d, await compressImage(f)));
+    await insertItems(w, d, b, target, refs.map((refId) => ({ kind: 'image', refId, caption: '', size: 'm' })));
   } catch (e) { toast(e.message || String(e), 'error', 6000); }
 }
 
-// 説明の行頭に「●」などを入れる（カーソルのある行。行の途中なら次の行を作る）
-function insertMarker(e, w, d, b, it, mark) {
+// 文章の欄の先頭で Backspace：前も文章ならつなげる。空の欄なら消す
+function noteKeyDown(e, el, w, d, b, it) {
+  if (e.key !== 'Backspace' || e.isComposing) return false;
+  const sel = selectionIn(el);
+  if (!sel || sel[0] !== 0 || sel[1] !== 0) return false;
+  const items = itemsOf(b);
+  const idx = items.findIndex((x) => x.id === it.id);
+  const prev = items[idx - 1];
+  const cur = readEditor(el);
+  const path = blockPath(w, b);
+  if (prev && prev.kind === 'text') {
+    e.preventDefault();
+    const pr = (b.items && b.items[prev.id]) || prev;
+    const pt = pr.text || '';
+    const pa = attrsOf(pt, pr.marks || []);
+    const text = pt + '\n' + cur.text;
+    const marks = marksOf([...pa.c, null, ...cur.c], [...pa.bg, null, ...cur.bg], [...pa.b, null, ...cur.b]);
+    const patch = { ...takePending(path), [`items.${prev.id}.text`]: text, [`items.${prev.id}.marks`]: marks, [`items.${it.id}`]: DEL };
+    if (b.items && b.items[prev.id]) { b.items[prev.id].text = text; b.items[prev.id].marks = marks; }
+    focusNoteLater(prev.id, pt.length + 1);
+    db.update(path, patch).then(() => touch(w, d));
+    return true;
+  }
+  if (!cur.text && items.length > 1) {
+    e.preventDefault();
+    const back = items.slice(0, idx).reverse().find((x) => x.kind === 'text');
+    if (back) focusNoteLater(back.id, ((b.items[back.id] || back).text || '').length);
+    db.update(path, { ...takePending(path), [`items.${it.id}`]: DEL }).then(() => touch(w, d));
+    return true;
+  }
+  return false;
+}
+function focusNoteLater(itemId, pos) {
+  let n = 0;
+  const tryFocus = () => {
+    const el = document.querySelector(`.rich[data-pkey="note:${itemId}"]`);
+    if (el) { el.focus(); setSelectionIn(el, pos); return; }
+    if (++n < 20) setTimeout(tryFocus, 30);
+  };
+  setTimeout(tryFocus, 30);
+}
+
+// 行頭に「●」などを入れる（カーソルのある行。行の途中なら次の行を作る）。カーソルがどこにもなければ、いちばん下の文章の終わりに
+function insertMarker(e, b, mark) {
   e.preventDefault();
-  const el = e.target.closest('.item').querySelector('.rich');
-  if (!el) return;
+  let el = document.activeElement;
+  const blk = el && el.closest && el.closest('[data-pblock]');
+  if (!(el && el._rtSetup && blk && blk.dataset.pblock === b.id && (el.dataset.pkey || '').startsWith('note:'))) {
+    const all = [...document.querySelectorAll(`[data-pblock="${b.id}"] .rich.note-ed`)];
+    el = all[all.length - 1];
+    if (!el) { toast('先に「文章」を足してください'); return; }
+  }
   const m = readEditor(el);
   const v = m.text;
   const sel = document.activeElement === el ? selectionIn(el) : null;
@@ -545,7 +670,7 @@ function insertMarker(e, w, d, b, it, mark) {
   setTimeout(() => { el.focus(); setSelectionIn(el, at + ins.length); }, 0);
 }
 
-// 説明文の欄（直接編集。更新した行は青、ツールバーで色を付けられる）
+// 文章の欄（直接編集。更新した行は青、ツールバーで色を付けられる）
 function NoteEditor(w, d, b, it) {
   const u = b._u;
   const raw = (b.items && b.items[it.id]) || it;
@@ -575,33 +700,56 @@ function NoteEditor(w, d, b, it) {
       touch(w, d);
       rerender();
     },
+    onKeyDown: (e, el) => noteKeyDown(e, el, w, d, b, it),
+    // 写真を貼り付けたら、カーソルの位置に差し込む
+    onPasteFiles: (files, el) => {
+      const sel = selectionIn(el) || [0];
+      insertImages(w, d, b, { itemId: it.id, pos: sel[0] }, files);
+    },
   });
 }
 
-const ITEM_NAME = { text: '説明', diagram: '図', image: '写真' };
+const ITEM_NAME = { text: '文章', diagram: '図', image: '写真' };
+const INSERT_KINDS = [['text', 'text', '文章'], ['diagram', 'stage', '図'], ['copy', 'copy', '直前の図を複製'], ['image', 'photo', '写真']];
+
+// 項目と項目のあいだの「＋」。押すと、そこに足すものを選べる
+function InsertSlot(w, d, b, at, rows, last) {
+  const open = S.ui.insertAt && S.ui.insertAt.b === b.id && S.ui.insertAt.at === at;
+  const toggle = () => { S.ui.insertAt = open ? null : { b: b.id, at }; rerender(); };
+  const pick = (kind) => { S.ui.insertAt = null; rerender(); insertNew(w, d, b, kind, { at }, rows); };
+  const hasPrev = !!diagramBefore(rows, b, { at });
+  return h('div', { key: 'slot-' + at, class: 'ins-slot' + (open ? ' open' : '') + (last ? ' last' : '') },
+    h('button', { class: 'ins-btn', type: 'button', title: 'ここに文章・図・写真を足す', 'aria-label': 'ここに文章・図・写真を足す', 'aria-expanded': open ? 'true' : 'false', onclick: toggle }, icon('plus', 14)),
+    open ? h('div', { class: 'ins-menu' },
+      INSERT_KINDS.filter(([k]) => k !== 'copy' || hasPrev).map(([k, ic, label]) =>
+        h('button', { class: 'btn tiny', type: 'button', onclick: () => pick(k) }, icon(ic, 15), label)),
+      h('button', { class: 'icon-btn', type: 'button', title: '閉じる', 'aria-label': '閉じる', onclick: toggle }, icon('close', 14))) : h('span'));
+}
+
 function ItemView(w, d, b, it, i, items, rows) {
   const name = ITEM_NAME[it.kind] || '項目';
+  const grip = items.length > 1 ? h('button', {
+    class: 'icon-btn item-grip', title: `ドラッグして、この${name}を動かす`, 'aria-label': `この${name}を動かす（矢印キーでも動かせます）`,
+    onpointerdown: (e) => startItemDrag(e, w, b, items, i),
+    onkeydown: (e) => { if (e.key === 'ArrowUp') { e.preventDefault(); moveItem(w, b, items, i, i - 1); } else if (e.key === 'ArrowDown') { e.preventDefault(); moveItem(w, b, items, i, i + 1); } },
+  }, icon('grip', 18)) : null;
   const bar = (extra) => h('div', { class: 'item-tools' },
+    grip,
     extra,
     h('span', { class: 'grow' }),
-    items.length > 1 ? h('button', {
-      class: 'icon-btn item-grip', title: `ドラッグして、この${name}を並べ替え`, 'aria-label': `この${name}を並べ替え（矢印キーでも動かせます）`,
-      onpointerdown: (e) => startItemDrag(e, w, b, items, i),
-      onkeydown: (e) => { if (e.key === 'ArrowUp') { e.preventDefault(); moveItem(w, b, items, i, i - 1); } else if (e.key === 'ArrowDown') { e.preventDefault(); moveItem(w, b, items, i, i + 1); } },
-    }, icon('grip', 18)) : null,
     h('button', { class: 'btn tiny del-btn', onclick: () => removeItem(w, d, b, it) }, icon('trash', 14), `この${name}を削除`));
 
   if (it.kind === 'text') {
     return h('div', { key: it.id, class: 'item text' },
-      NoteEditor(w, d, b, it),
-      bar(['●', '☆', '＊', '→'].map((m) => h('button', { class: 'mark-btn', title: `行頭に「${m}」`, onpointerdown: (e) => e.preventDefault(), onclick: (e) => insertMarker(e, w, d, b, it, m) }, m))));
+      h('div', { class: 'text-gutter' }, grip),
+      NoteEditor(w, d, b, it));
   }
   if (it.kind === 'diagram') {
     const g = (S.d.diagrams || []).find((x) => x.id === it.refId);
     return h('div', { key: it.id, class: 'item diagram' },
       h('input', {
-        class: 'caption', value: it.caption || '', placeholder: '見出し（任意）', 'data-pkey': 'cap:' + it.id,
-        oninput: (e) => { saveLater(blockPath(w, b), { [`items.${it.id}.caption`]: e.target.value }); touch(w, d); },
+        class: 'caption' + (it.caption ? '' : ' is-empty'), value: it.caption || '', placeholder: '図の見出し（任意）', 'data-pkey': 'cap:' + it.id,
+        oninput: (e) => { e.target.classList.toggle('is-empty', !e.target.value); saveLater(blockPath(w, b), { [`items.${it.id}.caption`]: e.target.value }); touch(w, d); },
       }),
       b._u && b._u.diagram(it.id, it.refId) ? h('div', { class: 'upd small' }, DIAGRAM_FIXED) : null,
       (() => { const ed = others().filter((p) => p.g === it.refId); return h('div', { class: 'pres-edit' + (ed.length ? '' : ' empty') }, NameTags(ed, 'on-thumb'), ed.length ? h('span', { class: 'muted small' }, 'が図を編集中') : null); })(),
@@ -615,7 +763,7 @@ function ItemView(w, d, b, it, i, items, rows) {
       g ? OverCount(g.shapes) : null,
       bar([
         h('button', { class: 'btn tiny', onclick: () => openEditor(w, it.refId) }, '編集'),
-        h('button', { class: 'btn tiny', onclick: () => addDiagramAfter(w, d, b, it) }, '複製して下に追加'),
+        h('button', { class: 'btn tiny', onclick: () => duplicateDiagram(w, d, b, it) }, '複製して下に追加'),
       ]));
   }
   if (it.kind === 'image') {
@@ -623,8 +771,8 @@ function ItemView(w, d, b, it, i, items, rows) {
     const size = it.size || 'm';
     return h('div', { key: it.id, class: 'item image' },
       h('input', {
-        class: 'caption', value: it.caption || '', placeholder: '見出し（任意）例：＜木のイメージ＞', 'data-pkey': 'cap:' + it.id,
-        oninput: (e) => { saveLater(blockPath(w, b), { [`items.${it.id}.caption`]: e.target.value }); touch(w, d); },
+        class: 'caption' + (it.caption ? '' : ' is-empty'), value: it.caption || '', placeholder: '写真の見出し（任意）例：＜木のイメージ＞', 'data-pkey': 'cap:' + it.id,
+        oninput: (e) => { e.target.classList.toggle('is-empty', !e.target.value); saveLater(blockPath(w, b), { [`items.${it.id}.caption`]: e.target.value }); touch(w, d); },
       }),
       im ? h('img', { class: 'photo size-' + size, src: im.data, alt: it.caption || '参考写真' }) : h('div', { class: 'muted small pad' }, '読み込み中…'),
       bar(h('div', { class: 'seg' }, [['s', '小'], ['m', '中'], ['l', '大']].map(([k, label]) =>
@@ -633,22 +781,48 @@ function ItemView(w, d, b, it, i, items, rows) {
   return null;
 }
 
-async function addDiagramAfter(w, d, b, it) {
-  const items = itemsOf(b);
+async function duplicateDiagram(w, d, b, it) {
   const src = (S.d.diagrams || []).find((g) => g.id === it.refId);
   const gid = await createDiagram(w, d, (src && src.shapes) || {});
-  const id = newId(8);
-  const idx = items.findIndex((x) => x.id === it.id);
-  const patch = { [`items.${id}`]: { kind: 'diagram', refId: gid, caption: '', order: idx + 2 } };
-  items.forEach((x, k) => { patch[`items.${x.id}.order`] = k <= idx ? k + 1 : k + 2; });
-  await db.update(blockPath(w, b), patch);
-  touch(w, d);
+  const items = itemsOf(b);
+  await insertItems(w, d, b, { at: items.findIndex((x) => x.id === it.id) + 1 }, [{ kind: 'diagram', refId: gid, caption: '' }]);
   openEditor(w, gid);
+}
+
+// ページに写真のファイルを落としたら、落とした項目の下（項目の外ならいちばん下）に差し込む
+function onDocDrop(e, w, d, b) {
+  const files = [...((e.dataTransfer && e.dataTransfer.files) || [])].filter((f) => /^image\//.test(f.type));
+  if (!files.length) return;
+  e.preventDefault();
+  const itemEl = e.target.closest && e.target.closest('.item');
+  const els = [...e.currentTarget.querySelectorAll(':scope > .item')];
+  const k = itemEl ? els.indexOf(itemEl) : -1;
+  insertImages(w, d, b, { at: k >= 0 ? k + 1 : Infinity }, files);
+}
+
+// 選んだ図解のページの下に出す道具（カーソルの位置に差し込む。ボタンを押してもカーソルが外れないようにする）
+function DocTools(w, d, b, rows) {
+  const keep = (e) => e.preventDefault();
+  const add = (kind, e) => {
+    const t = insertTarget(b);
+    // 文章の中にカーソルがあるときの「文章」は、欄を分けずに次の行を作る
+    if (kind === 'text' && t.itemId) { insertMarker(e, b, '●'); return; }
+    insertNew(w, d, b, kind, t, rows);
+  };
+  const hasPrev = !!previousDiagram(rows, b);
+  return h('div', { class: 'add-bar doc-tools' },
+    h('div', { class: 'doc-tools-row' },
+      h('span', { class: 'muted small' }, '行頭'),
+      ['●', '☆', '＊', '→'].map((m) => h('button', { class: 'mark-btn', title: `行頭に「${m}」`, onpointerdown: keep, onclick: (e) => insertMarker(e, b, m) }, m))),
+    h('div', { class: 'doc-tools-row' },
+      h('span', { class: 'muted small' }, '足す'),
+      INSERT_KINDS.filter(([k]) => k !== 'copy' || hasPrev).map(([k, ic, label]) =>
+        h('button', { class: 'btn tiny', onpointerdown: keep, onclick: (e) => add(k, e) }, icon(ic, 15), label))),
+    h('div', { class: 'muted small doc-hint' }, touchOnly() ? '文章の中にカーソルがあればその行のあとに、なければいちばん下に入ります。' : '文章の中にカーソルがあればその行のあとに、なければいちばん下に入ります。写真は文章に貼り付け（Ctrl+V）たり、ページに落としたりしても入ります。'));
 }
 
 function BlockCard(w, d, b, r, rowIndex, indexInRow, rows) {
   const items = itemsOf(b);
-  const prevDia = previousDiagram(rows, b);
   const canMerge = rowIndex > 0 && indexInRow === 0;
   const { draft } = ctx();
   const hasScript = !!scriptOf(draft).text;
@@ -658,6 +832,9 @@ function BlockCard(w, d, b, r, rowIndex, indexInRow, rows) {
   const active = S.ui.activeBlock === b.id;
   // 指で押したときは、選ばれていない段のタイミングを1回目に押しても、付け替えにはせず選ぶだけにする
   const pick = (e) => { if (S.ui.activeBlock !== b.id) { S.ui.activeBlock = b.id; S.ui.justPicked = e && e.pointerType === 'touch' ? b.id : null; rerender(); } };
+  const doc = [];
+  items.forEach((it, i) => { doc.push(InsertSlot(w, d, b, i, rows, false)); doc.push(ItemView(w, d, b, it, i, items, rows)); });
+  doc.push(InsertSlot(w, d, b, items.length, rows, true));
   return h('div', {
     key: b.id, class: 'block' + (b.cue ? '' : ' nocue') + (here.length ? ' has-pres' : '') + (active ? ' active' : ''), 'data-pblock': b.id, style: ringStyle(here),
     onpointerdown: pick, onfocusin: pick,
@@ -681,13 +858,12 @@ function BlockCard(w, d, b, r, rowIndex, indexInRow, rows) {
           h('button', { class: 'linklike', onclick: (e) => { e.target.closest('details').open = false; S.ui.reanchor = b.id; S.ui.sel = null; S.ui.lineSel = null; rerender(); } }, 'タイミング（テマ友での位置）を付け替える'),
           h('button', { class: 'linklike danger', onclick: (e) => { e.target.closest('details').open = false; removeBlock(w, d, b); } }, 'この図解を削除')))),
     !r.ok ? h('div', { class: 'warn small' }, 'テーマ活動の友の中にこの語句が見つかりません。「⋯」→「位置を付け替える」で直してください。') : null,
-    b.newRow === false && indexInRow === 0 ? null : null,
-    items.map((it, i) => ItemView(w, d, b, it, i, items, rows)),
-    h('div', { class: 'add-bar' },
-      h('button', { class: 'btn tiny', onclick: async () => { const id = await addItem(w, d, b, { kind: 'text', text: '● ' }); S.ui.focusItem = id; } }, '＋説明'),
-      h('button', { class: 'btn tiny', onclick: () => addDiagram(w, d, b, null) }, '＋図'),
-      prevDia ? h('button', { class: 'btn tiny', onclick: () => addDiagram(w, d, b, prevDia.refId) }, '＋直前の図を複製') : null,
-      h('button', { class: 'btn tiny', onclick: () => addImage(w, d, b) }, '＋写真')));
+    h('div', {
+      class: 'doc' + (items.length ? '' : ' is-empty'),
+      ondragover: (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) e.preventDefault(); },
+      ondrop: (e) => onDocDrop(e, w, d, b),
+    }, doc),
+    DocTools(w, d, b, rows));
 }
 
 // ---------- テーマ活動の友の貼り付け ----------
@@ -797,7 +973,7 @@ function HowTo(d) {
     touchOnly()
       ? h('li', null, 'テマ友の文字を直すときは、行を押して出る「文字を直す」を押してください。説明はそのまま書き換えられます。')
       : h('li', null, 'テマ友と説明は、その場で書き換えられます。文字をなぞって選んでから、上の色のボタンを押してください。'),
-    h('li', null, '図解を押すと、その図解の「＋説明」「＋図」などのボタンが出ます。'),
+    h('li', null, '図解はタイミングごとの1枚のページです。押して選ぶと、文章・図・写真を好きな位置に足せます（項目のあいだの「＋」、または下の「足す」）。'),
     touchOnly() ? null : h('li', null, 'Googleドキュメントの図解をコピーして、このページで Ctrl+V を押すと、このトラックに取り込めます。')));
 }
 

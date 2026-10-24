@@ -58,6 +58,15 @@ async function flushOne(path) {
   try { await db.update(path, cur.patch); } catch (e) { toast('保存できませんでした: ' + (e.message || e), 'error', 6000); }
   rerender();
 }
+// まだ保存していない書き換えを取り出す（同じ文書をまとめて書き換えるときに、あとから古い内容で上書きされないように）
+export function takePending(path) {
+  const cur = pending.get(path);
+  if (!cur) return {};
+  pending.delete(path);
+  clearTimeout(cur.timer);
+  S.saving = pending.size;
+  return cur.patch;
+}
 export function flushAll() { for (const p of [...pending.keys()]) flushOne(p); }
 window.addEventListener('beforeunload', flushAll);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushAll(); });

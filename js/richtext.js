@@ -192,6 +192,11 @@ export function setSelectionIn(el, a, b = a) {
 // opts.lines()   … 1行ずつの vnode（h('div', { class: 'rl …' }, …)）を返す
 // opts.onChange(text, c, bg, b) … 書き換わったとき（呼ばれた側で保存し、画面を描き直す）
 let lastEditor = null; // 最後に触った欄（ツールバーの色を付ける先）
+// 最後にカーソルがあった位置を覚えておく（ボタンを押して欄から外れても、その位置に差し込めるように）
+document.addEventListener('selectionchange', () => {
+  const el = document.activeElement;
+  if (el && el._rtSetup) { const sel = selectionIn(el); if (sel) el._lastSel = sel; }
+});
 export function lastRichEditor() { return lastEditor && document.contains(lastEditor) ? lastEditor : null; }
 
 // 描き直す（中身が同じなら何もしない）。打ち込みでブラウザが中身を変えているので、毎回まっさらにしてから描く
@@ -233,6 +238,7 @@ function setup(el) {
   el.addEventListener('keyup', () => { lastEditor = el; });
   el.addEventListener('mouseup', () => { lastEditor = el; });
   el.addEventListener('keydown', (e) => {
+    if (el._rt.onKeyDown && el._rt.onKeyDown(e, el)) return;
     if (e.key === 'Enter' && !e.isComposing) {
       e.preventDefault();
       insertPlain(el, '\n');
@@ -240,6 +246,9 @@ function setup(el) {
   });
   el.addEventListener('paste', (e) => {
     e.preventDefault();
+    // 画像の貼り付けは、呼び出し側に任せる（説明の中に写真を差し込む）
+    const files = [...((e.clipboardData && e.clipboardData.files) || [])].filter((f) => /^image\//.test(f.type));
+    if (files.length && el._rt.onPasteFiles) { el._rt.onPasteFiles(files, el); return; }
     const t = (e.clipboardData && e.clipboardData.getData('text/plain')) || '';
     insertPlain(el, t.replace(/\r\n?/g, '\n'));
   });
