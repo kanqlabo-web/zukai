@@ -7,7 +7,7 @@
 .mb-btn { border: 0; background: none; padding: 2px 8px; border-radius: 6px; font-size: 13.5px; color: var(--ink); cursor: pointer; line-height: 1.6; }
 .mb-btn:hover, .mb-item.open .mb-btn { background: #efedf6; }
 .menu-pop {
-  position: absolute; z-index: 90; min-width: 240px; max-height: calc(100vh - 80px); overflow-y: auto;
+  position: absolute; z-index: 90; min-width: 240px; width: max-content; max-width: calc(100vw - 16px); max-height: calc(100vh - 80px); overflow-y: auto;
   background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 30px rgba(30, 25, 60, .14); padding: 6px 0;
 }
 .mb-menu { top: calc(100% + 2px); left: 0; }
@@ -16,6 +16,7 @@
 .mp-row:hover:not(:disabled) { background: var(--accent-soft); }
 .mp-row:disabled { color: var(--muted); opacity: .55; cursor: default; }
 .mp-check { display: grid; place-items: center; color: var(--accent); }
+.mp-label { white-space: nowrap; }
 .mp-kbd { color: var(--muted); font-size: 12.5px; padding-left: 18px; white-space: nowrap; }
 .mp-sep { height: 1px; background: var(--line); margin: 5px 0; }
 
@@ -106,3 +107,35 @@
 .work-sub .badge { margin: 0; }
 .work-sub .grow { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .work-share { margin-top: 2px; }
+
+/* ---------- トラックのページ：稿の名前の下にメニューバー（ドキュメントと同じ位置） ---------- */
+.draft-head .menubar { margin-top: 2px; }
+.draft-head .mb-menu { z-index: 45; }
+@media (max-width: 640px) { .draft-head .menubar { margin-left: -8px; } }
+
+/* ---------- ホーム：検索・並べ替え・カード／リストの切り替え ---------- */
+.home-tools { display: flex; align-items: center; gap: 8px; margin: -2px 0 12px; flex-wrap: wrap; }
+.home-search { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 200px; max-width: 520px; background: #fff; border: 1px solid var(--line-2); border-radius: 99px; padding: 0 14px; color: var(--muted); }
+.home-search:focus-within { border-color: var(--accent-2); box-shadow: 0 0 0 3px var(--accent-soft); }
+.home-search input { border: 0; box-shadow: none !important; padding: 8px 0; background: transparent; }
+.home-sort { margin-left: auto; }
+.view-seg .seg-btn { display: grid; place-items: center; padding: 4px 9px; }
+/* リスト表示：1行に小さな図・名前・役割・更新 */
+.card-grid.as-list { display: flex; flex-direction: column; gap: 0; background: #fff; border: 1px solid var(--line); border-radius: var(--radius); }
+.card-grid.as-list .work-card { display: flex; align-items: center; border: 0; border-bottom: 1px solid #efeef5; border-radius: 0; }
+.card-grid.as-list .work-card:last-child { border-bottom: 0; }
+.card-grid.as-list .work-card:hover { transform: none; background: #f7f6fc; }
+.card-grid.as-list .work-thumb { width: 96px; height: 46px; flex: none; border: 0; border-radius: 0; margin-left: 10px; }
+.card-grid.as-list .work-thumb svg { width: 100%; }
+.card-grid.as-list .work-body { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 12px; }
+.card-grid.as-list .work-card-head { flex: 1; min-width: 0; }
+.card-grid.as-list .work-sub { margin: 0; flex: none; }
+.card-grid.as-list .work-share { display: none; }
+.card-grid.as-list .work-title { font-size: 15px; margin: 0; }
+@media (max-width: 640px) {
+  .home-sort { margin-left: 0; }
+  .card-grid.as-list .work-body { flex-wrap: wrap; gap: 2px 10px; }
+  .card-grid.as-list .work-card-head { flex: 1 0 100%; }
+  .card-grid.as-list .work-sub { flex: 1 0 100%; }
+  .card-grid.as-list .work-thumb { width: 72px; height: 36px; }
+}

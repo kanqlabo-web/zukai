@@ -9,6 +9,10 @@ import { StageSVG, W, H } from './stage.js';
 import { CastTable, Legend, ScriptLines, DotText } from './sheet.js';
 import { openEditor, PresenceMarks } from './editor.js';
 import { confirmBox, ask } from './dialog.js';
+import { MenuBar, MOD } from './menubar.js';
+import { undoAll, redoAll } from './undo.js';
+import { history } from './db.js';
+import { CHANGELOG_URL } from './version.js';
 import { canEdit } from './access.js';
 import { workIndex } from './cast.js';
 import { resolveAnchor } from './script.js';
@@ -60,9 +64,8 @@ function saveScriptLocal(w, d, text, marks) {
   }, 1500);
 }
 
-// 文字の色・塗りのツールバー（Word・Googleドキュメントのように、選んだ文字に付ける）
-function FormatBar(w, d, rows) {
-  const keep = (e) => e.preventDefault();
+// ツールバーとメニューバーで使う操作：差し込み・行頭の印・文字の色
+function docActions(w, d, rows) {
   // 差し込む先の図解：カーソルのある文章の図解、なければ選んでいる図解（いちばん下に入れる）
   const target = () => {
     const el = document.activeElement;
@@ -87,6 +90,13 @@ function FormatBar(w, d, rows) {
     const el = (node && (node.nodeType === 1 ? node : node.parentElement).closest('.rich')) || lastRichEditor();
     if (!el || !applyToSelection(el, k, v)) toast('色を付ける文字を、なぞって選んでください', 'info', 2500);
   };
+  return { add, mark, apply };
+}
+
+// 文字の色・塗りのツールバー（Word・Googleドキュメントのように、選んだ文字に付ける）
+function FormatBar(w, d, rows) {
+  const keep = (e) => e.preventDefault();
+  const { add, mark, apply } = docActions(w, d, rows);
   const sw = (k, v, label, color, title) => h('button', { class: 'fmt-btn', title, onpointerdown: keep, onclick: () => apply(k, v) },
     h('span', { class: 'fmt-sw', style: k === 'bg' ? { background: color } : { color } }, label));
   return h('div', { class: 'format-bar' },
@@ -1031,6 +1041,70 @@ export async function newDraftFlow(w, draft, siblings) {
   go(`#/w/${w}/d/${nd}`);
 }
 
+// Googleドキュメントのようなメニューバー（ファイル・編集・表示・挿入・表示形式・ヘルプ）。中身はこのページのボタンと同じ操作
+const NOEV = { preventDefault() {} };
+function docMenus({ w, d, draft, track, siblings, text, rows, empty, draftPath }) {
+  const act = docActions(w, d, rows);
+  const has = text || (S.d.blocks || []).length;
+  const color = (v, label) => ({ label: `文字の色：${label}`, onclick: () => act.apply('c', v) });
+  return [
+    { label: 'ファイル', items: [
+      { label: '新しい稿を作る', disabled: empty, onclick: () => newDraftFlow(w, draft, siblings) },
+      ...siblings.map((x, i) => ({ label: `${draftName(x)}${i === 0 ? '（最新）' : ''}を開く`, checked: x.id === d, onclick: () => go(`#/w/${w}/d/${x.id}`) })),
+      '-',
+      { label: '閲覧モード', disabled: empty, onclick: () => go(`#/w/${w}/show/d/${d}`) },
+      { label: '書き出す（PDF・Googleドキュメント・Word）', disabled: empty, onclick: () => go(`#/w/${w}/print/d/${d}?export`) },
+      { label: '書き出しの表示を見る', disabled: empty, onclick: () => go(`#/w/${w}/print/d/${d}`) },
+      '-',
+      { label: 'ライブラリーに戻る', onclick: () => go(`#/w/${w}`) },
+      { label: 'この稿を削除', onclick: () => removeDraft(w, draft, track, siblings) },
+    ] },
+    { label: '編集', items: [
+      { label: '元に戻す', kbd: MOD + 'Z', disabled: !history.canUndo(), onclick: undoAll },
+      { label: 'やり直す', kbd: MOD + 'Y', disabled: !history.canRedo(), onclick: redoAll },
+      '-',
+      { label: text ? 'テマ友を編集' : 'テマ友を貼り付け', onclick: () => { S.ui.scriptEdit = { value: text, base: text }; rerender(); } },
+      { label: 'メンバー一覧を編集', onclick: () => go(`#/w/${w}/cast`) },
+    ] },
+    { label: '表示', items: [
+      draft.updMark ? { label: '更新箇所を青字にする', checked: draft.updShow !== false, onclick: () => db.update(draftPath, { updShow: draft.updShow === false }) } : null,
+      { label: '使い方を表示', checked: !!document.querySelector('.howto-box[open]'), disabled: empty, onclick: () => { const el = document.querySelector('.howto-box'); if (el) { el.open = !el.open; el.scrollIntoView({ block: 'nearest' }); } } },
+      { label: '閲覧モード', disabled: empty, onclick: () => go(`#/w/${w}/show/d/${d}`) },
+    ] },
+    { label: '挿入', items: [
+      ...INSERT_KINDS.map(([k, , label]) => ({ label, disabled: !has, onclick: () => act.add(k, NOEV) })),
+      '-',
+      ...['●', '☆', '＊', '→'].map((m) => ({ label: `行頭に「${m}」`, disabled: !has, onclick: () => act.mark(m, NOEV) })),
+    ] },
+    { label: '表示形式', items: [
+      { label: '太字', kbd: MOD + 'B', onclick: () => act.apply('b', 1) },
+      '-',
+      color('black', '黒'), color('blue', '青（更新）'), color('pink', 'ピンク（再更新）'), color('red', '赤（重要）'), color('gray', '灰色'),
+      { label: '文字の色を消す', onclick: () => act.apply('c', null) },
+      '-',
+      { label: '灰色で塗る', onclick: () => act.apply('bg', 'gray') },
+      { label: '塗りを消す', onclick: () => act.apply('bg', null) },
+    ] },
+    { label: 'ヘルプ', items: [
+      { label: 'キーボード ショートカット', kbd: MOD + '/', onclick: showDocShortcuts },
+      { label: '更新履歴', onclick: () => window.open(CHANGELOG_URL, '_blank', 'noopener') },
+    ] },
+  ];
+}
+function showDocShortcuts() {
+  ask({
+    title: 'キーボード ショートカット', ok: '閉じる', cancel: false, fields: [],
+    message: [['元に戻す', MOD + 'Z'], ['やり直す', MOD + 'Y'], ['太字', MOD + 'B'], ['貼り付け・取り込み', MOD + 'V'], ['ショートカットの一覧', MOD + '/']].map(([a, k]) => `${a}　${k}`).join('\n'),
+  });
+}
+document.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey) || !S.route || S.route.name !== 'draft' || S.ui.editDiagram) return;
+  if (e.key === '/') { e.preventDefault(); showDocShortcuts(); return; }
+  // 太字（Googleドキュメントと同じ Ctrl+B）
+  const el = document.activeElement;
+  if (e.key.toLowerCase() === 'b' && !e.shiftKey && el && el.classList && el.classList.contains('rich')) { e.preventDefault(); applyToSelection(el, 'b', 1); }
+});
+
 export function DraftView() {
   const { w, d, draft, track, ep, work, drafts } = ctx();
   if (!S.d.drafts || work === undefined) return h('main', { class: 'page' }, h('p', { class: 'muted' }, '読み込み中…'));
@@ -1051,7 +1125,8 @@ export function DraftView() {
     h('div', { class: 'draft-head' },
       h('div', { class: 'grow' },
         h('div', { class: 'muted small' }, ep ? ep.title : '', ' ・ ', track ? track.title : ''),
-        h('h1', { class: 'sheet-name' }, draftTitle(work, ep, track, draft))),
+        h('h1', { class: 'sheet-name' }, draftTitle(work, ep, track, draft)),
+        MenuBar('doc', docMenus({ w, d, draft, track, siblings, text, rows, empty, draftPath }), rerender)),
       h('div', { class: 'actions' },
         DraftPicker({ drafts: siblings, cur: d, edit: true, canNew: !empty, onPick: (id) => go(`#/w/${w}/d/${id}`), onNew: () => newDraftFlow(w, draft, siblings) }),
         h('button', { class: 'btn', onclick: () => { S.ui.scriptEdit = { value: text, base: text }; rerender(); } }, text ? 'テマ友を編集' : 'テマ友を貼り付け'),

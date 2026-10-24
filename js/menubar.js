@@ -13,6 +13,7 @@ export function MenuBar(id, menus, redraw) {
   return h('nav', { class: 'menubar', role: 'menubar' }, menus.map((m, i) => h('div', { key: m.label, class: 'mb-item' + (isOpen(i) ? ' open' : '') },
     h('button', {
       class: 'mb-btn', role: 'menuitem', 'aria-haspopup': 'true', 'aria-expanded': isOpen(i) ? 'true' : 'false',
+      onmousedown: (e) => e.preventDefault(),
       onpointerdown: (e) => { e.preventDefault(); open = isOpen(i) ? null : { bar: id, idx: i }; ctx = null; redraw(); },
       onpointerenter: () => { if (open && open.bar === id && open.idx !== i) { open = { bar: id, idx: i }; redraw(); } },
       onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') { e.preventDefault(); open = { bar: id, idx: i }; redraw(); } },
@@ -21,7 +22,7 @@ export function MenuBar(id, menus, redraw) {
 }
 
 function MenuList(items, cls, style) {
-  return h('div', { class: 'menu-pop ' + cls, role: 'menu', style, onpointerdown: (e) => e.stopPropagation() },
+  return h('div', { class: 'menu-pop ' + cls, role: 'menu', style, onpointerdown: (e) => e.stopPropagation(), onmousedown: (e) => e.preventDefault() },
     items.filter(Boolean).map((it, k) => it === '-'
       ? h('div', { key: 's' + k, class: 'mp-sep', role: 'separator' })
       : h('button', {

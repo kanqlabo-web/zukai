@@ -85,9 +85,21 @@ function CardArt(w) {
   return StageSVG(shapes || {}, { cls: 'stage card-stage', idx: workIndex(w), roleVis: (t && t.roleVis) || {} });
 }
 
+// 一覧の見せ方（Googleドキュメントのホームと同じ：カード／リスト、並べ替え、検索）。この端末に覚えておく
+const VIEW_KEY = 'zukai-home-view';
+function homePref() { try { return JSON.parse(localStorage.getItem(VIEW_KEY)) || {}; } catch (e) { return {}; } }
+function setHomePref(patch) { try { localStorage.setItem(VIEW_KEY, JSON.stringify({ ...homePref(), ...patch })); } catch (e) { /* 使えない環境 */ } rerender(); }
+
 export function HomeView() {
-  const works = (S.d.works || []).slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-  const hasWorks = works.length > 0;
+  const pref = homePref();
+  const sortBy = pref.sort === 'title' ? 'title' : 'updated';
+  const all = (S.d.works || []).slice().sort(sortBy === 'title'
+    ? (a, b) => String(a.title || '').localeCompare(String(b.title || ''), 'ja')
+    : (a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  const hasWorks = all.length > 0;
+  const q = (S.ui.homeQuery || '').trim().toLowerCase();
+  const works = q ? all.filter((w) => String(w.title || '').toLowerCase().includes(q)) : all;
+  const listView = pref.view === 'list';
   return h('main', { class: 'page' },
     hasWorks ? null : h('section', { class: 'hero' },
       h('h1', null, '新しいライブラリーを作る'),
@@ -107,14 +119,23 @@ export function HomeView() {
     h('div', { class: 'section-head' },
       h('h2', { class: 'section-h' }, 'ライブラリー一覧'),
       hasWorks ? h('button', { class: 'btn primary', onclick: newWorkDialog }, icon('plus', 16), '新しいライブラリー') : null),
+    hasWorks ? h('div', { class: 'home-tools' },
+      h('label', { class: 'home-search' }, icon('search', 18),
+        h('input', { type: 'search', value: S.ui.homeQuery || '', placeholder: 'ライブラリーを検索', 'aria-label': 'ライブラリーを検索', oninput: (e) => { S.ui.homeQuery = e.target.value; rerender(); } })),
+      h('select', { class: 'home-sort', 'aria-label': '並べ替え', value: sortBy, onchange: (e) => setHomePref({ sort: e.target.value }) },
+        h('option', { value: 'updated' }, '更新が新しい順'), h('option', { value: 'title' }, '名前順')),
+      h('div', { class: 'seg view-seg', role: 'group', 'aria-label': '表示' },
+        h('button', { class: 'seg-btn' + (listView ? '' : ' on'), title: 'カードで表示', 'aria-label': 'カードで表示', 'aria-pressed': listView ? 'false' : 'true', onclick: () => setHomePref({ view: 'grid' }) }, icon('grid', 16)),
+        h('button', { class: 'seg-btn' + (listView ? ' on' : ''), title: 'リストで表示', 'aria-label': 'リストで表示', 'aria-pressed': listView ? 'true' : 'false', onclick: () => setHomePref({ view: 'list' }) }, icon('list', 16)))) : null,
     S.d.worksError ? h('div', { class: 'warn' },
       h('b', null, 'ライブラリー一覧を読み込めませんでした。'),
       S.d.worksError === 'permission-denied'
         ? ' ' + adminMsg('読み込む権限がありませんでした', 'E301')
         : ' 通信状態を確かめて、ページを読み込み直してください（エラー番号 E302）。') : null,
     S.d.works == null ? h('p', { class: 'muted' }, '読み込み中…')
+      : q && !works.length ? h('p', { class: 'muted' }, `「${S.ui.homeQuery.trim()}」に合うライブラリーはありません。`)
       : works.length === 0 ? h('div', { class: 'empty' }, h('p', null, 'まだライブラリーがありません。'), h('p', { class: 'muted' }, '上の欄にライブラリー名を入れて「作成」を押してください。ほかの人から共有されたライブラリーも、ここに表示されます。'))
-        : h('div', { class: 'card-grid' }, works.map((w) => h('div', {
+        : h('div', { class: 'card-grid' + (listView ? ' as-list' : '') }, works.map((w) => h('div', {
           key: w.id, class: 'work-card', role: 'link', tabindex: 0,
           onclick: (e) => { if (!e.target.closest('.kebab')) go(`#/w/${w.id}`); },
           onkeydown: (e) => { if (e.key === 'Enter' && e.target === e.currentTarget) go(`#/w/${w.id}`); },
