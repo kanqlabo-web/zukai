@@ -185,14 +185,22 @@ export function detectCorners(photo) {
   } catch (e) { return null; }
 }
 
+// まず写真の中だけで探し、見つからなければ写真の外を白とみなしてもう一度探す
+// （枠が絵の端いっぱいに描いてあるイラストのため。写真の端に写った壁などを先に拾わないよう、この順にする）
 export function cornersFromGray(gray, w, h) {
+  return findFrame(gray, w, h, false) || findFrame(gray, w, h, true);
+}
+
+function findFrame(gray, w, h, edgeWhite) {
   // 1. 濃い線：両側（左右・上下・斜めのどれか）より暗い画素。
   //    ホワイトボードと壁の境目のような「片側だけ暗い」所は拾わない
   const d = Math.max(3, Math.round(Math.max(w, h) / 80));
   const ink = new Uint8Array(w * h);
   let n = 0;
-  const G = (x, y) => gray[y * w + x];
-  for (let y = d; y < h - d; y++) for (let x = d; x < w - d; x++) {
+  // edgeWhite：写真の外は白とみなす（端いっぱいの線も拾う）。そうでなければ端の近くは見ない
+  const G = (x, y) => (x < 0 || y < 0 || x >= w || y >= h ? Infinity : gray[y * w + x]);
+  const m = edgeWhite ? 0 : d;
+  for (let y = m; y < h - m; y++) for (let x = m; x < w - m; x++) {
     const g = G(x, y);
     const side = Math.max(
       Math.min(G(x - d, y), G(x + d, y)), Math.min(G(x, y - d), G(x, y + d)),
