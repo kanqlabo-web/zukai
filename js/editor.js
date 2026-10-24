@@ -3,7 +3,7 @@ import { h, render } from './vdom.js';
 import { db, DEL, newId } from './db.js';
 import { S, rerender, toast, pickFile } from './state.js';
 import { P, createImage, thumbOf } from './model.js';
-import { loadPhoto, warpToStage, TracePicker, initialCorners } from './trace.js';
+import { loadPhoto, loadPhotoSrc, warpToStage, TracePicker, TraceChooser, initialCorners } from './trace.js';
 import { textInRegion } from './drawimport.js';
 import { shapesFromClipboard, MARK } from './clippaste.js';
 import { W, H, stageFrame, StageSVG, shapeNode, sortShapes, moveShape, shapeCenter, shapeBBox, simplify, LAYER, layoutLabels, isRegion, isFillable, canName, insideShape, linePoints } from './stage.js';
@@ -828,7 +828,7 @@ function InlineBox() {
 }
 
 function onKey(e) {
-  if (!E || isDialogOpen() || E.tracePick) return;
+  if (!E || isDialogOpen() || E.tracePick || E.traceChoose) return;
   const tag = (e.target && e.target.tagName) || '';
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
   const mod = e.ctrlKey || e.metaKey;
@@ -1844,11 +1844,55 @@ function loadTrace() {
   db.get(P.doc(E.w, 'images', id)).then((im) => { if (E === cur && E.traceFor === id) { E.traceSrc = im ? im.data : null; draw(); } }).catch(() => {});
 }
 
-async function pickTrace() {
+// この図があるページ（タイミング）の写真と、そのページの図に貼った画像
+function pageImages() {
+  const b = (S.d.blocks || []).find((x) => Object.values(x.items || {}).some((it) => it.kind === 'diagram' && it.refId === E.id));
+  if (!b) return [];
+  const items = Object.values(b.items || {}).sort((p, q) => (p.order || 0) - (q.order || 0));
+  const out = [], seen = new Set();
+  const add = (src, label) => { if (src && !seen.has(src)) { seen.add(src); out.push({ src, label }); } };
+  let np = 0, ng = 0;
+  for (const it of items) {
+    if (it.kind === 'image') {
+      np++;
+      const im = (S.d.images || []).find((x) => x.id === it.refId);
+      if (im) add(im.data, it.caption || `写真 ${np}`);
+    } else if (it.kind === 'diagram') {
+      ng++;
+      const g = it.refId === E.id ? { shapes: E.shapes } : (S.d.diagrams || []).find((x) => x.id === it.refId);
+      for (const s of Object.values((g && g.shapes) || {})) if (s && s.t === 'image') add(s.src, `${ng}枚目の図の画像`);
+    }
+  }
+  return out;
+}
+
+// ページに写真・画像があれば一覧から選べるようにする（ないときは今までどおりファイルから）
+function pickTrace() {
+  if (!E) return;
+  const list = pageImages();
+  if (!list.length) { pickTraceFile(); return; }
+  E.traceChoose = list;
+  draw();
+}
+
+async function pickTraceFile() {
+  E.traceChoose = null;
+  draw();
   const f = await pickFile('image/*');
   if (!f || !E) return;
   try {
     const photo = await loadPhoto(f);
+    E.tracePick = { photo, pts: initialCorners(photo), drag: null };
+    draw();
+  } catch (e) { toast(e.message || String(e), 'error', 6000); }
+}
+
+async function pickTraceSrc(src) {
+  E.traceChoose = null;
+  draw();
+  try {
+    const photo = await loadPhotoSrc(src);
+    if (!E) return;
     E.tracePick = { photo, pts: initialCorners(photo), drag: null };
     draw();
   } catch (e) { toast(e.message || String(e), 'error', 6000); }
@@ -2089,5 +2133,6 @@ export function EditorView() {
         h('div', { class: 'rotate-hint' }, '2本指で広げると拡大、2本指で動かすとスクロールします。横向きにすると大きく編集できます。'),
         E.hmode ? HeightPanel() : E.tool === 'person' ? PersonPanel(shapes) : ['line', 'curve', 'carrow', 'cblock'].includes(E.tool) ? PolyPanel() : E.tool === 'block' ? BlockToolPanel() : SelPanel())),
     ContextMenu(),
+    E.traceChoose ? TraceChooser(E.traceChoose, { onPick: pickTraceSrc, onFile: pickTraceFile, onCancel: () => { E.traceChoose = null; draw(); } }) : null,
     E.tracePick ? TracePicker(E.tracePick, { onDone: finishTrace, onCancel: () => { E.tracePick = null; draw(); }, redraw: draw }) : null);
 }

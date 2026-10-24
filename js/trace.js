@@ -5,22 +5,47 @@ import { W, H } from './stage.js';
 
 // 写真を読み込む（大きすぎる写真は長い辺 2000px まで縮める）
 export function loadPhoto(file) {
+  const url = URL.createObjectURL(file);
+  return loadPhotoSrc(url, '写真を読み込めませんでした（HEIC形式の場合はJPEGで保存し直してください）').finally(() => URL.revokeObjectURL(url));
+}
+
+// ページにすでにある写真・画像（data: や https: の src）を読み込む
+export function loadPhotoSrc(src, failMsg = 'この画像を読み込めませんでした。ファイルから選んでください') {
   return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
     const img = new Image();
+    if (!/^(data|blob):/.test(src)) img.crossOrigin = 'anonymous';
     img.onload = () => {
-      URL.revokeObjectURL(url);
-      const s = Math.min(1, 2000 / Math.max(img.naturalWidth, img.naturalHeight));
-      const c = document.createElement('canvas');
-      c.width = Math.round(img.naturalWidth * s); c.height = Math.round(img.naturalHeight * s);
-      const ctx = c.getContext('2d');
-      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
-      ctx.drawImage(img, 0, 0, c.width, c.height);
-      resolve({ canvas: c, url: c.toDataURL('image/jpeg', 0.85), w: c.width, h: c.height });
+      try {
+        const s = Math.min(1, 2000 / Math.max(img.naturalWidth, img.naturalHeight));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.naturalWidth * s); c.height = Math.round(img.naturalHeight * s);
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+        resolve({ canvas: c, url: c.toDataURL('image/jpeg', 0.85), w: c.width, h: c.height });
+      } catch (e) { reject(new Error(failMsg)); }
     };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('写真を読み込めませんでした（HEIC形式の場合はJPEGで保存し直してください）')); };
-    img.src = url;
+    img.onerror = () => reject(new Error(failMsg));
+    img.src = src;
   });
+}
+
+// 下絵にする写真を選ぶ画面：このページ（タイミング）にある写真・画像の一覧と、ファイルから選ぶボタン
+// list = [{ src, label }]。onPick(src) / onFile() / onCancel()
+export function TraceChooser(list, { onPick, onFile, onCancel }) {
+  return h('div', { class: 'trace-pick' },
+    h('div', { class: 'trace-pick-head' },
+      h('b', null, '下絵にする写真を選ぶ'),
+      h('div', { class: 'muted small' }, 'このページにある写真・画像から選べます。ほかの写真はファイルから選んでください。')),
+    h('div', { class: 'trace-choose-body' },
+      h('div', { class: 'trace-choose-grid' }, list.map((x, i) => h('button', {
+        key: 'p' + i, class: 'trace-choose-item', title: x.label, onclick: () => onPick(x.src),
+      },
+        h('img', { src: x.src, alt: x.label, draggable: 'false' }),
+        h('span', { class: 'trace-choose-label' }, x.label))))),
+    h('div', { class: 'trace-pick-foot' },
+      h('button', { class: 'btn ghost', onclick: onCancel }, 'やめる'),
+      h('button', { class: 'btn', onclick: onFile }, 'ファイルから選ぶ')));
 }
 
 // 4組の点から射影変換（出力の点 → 写真の点）を求める
