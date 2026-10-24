@@ -121,6 +121,8 @@
 
 ## 7. 1.7.0 からの画面まわりのメモ
 
+- LINE のアプリの中のブラウザ（UA に ` Line/`）では Google のログインができない（ポップアップが同じ画面で firebaseapp.com に移り、sessionStorage が分かれて「missing initial state」になる）。2.24.1 から `index.html` の先頭のスクリプトで URL に `openExternalBrowser=1` を付けて開き直し、LINE に Safari / Chrome で開かせる。開いた先では印を URL から消す。`app.js` の `LINE_APP` のときはログインのボタンも同じ動き。ほかのアプリ（Instagram など）は `InAppNote` の案内だけ。
+
 - 稿の `figs: true`：テマ友なしでも図解がある稿の目印（`createBlock` が付ける）。`isEmptyDraft`（`views-draft.js`）で、空の稿のボタンを押せなくする。
 - 図解の段のボタンは `S.ui.activeBlock` の段だけ表示（CSS で隠す。作り直すと入力中の欄が外れるため）。
 - 図の編集を開くと `history.pushState({ zukaiEditor })` で履歴を1つ足し、popstate で閉じる（`editor.js`）。

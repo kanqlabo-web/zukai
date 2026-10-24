@@ -127,8 +127,18 @@ async function afterLogin(user) {
 // LINE などのアプリの中のブラウザでは、Googleのログインができないことがある
 const UA = navigator.userAgent;
 const IOS = /iPhone|iPad|iPod/.test(UA);
+const LINE_APP = / Line\//i.test(UA);
 const IN_APP = /Line\/|FBAN|FBAV|Instagram|Twitter|MicroMessenger|KAKAOTALK|YJApp|; wv\)/i.test(UA) || (IOS && !/Safari\//.test(UA));
+// LINE では URL に openExternalBrowser=1 を付けると Safari / Chrome で開き直せる
+function openInBrowser() {
+  const u = new URL(location.href);
+  u.searchParams.set('openExternalBrowser', '1');
+  location.href = u.href;
+}
 function InAppNote() {
+  if (LINE_APP) return h('div', { class: 'inapp-note' },
+    h('p', null, 'LINEの中のブラウザではログインできません。', IOS ? 'Safari' : 'Chrome', 'で開いてからログインしてください。'),
+    h('button', { class: 'btn', onclick: openInBrowser }, IOS ? 'Safariで開く' : 'ブラウザで開く'));
   return h('div', { class: 'inapp-note' },
     h('p', null, 'アプリの中のブラウザ（LINEなど）では、ログインできないことがあります。', IOS ? 'Safari' : 'Chrome', 'で開いてからログインしてください。'),
     h('button', { class: 'btn', onclick: async () => {
@@ -137,6 +147,7 @@ function InAppNote() {
 }
 
 async function doSignIn() {
+  if (LINE_APP) { openInBrowser(); return; }
   try { await auth.signIn(); } catch (e) {
     const code = e && e.code ? e.code : '';
     if (code.includes('popup-blocked')) toast('ポップアップがブロックされました。ブラウザの設定で許可してください。', 'error', 8000);
