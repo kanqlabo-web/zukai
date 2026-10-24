@@ -51,6 +51,14 @@ export function ContextMenu() {
   return MenuList(ctx.items, 'ctx-menu', { left: Math.max(4, x) + 'px', top: Math.max(4, y) + 'px' }, ctx.hi);
 }
 export const menuOpen = () => !!(open || ctx);
+// キーから見出しの名前でメニューを開く（Blender の Shift+A など）
+export function openMenu(id, label) {
+  const bar = bars[id];
+  const idx = bar ? bar.menus.findIndex((m) => m.label === label) : -1;
+  if (idx < 0) return;
+  open = { bar: id, idx, hi: null }; ctx = null; redrawFn = bar.redraw;
+  moveHi(1);
+}
 export const closeMenus = close;
 
 // ほかの所を押した・Esc で閉じる

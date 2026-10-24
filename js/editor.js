@@ -12,7 +12,7 @@ import { workIndex, roleListOf, personCast, personNo, personRole, roleShort, rol
 import { isDialogOpen } from './dialog.js';
 import { UndoButtons, undoAll, redoAll } from './undo.js';
 import { icon } from './icons.js';
-import { MenuBar, ContextMenu, openContextMenu, closeMenus, menuOpen, MOD } from './menubar.js';
+import { MenuBar, ContextMenu, openContextMenu, closeMenus, menuOpen, openMenu, MOD } from './menubar.js';
 import { ask } from './dialog.js';
 import { previousShapes, minCostAssign, diagramSequence } from './assign.js';
 import { setPresence, others, colorOf, sharePointer } from './presence.js';
@@ -753,6 +753,126 @@ document.addEventListener('paste', (e) => {
   pasteExternal(e.clipboardData);
 }, true);
 function paste() { if (clipboard.length) duplicateList(clipboard, 20, 20); }
+// ---------- Blender と同じ操作：G 移動・R 回転・S 拡大縮小（マウスで動かし、クリックか Enter で決定、Esc か右クリックで取り消し） ----------
+const ROT_TYPES = new Set(['ellipse', 'rect', 'text']);
+function mapPoints(s, f) {
+  const n = { ...s };
+  if (s.t === 'arrow') { [n.x1, n.y1] = f(s.x1, s.y1); [n.x2, n.y2] = f(s.x2, s.y2); }
+  else if (s.t === 'blob' || s.t === 'line') n.pts = s.pts.map((q) => f(q[0], q[1]));
+  else [n.x, n.y] = f(s.x, s.y);
+  return n;
+}
+const R2 = (v) => Math.round(v * 10) / 10;
+function startXf(mode) {
+  const list = selectedShapes();
+  if (!list.length) return;
+  if (E.poly) finishPoly();
+  E.drag = null;
+  E.tool = 'select';
+  const orig = {};
+  for (const x of list) orig[x.id] = clone(x);
+  // まとまりの中心（回転・拡大縮小の中心）
+  const cs = list.map(shapeCenter);
+  const center = [cs.reduce((a, c) => a + c[0], 0) / cs.length, cs.reduce((a, c) => a + c[1], 0) / cs.length];
+  const start = E.mouse ? E.mouse.slice() : center.slice();
+  E.xf = { mode, orig, center, start, axis: null, cur: start.slice(), snap: false };
+  applyXf();
+}
+function applyXf() {
+  const x = E.xf;
+  if (!x) return;
+  const [cx, cy] = x.center;
+  const [mx, my] = x.cur;
+  const t = {};
+  if (x.mode === 'g') {
+    let dx = mx - x.start[0], dy = my - x.start[1];
+    if (x.axis === 'x') dy = 0;
+    if (x.axis === 'y') dx = 0;
+    if (x.snap) { dx = Math.round(dx / 10) * 10; dy = Math.round(dy / 10) * 10; }
+    for (const id in x.orig) t[id] = moveShape(x.orig[id], Math.round(dx), Math.round(dy));
+    x.info = `移動 ${Math.round(dx)}, ${Math.round(dy)}`;
+  } else if (x.mode === 'r') {
+    let a = Math.atan2(my - cy, mx - cx) - Math.atan2(x.start[1] - cy, x.start[0] - cx);
+    let deg = (a * 180) / Math.PI;
+    if (x.snap) deg = Math.round(deg / 15) * 15;
+    a = (deg * Math.PI) / 180;
+    const c = Math.cos(a), sn = Math.sin(a);
+    for (const id in x.orig) {
+      const o = x.orig[id];
+      const n = Object.keys(x.orig).length > 1 || !ROT_TYPES.has(o.t) ? mapPoints(o, (px, py) => [R2(cx + (px - cx) * c - (py - cy) * sn), R2(cy + (px - cx) * sn + (py - cy) * c)]) : { ...o };
+      if (ROT_TYPES.has(o.t)) n.rot = Math.round((((o.rot || 0) + deg) % 360 + 360) % 360);
+      t[id] = n;
+    }
+    x.info = `回転 ${Math.round(deg)}°`;
+  } else {
+    const d0 = Math.hypot(x.start[0] - cx, x.start[1] - cy) || 1;
+    let k = Math.hypot(mx - cx, my - cy) / d0;
+    if (x.snap) k = Math.round(k * 10) / 10;
+    k = Math.max(0.05, k);
+    const kx = x.axis === 'y' ? 1 : k, ky = x.axis === 'x' ? 1 : k;
+    const km = Math.sqrt(kx * ky);
+    for (const id in x.orig) {
+      const o = x.orig[id];
+      const n = mapPoints(o, (px, py) => [R2(cx + (px - cx) * kx), R2(cy + (py - cy) * ky)]);
+      if (o.t === 'person') n.r = Math.round(Math.max(10, Math.min(48, (o.r || 20) * km)));
+      if (o.t === 'ellipse') { n.rx = Math.max(8, Math.round(o.rx * kx)); n.ry = Math.max(8, Math.round(o.ry * ky)); }
+      if (o.t === 'rect' || o.t === 'image') { n.w = Math.max(12, Math.round(o.w * kx)); n.h = Math.max(12, Math.round(o.h * ky)); }
+      if (o.t === 'text') n.size = Math.max(8, Math.round((o.size || 24) * km));
+      t[id] = n;
+    }
+    x.info = `拡大縮小 ${kx.toFixed(2)}${kx !== ky ? ' × ' + ky.toFixed(2) : ''}`;
+  }
+  E.temp = t;
+  draw();
+}
+function endXf(ok) {
+  const x = E && E.xf;
+  if (!x) return;
+  E.xf = null;
+  const ch = ok ? { ...E.temp } : null;
+  E.temp = {};
+  if (ch && Object.keys(ch).length) commit(ch); else draw();
+}
+function XfHint() {
+  const x = E.xf;
+  const name = { g: '移動', r: '回転', s: '拡大縮小' }[x.mode];
+  return h('div', { class: 'xf-hint', role: 'status' },
+    h('b', null, x.info || name),
+    x.axis ? h('span', { class: 'xf-axis' }, `${x.axis.toUpperCase()} 軸だけ`) : null,
+    h('span', null, `マウスで動かす / クリックか Enter で決定 / Esc か右クリックで取り消し${x.mode !== 'r' ? ' / X・Y で軸を固定' : ''} / ${MOD.replace('+', '')} を押しながらで刻む`));
+}
+
+// Blender のショートカット（文字だけのキー。Ctrl などと一緒のときは使わない）
+function blenderKey(e, mod) {
+  if (mod || E.hmode || E.inline) return false;
+  const k = e.key.toLowerCase();
+  const has = E.sel.size > 0;
+  if (!e.altKey && !e.shiftKey && (k === 'g' || k === 'r' || k === 's') && has) { e.preventDefault(); startXf(k); return true; }
+  if (e.shiftKey && !e.altKey && k === 'd' && has) {
+    // 複製して、そのまま動かす
+    e.preventDefault();
+    duplicateList(selectedShapes(), 0, 0);
+    requestAnimationFrame(() => { if (E) startXf('g'); });
+    return true;
+  }
+  if (!e.altKey && !e.shiftKey && k === 'x' && has) { e.preventDefault(); deleteSel(); return true; }
+  if (!e.shiftKey && k === 'a' && !E.poly) {
+    e.preventDefault();
+    E.tool = 'select';
+    E.sel = e.altKey ? new Set() : new Set(Object.values(E.shapes).filter(passes).map((x) => x.id));
+    draw();
+    return true;
+  }
+  if (e.shiftKey && !e.altKey && k === 'a') { e.preventDefault(); openMenu('editor', '挿入'); return true; }
+  if (!e.altKey && !e.shiftKey && k === 'n') { e.preventDefault(); E.hidePanel = !E.hidePanel; draw(); return true; }
+  if (e.key === 'F2' && E.sel.size === 1) {
+    const one = E.shapes[[...E.sel][0]];
+    if (one && (one.t === 'text' || one.t === 'person' || canName(one))) { e.preventDefault(); startInline(one); return true; }
+  }
+  if (e.key === 'Home' && !e.altKey) { e.preventDefault(); E.zoom = 1; draw(); return true; }
+  return false;
+}
+
 function zoomStep(dir) {
   const z = dir > 0 ? ZOOMS.find((v) => v > E.zoom + 0.01) : [...ZOOMS].reverse().find((v) => v < E.zoom - 0.01);
   if (z) { E.zoom = z; draw(); }
@@ -767,11 +887,17 @@ const SHORTCUTS = [
   ['元に戻す', 'Z'], ['やり直す', 'Y'], ['切り取り', 'X'], ['コピー', 'C'], ['貼り付け', 'V'], ['複製', 'D'], ['すべて選択', 'A'],
   ['前面へ移動', 'Shift+↑（または ' + MOD + '↑）'], ['背面へ移動', 'Shift+↓（または ' + MOD + '↓）'], ['拡大', 'Alt+＋'], ['縮小', 'Alt+−'], ['保存（自動で保存されます）', 'S'], ['ショートカットの一覧', '/'],
 ];
+const BLENDER_KEYS = [
+  ['移動（G）・回転（R）・拡大縮小（S）', 'G / R / S → マウスで動かしてクリックか Enter。Esc か右クリックで取り消し。途中で X・Y を押すとその向きだけ'],
+  ['複製してそのまま動かす', 'Shift+D'], ['削除', 'X'], ['すべて選択・選択を解除', 'A / Alt+A'], ['追加のメニュー', 'Shift+A'],
+  ['名前・文字を書く', 'F2'], ['右の欄を隠す・出す', 'N'], ['100% に戻す', 'Home'],
+];
 function showShortcuts() {
   ask({
     title: 'キーボード ショートカット', ok: '閉じる', cancel: false, fields: [],
     message: SHORTCUTS.map(([a, k]) => `${a}　${MOD}${k}`).join('\n')
-      + '\n削除　Delete / Backspace\n少し動かす　矢印キー（Shift で大きく）\n次・前の図形を選ぶ　Tab / Shift+Tab\n名前・文字を書く　Enter / ダブルクリック\n選ぶのをやめる　Esc\n前・次の図へ　PageUp / PageDown\n図の編集を終える　' + MOD + 'Enter\nメニューを開く　Alt+E（編集）・V（表示）・I（挿入）・O（配置）・H（ヘルプ）',
+      + '\n\nBlender と同じ操作\n' + BLENDER_KEYS.map(([a, k]) => `${a}　${k}`).join('\n')
+      + '\n\nそのほか\n削除　Delete / Backspace\n少し動かす　矢印キー（Shift で大きく）\n次・前の図形を選ぶ　Tab / Shift+Tab\n名前・文字を書く　Enter / ダブルクリック\n選ぶのをやめる　Esc\n前・次の図へ　PageUp / PageDown\n図の編集を終える　' + MOD + 'Enter\nメニューを開く　Alt+E（編集）・V（表示）・I（挿入）・O（配置）・H（ヘルプ）',
   });
 }
 
@@ -832,6 +958,16 @@ function onKey(e) {
   const tag = (e.target && e.target.tagName) || '';
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
   const mod = e.ctrlKey || e.metaKey;
+  // G・R・S の途中：X・Y で軸、Enter で決定、Esc で取り消し。ほかのキーは受け付けない
+  if (E.xf) {
+    const k = e.key.toLowerCase();
+    if (k === 'x' || k === 'y') { e.preventDefault(); E.xf.axis = E.xf.mode === 'r' ? null : (E.xf.axis === k ? null : k); applyXf(); }
+    else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); endXf(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); endXf(false); }
+    else if (k === 'g' || k === 'r' || k === 's') { e.preventDefault(); const ids = Object.keys(E.xf.orig); endXf(false); E.sel = new Set(ids); startXf(k); }
+    return;
+  }
+  if (blenderKey(e, mod)) return;
   if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redoAll() : undoAll(); return; }
   if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redoAll(); return; }
   if (mod && e.key.toLowerCase() === 'd') { e.preventDefault(); duplicateList(selectedShapes()); return; }
@@ -929,6 +1065,7 @@ function pinchMove() {
 
 function down(e) {
   if (!E || !E.loaded) return;
+  if (E.xf) { e.preventDefault(); endXf(e.button !== 2); return; }
   if (e.pointerType === 'touch') {
     fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (fingers.size === 1) E.selBefore = new Set(E.sel); // 2本目が来たら、1本目で変わった選択を戻す
@@ -1041,6 +1178,7 @@ function move(e) {
     fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (E.pinch) { if (fingers.size >= 2) pinchMove(); return; }
   }
+  if (E && E.xf) { E.xf.cur = svgPt(e); E.xf.snap = e.ctrlKey || e.metaKey; applyXf(); return; }
   if (E && E.poly && !E.drag) { polyHover(svgPt(e)); return; }
   if (!E || !E.drag) return;
   const p = svgPt(e);
@@ -2106,7 +2244,7 @@ export function EditorView() {
         h('label', { class: 'prop-toggle', title: '楕円・四角・囲み・線を動かすと、その中（線ならそば）にいる人も一緒に動きます' },
           h('input', { type: 'checkbox', checked: E.linkPeople, onchange: (e) => { E.linkPeople = e.target.checked; draw(); } }),
           h('span', null, '図と人を連動')))),
-    h('div', { class: 'ed-body' + (seq.length > 1 ? ' has-strip' : '') },
+    h('div', { class: 'ed-body' + (seq.length > 1 ? ' has-strip' : '') + (E.hidePanel ? ' no-panel' : '') },
       seq.length > 1 ? Filmstrip(seq, ix) : null,
       h('div', { class: 'ed-canvas-wrap' + (E.tool === 'pan' ? ' panning' : '') },
         !E.loaded ? h('div', { class: 'muted pad' }, '読み込み中…') : null,
@@ -2114,9 +2252,9 @@ export function EditorView() {
           id: 'ed-svg', class: 'ed-svg tool-' + E.tool, viewBox: `0 0 ${W} ${H}`, xmlns: 'http://www.w3.org/2000/svg',
           style: { width: `${E.zoom * 100}%` },
           onpointerdown: down, onpointerup: up, onpointercancel: up,
-          onpointermove: (e) => { sharePointer(E.id, svgPt(e)); move(e); },
+          onpointermove: (e) => { const sp = svgPt(e); E.mouse = sp; sharePointer(E.id, sp); move(e); },
           onpointerleave: () => sharePointer(E.id, null),
-          oncontextmenu: (e) => { e.preventDefault(); onContext(e); },
+          oncontextmenu: (e) => { e.preventDefault(); if (E.xf) return; onContext(e); },
         },
           stageFrame(),
           // 下絵（なぞるための写真。書き出しには出ない）
@@ -2129,9 +2267,10 @@ export function EditorView() {
           marquee,
           E.hmode ? HeightArrow(upx) : null),
         E.inline ? InlineBox() : null),
-      h('aside', { class: 'ed-panel' },
+      h('aside', { class: 'ed-panel' + (E.hidePanel ? ' is-hidden' : '') },
         h('div', { class: 'rotate-hint' }, '2本指で広げると拡大、2本指で動かすとスクロールします。横向きにすると大きく編集できます。'),
         E.hmode ? HeightPanel() : E.tool === 'person' ? PersonPanel(shapes) : ['line', 'curve', 'carrow', 'cblock'].includes(E.tool) ? PolyPanel() : E.tool === 'block' ? BlockToolPanel() : SelPanel())),
+    E.xf ? XfHint() : null,
     ContextMenu(),
     E.traceChoose ? TraceChooser(E.traceChoose, { onPick: pickTraceSrc, onFile: pickTraceFile, onCancel: () => { E.traceChoose = null; draw(); } }) : null,
     E.tracePick ? TracePicker(E.tracePick, { onDone: finishTrace, onCancel: () => { E.tracePick = null; draw(); }, redraw: draw }) : null);

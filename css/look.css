@@ -145,3 +145,10 @@
 .doc .item.selected .thumb, .doc .item.selected .photo-box { outline: 2px solid var(--sel); outline-offset: 2px; }
 .doc .item.selected .thumb-hint { opacity: 1; }
 .mp-row.hi { background: var(--accent-soft); }
+
+/* ---------- 図の編集：Blender と同じ G・R・S の途中の案内、N で右の欄を隠す ---------- */
+.xf-hint { position: fixed; left: 50%; bottom: max(16px, env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 70; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; max-width: calc(100% - 24px); background: var(--ink); color: #fff; font-size: 13px; padding: 7px 14px; border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, .2); pointer-events: none; }
+.xf-axis { background: #e60012; border-radius: 4px; padding: 0 6px; font-weight: 700; }
+.ed-panel.is-hidden { display: none; }
+.ed-body.no-panel { grid-template-columns: minmax(0, 1fr); }
+.ed-body.has-strip.no-panel { grid-template-columns: 150px minmax(0, 1fr); }
