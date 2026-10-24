@@ -75,7 +75,7 @@ export function WorkView() {
         edit ? icon('pencil', 18, 'title-pencil') : null),
       h('div', { class: 'actions' },
         h('span', { class: 'badge role-' + myRole(work) }, ROLE_LABEL[myRole(work)]),
-        h('a', { class: 'btn primary share-btn', href: `#/w/${w}/people` }, icon('lock', 18), '共有'),
+        h('a', { class: 'btn primary share-btn', href: `#/w/${w}/people` }, '共有'),
         h('a', { class: 'btn', href: `#/w/${w}/cast` }, `メンバー一覧（${(work.cast || []).length}人）`),
         edit ? Menu([
           { label: 'タイトルの頭につける文字を変える', fn: () => changePrefix(workPath, work) },

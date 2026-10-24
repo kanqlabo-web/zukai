@@ -13,7 +13,6 @@ import { DialogView, isDialogOpen, closeDialog } from './dialog.js';
 import { saveMyProfile, handleGroupResult } from './access.js';
 import { setPresence, PresenceBar, paintCarets, paintPointers } from './presence.js';
 import { ShowView, afterShow } from './show.js';
-import { brandIcon } from './icons.js';
 import { versionLabel, CHANGELOG_URL, watchForUpdate, reloadToLatest } from './version.js';
 
 const $app = document.getElementById('app');
@@ -151,7 +150,7 @@ async function doSignIn() {
 function Header() {
   const r = S.route;
   const work = S.d.work;
-  const crumbs = [h('a', { href: '#/', class: 'brand' }, brandIcon(40), h('span', { class: 'brand-name' }, '図解メーカー'))];
+  const crumbs = [h('a', { href: '#/', class: 'brand' }, h('span', { class: 'brand-mark' }, '図'), h('span', { class: 'brand-name' }, '図解メーカー'))];
   if (work && r.params.w) {
     crumbs.push(h('span', { class: 'crumb-sep' }, '/'));
     crumbs.push(h('a', { href: `#/w/${r.params.w}`, class: 'crumb' }, work.title || '無題のライブラリー'));
@@ -184,7 +183,7 @@ function VersionLink(cls) {
 
 function Gate(title, body) {
   return h('main', { class: 'gate' }, h('div', { class: 'gate-card' },
-    brandIcon(56),
+    h('div', { class: 'gate-mark' }, '図'),
     h('h1', null, title), body,
     VersionLink('gate-version')));
 }
@@ -257,8 +256,6 @@ function renderUpdate() {
     h('button', { class: 'icon-btn', title: 'あとで', 'aria-label': '閉じる', onclick: () => { S.newVersion = null; rerender(); } },
       h('svg', { viewBox: '0 0 24 24', width: 18, height: 18 }, h('path', { d: 'M6 6l12 12M18 6L6 18', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round' })))) : null]);
 }
-// 下に送ったら上部バーに薄い影（ドキュメントと同じ）
-window.addEventListener('scroll', () => document.body.classList.toggle('scrolled', window.scrollY > 4), { passive: true });
 setRenderers([renderPage, renderModal, renderDialog, renderToasts, renderUpdate]);
 watchForUpdate((v) => { S.newVersion = v; rerender(); });
 window.addEventListener('zukai-error', (e) => toast(e.detail, 'error', 8000));

@@ -36,11 +36,3 @@ export function icon(name, size = 18, cls = '') {
   return h('svg', attrs, h('path', { d: P[name] }));
 }
 
-// アプリの印（角を折った紙に、舞台の人2人）。ヘッダー・ログイン画面・図の編集画面で使う
-export function brandIcon(size = 32) {
-  return h('svg', { class: 'ico brand-ico', viewBox: '0 0 24 24', width: size, height: size, 'aria-hidden': 'true' },
-    h('path', { d: 'M6.5 1.5h8.5l5.5 5.5v13.5a2 2 0 0 1-2 2h-12a2 2 0 0 1-2-2v-17a2 2 0 0 1 2-2z', fill: '#0b57d0' }),
-    h('path', { d: 'M15 1.5v4a1.5 1.5 0 0 0 1.5 1.5h4z', fill: '#a8c7fa' }),
-    h('circle', { cx: 9.3, cy: 15.2, r: 2.3, fill: '#fff' }),
-    h('circle', { cx: 14.7, cy: 11.6, r: 2.3, fill: '#fff' }));
-}

@@ -6,12 +6,14 @@ import { P, createImage, thumbOf } from './model.js';
 import { loadPhoto, warpToStage, TracePicker, initialCorners } from './trace.js';
 import { textInRegion } from './drawimport.js';
 import { shapesFromClipboard, MARK } from './clippaste.js';
-import { W, H, stageFrame, shapeNode, sortShapes, moveShape, shapeCenter, shapeBBox, simplify, LAYER, layoutLabels, isRegion, isFillable, canName, insideShape, linePoints } from './stage.js';
+import { W, H, stageFrame, StageSVG, shapeNode, sortShapes, moveShape, shapeCenter, shapeBBox, simplify, LAYER, layoutLabels, isRegion, isFillable, canName, insideShape, linePoints } from './stage.js';
 import { fillWeight, pointsFor } from './fill.js';
 import { workIndex, roleListOf, personCast, personNo, personRole, roleShort, rolesOf, roleText, roleVisible, roleKey } from './cast.js';
 import { isDialogOpen } from './dialog.js';
 import { UndoButtons, undoAll, redoAll } from './undo.js';
-import { icon, brandIcon } from './icons.js';
+import { icon } from './icons.js';
+import { MenuBar, ContextMenu, openContextMenu, closeMenus, menuOpen, MOD } from './menubar.js';
+import { ask } from './dialog.js';
 import { previousShapes, minCostAssign, diagramSequence } from './assign.js';
 import { setPresence, others, colorOf, sharePointer } from './presence.js';
 
@@ -56,6 +58,7 @@ export const isEditorOpen = () => !!E;
 // noBack：「戻る」やページの移動で閉じるとき（足した履歴はもう戻っている）
 export function closeEditor(noBack) {
   if (!noBack && window.history.state && window.history.state.zukaiEditor) window.history.back();
+  closeMenus();
   if (E) setPresence(E.w, { g: null, sel: null });
   // 直した図を、ホームのカードの絵にする（履歴には残さない）
   if (E && E.changed) db.updateQuiet(P.work(E.w), { thumb: thumbOf({ id: E.id, shapes: E.shapes, roleVis: E.roleVis }) }).catch(() => {});
@@ -749,6 +752,23 @@ document.addEventListener('paste', (e) => {
   pasteExternal(e.clipboardData);
 }, true);
 function paste() { if (clipboard.length) duplicateList(clipboard, 20, 20); }
+function cutSel() { if (!E.sel.size) return; copySel(); deleteSel(); }
+// メニューの「貼り付け」：ほかのアプリからのものも読めるときは読む（読めないブラウザでは、この画面でコピーしたものだけ）
+async function pasteFromMenu() {
+  if (clipboard.length) { paste(); return; }
+  toast(`${MOD}V で貼り付けてください（ほかのアプリからの貼り付けは、キーボードでだけできます）`, 'info', 5000);
+}
+const SHORTCUTS = [
+  ['元に戻す', 'Z'], ['やり直す', 'Y'], ['切り取り', 'X'], ['コピー', 'C'], ['貼り付け', 'V'], ['複製', 'D'], ['すべて選択', 'A'],
+  ['前面へ移動', 'Shift+↑'], ['背面へ移動', 'Shift+↓'], ['ショートカットの一覧', '/'],
+];
+function showShortcuts() {
+  ask({
+    title: 'キーボード ショートカット', ok: '閉じる', cancel: false, fields: [],
+    message: SHORTCUTS.map(([a, k]) => `${a}　${MOD}${k}`).join('\n')
+      + '\n削除　Delete\n少し動かす　矢印キー（Shift で大きく）\n選ぶのをやめる　Esc\n名前を書く　ダブルクリック',
+  });
+}
 
 // ---------- ダブルクリックで文字を入れる（パワーポイントの図形のように） ----------
 const inlineField = (s) => (s.t === 'text' ? 'text' : s.t === 'person' ? 'label' : 'name');
@@ -811,6 +831,9 @@ function onKey(e) {
   if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redoAll(); return; }
   if (mod && e.key.toLowerCase() === 'd') { e.preventDefault(); duplicateList(selectedShapes()); return; }
   if (mod && e.key.toLowerCase() === 'c') { copySel(); return; }
+  if (mod && e.key.toLowerCase() === 'x') { e.preventDefault(); cutSel(); return; }
+  if (mod && e.key === '/') { e.preventDefault(); showShortcuts(); return; }
+  if (mod && e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); reorder(e.key === 'ArrowUp'); return; }
   // Ctrl+V は「貼り付け」の操作（paste）で受け取る（ほかのアプリからの画像や図形も貼れるように）
   if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); E.sel = new Set(Object.values(E.shapes).filter(passes).map((x) => x.id)); draw(); return; }
   if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSel(); return; }
@@ -1840,6 +1863,105 @@ function TraceSection() {
     !E.traceSrc ? h('p', { class: 'muted small' }, '下絵を読み込んでいます…') : null);
 }
 
+// ---------- メニューバー・右クリック・左の図の一覧（Googleスライドと同じ並び） ----------
+function editorMenus(setTool, zoomIn, zoomOut) {
+  const has = E.sel.size > 0;
+  const tool = (t, label) => ({ label, checked: E.tool === t, onclick: () => setTool(t) });
+  return [
+    { label: '編集', items: [
+      { label: '元に戻す', kbd: MOD + 'Z', onclick: undoAll },
+      { label: 'やり直す', kbd: MOD + 'Y', onclick: redoAll },
+      '-',
+      { label: '切り取り', kbd: MOD + 'X', disabled: !has, onclick: cutSel },
+      { label: 'コピー', kbd: MOD + 'C', disabled: !has, onclick: copySel },
+      { label: '貼り付け', kbd: MOD + 'V', onclick: pasteFromMenu },
+      { label: '複製', kbd: MOD + 'D', disabled: !has, onclick: () => duplicateList(selectedShapes()) },
+      { label: '削除', kbd: 'Delete', disabled: !has, onclick: deleteSel },
+      '-',
+      { label: 'すべて選択', kbd: MOD + 'A', onclick: () => { setTool('select'); E.sel = new Set(Object.values(E.shapes).filter(passes).map((x) => x.id)); draw(); } },
+      { label: '選択を解除', kbd: 'Esc', disabled: !has, onclick: () => { E.sel = new Set(); draw(); } },
+      { label: '複数選択（タップで1つずつ追加）', checked: E.multi, onclick: () => { E.multi = !E.multi; draw(); } },
+    ] },
+    { label: '表示', items: [
+      { label: '拡大', disabled: !zoomIn, onclick: () => { E.zoom = zoomIn; draw(); } },
+      { label: '縮小', disabled: !zoomOut, onclick: () => { E.zoom = zoomOut; draw(); } },
+      { label: '100%', checked: Math.abs(E.zoom - 1) < 0.01, onclick: () => { E.zoom = 1; draw(); } },
+      '-',
+      { label: '下絵を表示', checked: !!(E.trace && !E.traceHidden), disabled: !E.trace, onclick: () => { E.traceHidden = !E.traceHidden; draw(); } },
+      { label: 'スクロール（手のひら）', checked: E.tool === 'pan', onclick: () => setTool('pan') },
+    ] },
+    { label: '挿入', items: [
+      tool('person', '人'), tool('text', '文字'),
+      '-', tool('ellipse', '楕円'), tool('rect', '四角'), tool('blob', '手書き囲み'),
+      '-', tool('line', '直線'), tool('curve', '曲線'), tool('freeline', '手書き線'),
+      '-', tool('arrow', '矢印'), tool('carrow', '曲線矢印'), tool('block', '太矢印'), tool('cblock', '太い曲線矢印'),
+      '-', { label: E.trace ? '下絵の写真を変える' : '写真を下絵にする', onclick: pickTrace },
+    ] },
+    { label: '配置', items: [
+      { label: '前面へ移動', kbd: MOD + 'Shift+↑', disabled: !has, onclick: () => reorder(true) },
+      { label: '背面へ移動', kbd: MOD + 'Shift+↓', disabled: !has, onclick: () => reorder(false) },
+      '-',
+      { label: 'あとの図にも反映', checked: E.propagate, onclick: () => setPropPref(!E.propagate) },
+      { label: '図と人を連動', checked: E.linkPeople, onclick: () => { E.linkPeople = !E.linkPeople; draw(); } },
+    ] },
+    { label: 'ヘルプ', items: [
+      { label: 'キーボード ショートカット', kbd: MOD + '/', onclick: showShortcuts },
+    ] },
+  ];
+}
+
+// 図の上で右クリック：押した図形を選んで、その図形への操作を出す
+function onContext(e) {
+  if (!E || !E.loaded) return;
+  const el = e.target.closest && e.target.closest('[data-id]');
+  const id = el && el.getAttribute('data-id');
+  if (id && E.shapes[id] && !E.sel.has(id)) E.sel = new Set([id]);
+  if (!id && !E.multi) E.sel = new Set();
+  if (E.tool !== 'select') E.tool = 'select';
+  const has = E.sel.size > 0;
+  const one = E.sel.size === 1 ? E.shapes[[...E.sel][0]] : null;
+  const items = has ? [
+    { label: '切り取り', kbd: MOD + 'X', onclick: cutSel },
+    { label: 'コピー', kbd: MOD + 'C', onclick: copySel },
+    { label: '貼り付け', kbd: MOD + 'V', onclick: pasteFromMenu },
+    { label: '複製', kbd: MOD + 'D', onclick: () => duplicateList(selectedShapes()) },
+    { label: '削除', kbd: 'Delete', onclick: deleteSel },
+    '-',
+    one && (one.t === 'text' || one.t === 'person' || canName(one)) ? { label: one.t === 'person' ? '役名を書く' : one.t === 'text' ? '文字を直す' : '名前を書く', kbd: 'ダブルクリック', onclick: () => startInline(one) } : null,
+    { label: '前面へ移動', kbd: MOD + 'Shift+↑', onclick: () => reorder(true) },
+    { label: '背面へ移動', kbd: MOD + 'Shift+↓', onclick: () => reorder(false) },
+  ] : [
+    { label: '貼り付け', kbd: MOD + 'V', onclick: pasteFromMenu },
+    { label: 'すべて選択', kbd: MOD + 'A', onclick: () => { E.sel = new Set(Object.values(E.shapes).filter(passes).map((x) => x.id)); draw(); } },
+    '-',
+    { label: E.trace ? '下絵の写真を変える' : '写真を下絵にする', onclick: pickTrace },
+  ];
+  openContextMenu(e.clientX, e.clientY, items, draw);
+}
+
+// 左の一覧：このトラックの図を順番に並べ、押すとその図に切り替える（スライドの一覧と同じ）
+function Filmstrip(seq, ix) {
+  const byId = {};
+  for (const g of S.d.diagrams || []) byId[g.id] = g;
+  return h('nav', { class: 'ed-strip', 'aria-label': 'このトラックの図' }, seq.map((id, i) => {
+    const g = byId[id];
+    const now = id === E.id;
+    return h('button', {
+      key: id, class: 'strip-item' + (now ? ' on' : ''), 'aria-current': now ? 'true' : null, title: `${i + 1}枚目の図`,
+      onclick: () => { if (!now) switchDiagram(id); },
+    },
+      h('span', { class: 'strip-no' }, String(i + 1)),
+      h('span', { class: 'strip-thumb' }, StageSVG(now ? merged() : (g.shapes || {}), { cls: 'stage', idx: ix, roleVis: (now ? E.roleVis : g.roleVis) || {} })));
+  }));
+}
+function switchDiagram(id) {
+  const w = E.w, zoom = E.zoom, tool = E.tool;
+  closeEditor(true);
+  openEditor(w, id);
+  if (E) { E.zoom = zoom; E.tool = tool === 'pan' ? 'pan' : 'select'; }
+  requestAnimationFrame(() => { const el = document.querySelector('.strip-item.on'); if (el) el.scrollIntoView({ block: 'nearest' }); });
+}
+
 export function EditorView() {
   if (!E) return null;
   const shapes = merged();
@@ -1858,14 +1980,16 @@ export function EditorView() {
   const setTool = (t) => { if (E.poly) finishPoly(); E.tool = t; if (t !== 'select') E.sel = new Set(); draw(); };
   const zoomOut = [...ZOOMS].reverse().find((z) => z < E.zoom - 0.01);
   const zoomIn = ZOOMS.find((z) => z > E.zoom + 0.01);
+  const seq = diagramSequence().filter((id) => (S.d.diagrams || []).some((g) => g.id === id));
   return h('div', { class: 'ed-root', role: 'dialog', 'aria-label': '図の編集' },
-    // Googleスライドのように、上に名前と「完了」、その下に丸い帯の道具バー
+    // Googleスライドのように、上に名前とメニューバー（編集・表示・挿入・配置・ヘルプ）、その下に道具バー
     h('header', { class: 'ed-top' },
-      h('span', { class: 'ed-brand' }, brandIcon(32)),
-      h('div', { class: 'ed-title' }, '図の編集'),
+      h('button', { class: 'btn primary', onclick: () => closeEditor() }, '完了'),
+      h('div', { class: 'ed-head' },
+        h('div', { class: 'ed-title' }, '図の編集', seq.length > 1 && seq.indexOf(E.id) >= 0 ? h('span', { class: 'ed-pos muted' }, `${seq.indexOf(E.id) + 1}／${seq.length}枚目`) : null),
+        MenuBar('editor', editorMenus(setTool, zoomIn, zoomOut), draw)),
       here.length ? h('div', { class: 'pres-tags in-editor', title: 'この図を開いている人' }, here.map((p) => h('span', { key: p.pid, class: 'pres-tag', style: { background: colorOf(p.email) } }, p.name))) : null,
-      CountChip(shapes, ix),
-      h('button', { class: 'btn primary ed-done', onclick: () => closeEditor() }, '完了')),
+      CountChip(shapes, ix)),
     h('div', { class: 'ed-bar' },
       h('div', { class: 'ed-top-btns' },
         UndoButtons('icon-btn'),
@@ -1901,7 +2025,8 @@ export function EditorView() {
         h('label', { class: 'prop-toggle', title: '楕円・四角・囲み・線を動かすと、その中（線ならそば）にいる人も一緒に動きます' },
           h('input', { type: 'checkbox', checked: E.linkPeople, onchange: (e) => { E.linkPeople = e.target.checked; draw(); } }),
           h('span', null, '図と人を連動')))),
-    h('div', { class: 'ed-body' },
+    h('div', { class: 'ed-body' + (seq.length > 1 ? ' has-strip' : '') },
+      seq.length > 1 ? Filmstrip(seq, ix) : null,
       h('div', { class: 'ed-canvas-wrap' + (E.tool === 'pan' ? ' panning' : '') },
         !E.loaded ? h('div', { class: 'muted pad' }, '読み込み中…') : null,
         h('svg', {
@@ -1910,7 +2035,7 @@ export function EditorView() {
           onpointerdown: down, onpointerup: up, onpointercancel: up,
           onpointermove: (e) => { sharePointer(E.id, svgPt(e)); move(e); },
           onpointerleave: () => sharePointer(E.id, null),
-          oncontextmenu: (e) => e.preventDefault(),
+          oncontextmenu: (e) => { e.preventDefault(); onContext(e); },
         },
           stageFrame(),
           // 下絵（なぞるための写真。書き出しには出ない）
@@ -1926,5 +2051,6 @@ export function EditorView() {
       h('aside', { class: 'ed-panel' },
         h('div', { class: 'rotate-hint' }, '2本指で広げると拡大、2本指で動かすとスクロールします。横向きにすると大きく編集できます。'),
         E.hmode ? HeightPanel() : E.tool === 'person' ? PersonPanel(shapes) : ['line', 'curve', 'carrow', 'cblock'].includes(E.tool) ? PolyPanel() : E.tool === 'block' ? BlockToolPanel() : SelPanel())),
+    ContextMenu(),
     E.tracePick ? TracePicker(E.tracePick, { onDone: finishTrace, onCancel: () => { E.tracePick = null; draw(); }, redraw: draw }) : null);
 }

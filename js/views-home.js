@@ -1,6 +1,6 @@
 // ライブラリー一覧
 import { h } from './vdom.js';
-import { icon, brandIcon } from './icons.js';
+import { icon } from './icons.js';
 import { versionLabel, CHANGELOG_URL } from './version.js';
 import { db, mode } from './db.js';
 import { S, rerender, toast, fmtTime, go, adminMsg } from './state.js';
@@ -124,7 +124,6 @@ export function HomeView() {
             h('div', { class: 'work-card-head' },
               h('div', { class: 'work-title' }, w.title || '無題のライブラリー')),
             h('div', { class: 'work-sub' },
-              brandIcon(18),
               h('span', { class: 'badge role-' + myRole(w) }, ROLE_LABEL[myRole(w)] || ''),
               h('span', { class: 'grow' }, `更新 ${fmtTime(w.updatedAt)}`),
               h('details', { class: 'kebab' },
