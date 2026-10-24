@@ -279,7 +279,8 @@ export async function drawingSvg(id, token) {
   return r.text();
 }
 
-export async function importZukai(w, result, { epId, epTitle, replaceCast, existingEpisodes, tracks, drafts, user, asNewTrack = false, trackName = null, cast = [], vectorize = true, driveToken = null }, onStep) {
+export async function importZukai(w, result, { epId, epTitle, replaceCast, existingEpisodes, tracks, drafts, user, asNewTrack = false, trackName = null, cast = [], vectorize = true, driveToken = null, toTrack = null, toDraftId = null }, onStep) {
+  // toTrack：このトラックに入れる（toDraftId があればその稿に、なければ次の稿として）
   let castList = cast || [];
   if (replaceCast && result.cast) { castList = parseCast(result.cast); await db.update(P.work(w), { cast: castList, updatedAt: now() }); }
   // 図の中の文字を読むときの候補：ドキュメントの文字
@@ -297,8 +298,8 @@ export async function importZukai(w, result, { epId, epTitle, replaceCast, exist
     if (onStep) onStep(ti + 1, result.tracks.length);
     let title = (trackName && String(trackName).trim()) || trackTitle(T.track) || `トラック${epTracks.length + ti + 1}`;
     // 同じ名前のトラックがあれば、そこに新しい稿として入れる（asNewTrack なら、別のトラックとして足す）
-    let track = asNewTrack ? null : epTracks.find((t) => t.title === title);
-    if (asNewTrack && epTracks.some((t) => t.title === title)) {
+    let track = toTrack || (asNewTrack ? null : epTracks.find((t) => t.title === title));
+    if (!toTrack && asNewTrack && epTracks.some((t) => t.title === title)) {
       let k = 2;
       while (epTracks.some((t) => t.title === `${title}（${k}）`)) k++;
       title = `${title}（${k}）`;
@@ -308,14 +309,18 @@ export async function importZukai(w, result, { epId, epTitle, replaceCast, exist
     let no = 1;
     if (track) {
       trackId = track.id;
-      no = Math.max(0, ...(drafts || []).filter((d) => d.trackId === trackId).map((d) => d.no || 0)) + 1;
+      title = track.title || title;
+      const into = toDraftId && (drafts || []).find((d) => d.id === toDraftId);
+      no = into ? into.no || 1 : Math.max(0, ...(drafts || []).filter((d) => d.trackId === trackId).map((d) => d.no || 0)) + 1;
     } else {
       trackId = newId();
       ops.push({ op: 'set', path: P.doc(w, 'tracks', trackId), data: { episodeId: epId, title, order: ++order, createdAt: now() } });
       epTracks.push({ id: trackId, title });
     }
-    const draftId = newId();
-    ops.push({ op: 'set', path: P.doc(w, 'drafts', draftId), data: { ...emptyDraft(trackId, no, user), script: T.script, zukaikko: T.zukaikko || '', theme: T.theme || '', importedFrom: T.title } });
+    const draftId = (track && toDraftId) || newId();
+    const body = { script: T.script, zukaikko: T.zukaikko || '', theme: T.theme || '', importedFrom: T.title };
+    if (track && toDraftId) ops.push({ op: 'update', path: P.doc(w, 'drafts', draftId), data: { ...body, updatedAt: now(), updatedBy: user ? user.name : '' } });
+    else ops.push({ op: 'set', path: P.doc(w, 'drafts', draftId), data: { ...emptyDraft(trackId, no, user), ...body } });
     const t0 = now();
     for (let bi = 0; bi < T.blocks.length; bi++) {
       const b = T.blocks[bi];

@@ -725,12 +725,13 @@ export function DraftView() {
         CastTable(work.cast),
         h('a', { class: 'small', href: `#/w/${w}/cast` }, 'メンバー一覧を編集')),
       draft.updatedAt ? h('div', { class: 'muted small' }, `最終更新 ${fmtTime(draft.updatedAt)} ${draft.updatedBy || ''}`) : null),
-    h('div', { class: 'howto small' }, 'テーマ活動の友の行をタップすると、その行の最初の数語をタイミングにして図解を追加できます。語句をなぞって選ぶと、選んだ語句をタイミングにできます。行をタップすると、キャラ名（薄い文字）や字下げも直せます。'),
+    h('div', { class: 'howto small' }, 'テーマ活動の友の行をタップすると、その行の最初の数語をタイミングにして図解を追加できます。語句をなぞって選ぶと、選んだ語句をタイミングにできます。行をタップすると、キャラ名（薄い文字）や字下げも直せます。Googleドキュメントの図解をコピーしてこのページで Ctrl+V を押すと、このトラックに取り込めます。'),
     text ? FormatBar() : null,
     Legend(),
     !text ? h('div', { class: 'empty' },
       h('p', null, 'まだテーマ活動の友がありません。'),
-      h('button', { class: 'btn primary', onclick: () => { S.ui.scriptEdit = { value: '', base: '' }; rerender(); } }, 'テマ友を貼り付ける')) : null,
+      h('button', { class: 'btn primary', onclick: () => { S.ui.scriptEdit = { value: '', base: '' }; rerender(); } }, 'テマ友を貼り付ける'),
+      h('p', { class: 'muted small' }, 'Googleドキュメントの図解を Ctrl+A → Ctrl+C でコピーして、このページで Ctrl+V を押すと、テマ友・タイミング・図をまとめて取り込めます。')) : null,
     text ? h('div', { class: 'sheet-edit' }, rows.map((row, ri) => h('div', { key: 'row' + row.start, class: 'srow', 'data-prow': row.start },
       (() => {
         const here = others().filter((p) => p.d === d && p.row === row.start && !p.block && !p.g && !p.caret);

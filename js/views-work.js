@@ -268,6 +268,66 @@ document.addEventListener('paste', (e) => {
   importDocHtml(S.route.params.w, S.d.work, eps, html);
 });
 
+// トラック（稿）のページで Ctrl+V したら、Googleドキュメントの図解を、このトラックに取り込む
+document.addEventListener('paste', (e) => {
+  if (!S.route || S.route.name !== 'draft' || !S.d.work || !canEdit(S.d.work) || S.ui.importing) return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  let html = e.clipboardData && e.clipboardData.getData('text/html');
+  const slice = e.clipboardData && e.clipboardData.getData(SLICE_TYPE);
+  if (slice) { const h2 = sliceToHtml(slice, html); if (h2 && /<table/i.test(h2)) html = h2; }
+  if (!html || !/<table/i.test(html)) return;
+  e.preventDefault();
+  importDocIntoTrack(S.route.params.w, S.route.params.d, html);
+});
+async function importDocIntoTrack(w, d, html) {
+  let result;
+  try { result = analyzeDocHtml(html); } catch (e) { toast('読み取れませんでした: ' + (e.message || e), 'error', 8000); return; }
+  if (!result.tracks.length) {
+    toast('コピーした内容に図解の表が見つかりませんでした。Googleドキュメントで Ctrl+A → Ctrl+C してから貼り付けてください。', 'error', 9000);
+    return;
+  }
+  const work = S.d.work;
+  const drafts = S.d.drafts || [];
+  const draft = drafts.find((x) => x.id === d);
+  const track = draft && (S.d.tracks || []).find((x) => x.id === draft.trackId);
+  if (!draft || !track) return;
+  const empty = !String(draft.script || '').trim() && !(S.d.blocks || []).some((b) => b.draftId === d);
+  const nextNo = Math.max(0, ...drafts.filter((x) => x.trackId === track.id).map((x) => x.no || 0)) + 1;
+  const list = result.tracks.map((T, i) => { const figs = T.blocks.reduce((a, b) => a + b.items.filter((it) => it.kind === 'figure').length, 0); return [String(i), `${T.track || 'トラック'}（第${T.draftNo}稿・タイミング${T.blocks.filter((b) => b.cue).length}個${figs ? `・図${figs}枚` : ''}）`]; });
+  const r = await ask({
+    title: `「${track.title}」に取り込む`, ok: '取り込む',
+    message: result.tracks.length === 1 ? `見つかったトラック：${list[0][1]}` : `トラックが${result.tracks.length}個見つかりました。このトラックに入れるものを選んでください。`,
+    detail: 'テーマ活動の友・タイミング・メモ・図を、このトラックに取り込みます。取り込んだあとで、タイミングの位置や改行を確かめてください。',
+    fields: [
+      result.tracks.length > 1 ? { key: 'ti', label: '取り込むトラック', type: 'select', value: '0', options: list } : null,
+      { key: 'into', label: '入れる先', type: 'select', value: empty ? 'this' : 'next', options: [...(empty ? [['this', `この稿（${draftName(draft)}）に入れる`]] : []), ['next', `新しい稿（第${nextNo}稿）にする`]] },
+      { key: 'vec', label: '図形描画の図', type: 'select', value: 'diagram', options: [['diagram', '図解メーカーの図に直す（人や形を動かせる）'], ['photo', '写真のまま入れる']] },
+    ].filter(Boolean),
+  });
+  if (!r) return;
+  const T = result.tracks[+(r.ti || 0)] || result.tracks[0];
+  const setMsg = (m) => { S.ui.importing = m; rerender(); };
+  let driveToken = null;
+  if (T.blocks.some((b) => b.items.some((i) => i.fig && i.fig.drawing))) {
+    try { driveToken = await auth.driveToken(true); } catch (e) { toast('Googleドライブの許可がないので、図形描画は取り込めません', 'error', 8000); }
+  }
+  try {
+    setMsg('取り込んでいます…');
+    const out = await importZukai(w, { ...result, tracks: [T] }, {
+      epId: track.episodeId, toTrack: track, toDraftId: r.into === 'this' ? d : null,
+      existingEpisodes: S.d.episodes || [], tracks: S.d.tracks || [], drafts, user: S.user, cast: work.cast || [], vectorize: r.vec !== 'photo', driveToken,
+    });
+    setMsg('');
+    toast(`「${track.title}」に取り込みました`, 'info', 5000);
+    const made = out.made[0];
+    if (made && made.draftId !== d) go(`#/w/${w}/d/${made.draftId}`);
+  } catch (e) {
+    setMsg('');
+    toast('取り込めませんでした: ' + (e.message || e), 'error', 8000);
+  }
+}
+
 const trackTitleOf = (t) => String(t || '').replace(/^トラ(?!ック)/, 'トラック');
 async function finishImport(w, work, eps, result, src, note = '') {
   const setMsg = (m) => { S.ui.importing = m; rerender(); };
