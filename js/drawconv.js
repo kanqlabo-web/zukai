@@ -486,6 +486,29 @@ export async function convertDrawing(page, fig, { chars = '', frame = null, word
     shapes.push({ t: 'text', text: out.join('\n'), x: Math.round(tx), y: Math.round(ty), size: Math.max(10, Math.round(em * scale)), seq: p.seq, _c: ctr(p), _box: [p.x0, p.y0, p.x1, p.y1], ...(p._rot ? { rot: Math.round((p._rot.a * 180) / Math.PI) } : {}) });
   }
 
+  // 同じ行で隣り合う文字のかけら（「ド」と「A」が別々の形になっていることがある）は、1つの文字にまとめる
+  for (let again = true; again;) {
+    again = false;
+    const ts = shapes.filter((t) => t.t === 'text' && t._box && !/\n/.test(t.text) && !t.rot);
+    for (const a of ts) {
+      const b = ts.find((o) => {
+        if (o === a) return false;
+        const [ax0, ay0, ax1, ay1] = a._box, [bx0, by0, bx1, by1] = o._box;
+        const em = Math.max(ay1 - ay0, by1 - by0);
+        const ov = Math.min(ay1, by1) - Math.max(ay0, by0);
+        return ov > Math.min(ay1 - ay0, by1 - by0) * 0.5 && bx0 >= ax0 && bx0 - ax1 < em * 0.6 && bx0 - ax1 > -em * 0.3;
+      });
+      if (!b) continue;
+      a.text = a.text + b.text;
+      a._box = [Math.min(a._box[0], b._box[0]), Math.min(a._box[1], b._box[1]), Math.max(a._box[2], b._box[2]), Math.max(a._box[3], b._box[3])];
+      a._c = [(a._box[0] + a._box[2]) / 2, (a._box[1] + a._box[3]) / 2];
+      const [tx, ty] = M(a._c); a.x = Math.round(tx); a.y = Math.round(ty);
+      shapes.splice(shapes.indexOf(b), 1);
+      again = true;
+      break;
+    }
+  }
+
   // 円のすぐ隣に書いた名前（「兵A」「ダル」など）：番号も中の名前もない円の、その人の名前にする
   // 文字の枠と円のふちのすきまが小さい組から順に、1つの円に1つの文字を結びつける
   {
@@ -517,6 +540,13 @@ export async function convertDrawing(page, fig, { chars = '', frame = null, word
 
   // 円の中の名前（上から、左から順につなぐ）
   for (const x of persons) if (x.texts) personShape.get(x).label = x.texts.sort((a, b) => a.y - b.y || a.x - b.x).map((v) => v.t).join('');
+  // 人の名前にしたのと同じ文字が、その人のそばに別に残っていたら消す（同じ文字が二重に出ないように）
+  for (let i = shapes.length - 1; i >= 0; i--) {
+    const t = shapes[i];
+    if (t.t !== 'text' || !t._c) continue;
+    const tt = t.text.replace(/\s/g, '');
+    if (persons.some((x) => x.texts && Math.hypot(x.c[0] - t._c[0], x.c[1] - t._c[1]) < x.d * 1.5 && personShape.get(x).label.replace(/\s/g, '') === tt)) shapes.splice(i, 1);
+  }
 
   // そのほかの形
   const rest = vis.filter((p) => !used.has(p));
