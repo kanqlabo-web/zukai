@@ -296,3 +296,6 @@
 /* 吹き出しの印の形式：開いたカードは印の左に重ねて出す */
 .cmt-side-col.mini > .cmt-card.on { width: 280px; transform: none; }
 .cmt-side-col.mini > .cmt-card:not(.on):hover { background: #ffefb0; }
+/* 本文に重ねて出すので、選んでいないカードも白く、枠と影を付けて読みやすく */
+.cmt-side-col > .cmt-card:not(.on) { background: #fff; border: 1px solid var(--line); box-shadow: 0 1px 4px rgba(20, 15, 40, .12); }
+.cmt-side-col > .cmt-card.on { transform: none; }

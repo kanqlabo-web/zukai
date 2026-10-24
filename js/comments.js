@@ -461,10 +461,11 @@ export function layoutSide() {
   const content = sheet || page;
   const right = content ? content.getBoundingClientRect().right : 0;
   const vw = document.documentElement.clientWidth;
-  // 本文の幅は変えず、右の余白に吹き出しの印だけを出す。押したカード（書いている途中のカード）だけを開いて、本文の上に重ねる
-  box.classList.add('mini');
-  box.style.left = (Math.min(right + 10, vw - 40) + window.scrollX) + 'px';
-  box.style.width = '30px';
+  // 本文の幅は変えず、コメントのカードを画面の右端に、付けた所の高さで重ねて出す（本文の右の余白が広ければ余白に）
+  box.classList.remove('mini');
+  const cw = 270;
+  box.style.left = (Math.min(right + 12, vw - cw - 10) + window.scrollX) + 'px';
+  box.style.width = cw + 'px';
   const head = box.querySelector('.cmt-head');
   const minY = head ? head.offsetHeight + 12 : 0;
   const fallback = sheet ? sheet.getBoundingClientRect().top + window.scrollY - top0 : minY;
