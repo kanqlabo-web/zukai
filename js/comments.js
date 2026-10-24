@@ -132,7 +132,8 @@ export function commentOnBlock(blockId) {
   rerender();
   focusLater('.cmt-compose textarea');
 }
-function focusLater(sel) { requestAnimationFrame(() => requestAnimationFrame(() => { const el = document.querySelector(sel); if (el) el.focus(); })); }
+// 欄に入るときにページが動かないように（カードの高さを付ける前に入ると、ページの上まで飛んでいた）
+function focusLater(sel) { requestAnimationFrame(() => requestAnimationFrame(() => { layoutSide(); const el = document.querySelector(sel); if (el) el.focus({ preventScroll: true }); })); }
 
 export function toggleComments(v) {
   reset(S.route.params.d);
@@ -457,14 +458,13 @@ export function layoutSide() {
   const sheet = document.querySelector('.sheet-edit');
   const top0 = (page ? page.getBoundingClientRect().top : 0) + window.scrollY;
   box.style.top = top0 + 'px';
-  // 本文（図解）の右に置く（Googleドキュメントと同じ。本文は画面の右に約200pxを残す幅にする）
   const content = sheet || page;
   const right = content ? content.getBoundingClientRect().right : 0;
   const vw = document.documentElement.clientWidth;
-  const mini = false; // Googleドキュメントと同じく、いつも本文の右に出す（狭い画面は横にスクロール）
-  box.classList.toggle('mini', mini);
-  if (mini) { box.style.left = (vw - 38 + window.scrollX) + 'px'; box.style.width = '30px'; }
-  else { box.style.left = (right + 14 + window.scrollX) + 'px'; box.style.width = Math.max(170, Math.min(300, vw - right - 14 - 12)) + 'px'; }
+  // 本文の幅は変えず、右の余白に吹き出しの印だけを出す。押したカード（書いている途中のカード）だけを開いて、本文の上に重ねる
+  box.classList.add('mini');
+  box.style.left = (Math.min(right + 10, vw - 40) + window.scrollX) + 'px';
+  box.style.width = '30px';
   const head = box.querySelector('.cmt-head');
   const minY = head ? head.offsetHeight + 12 : 0;
   const fallback = sheet ? sheet.getBoundingClientRect().top + window.scrollY - top0 : minY;
