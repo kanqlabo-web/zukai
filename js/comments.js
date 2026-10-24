@@ -403,7 +403,9 @@ function Card(c) {
     h('div', { class: 'cmt-quote' + (lost ? ' lost' : '') }, lost ? '元の文字は削除されたか、書き換えられました：' + preview(quoteOf(c), 40) : preview(quoteOf(c))),
     c.done ? h('div', { class: 'cmt-resolved' }, `${(c.doneBy && c.doneBy.name) || ''}さんが解決にしました`) : null,
     body(c.by, c.ts, c.edited, c.text, null),
-    replies.map((r) => h('div', { key: r.id, class: 'cmt-reply' }, body(r.by, r.ts, r.edited, r.text, r.id))),
+    // 選んでいないカードは、返信をたたんで件数だけ出す（場所を取らないように）
+    on || !replies.length ? replies.map((r) => h('div', { key: r.id, class: 'cmt-reply' }, body(r.by, r.ts, r.edited, r.text, r.id)))
+      : h('div', { class: 'cmt-more' }, `返信 ${replies.length}件`),
     on && !c.done ? h('div', { class: 'cmt-reply-box' },
       Box(C.reply[c.id] || '', (v) => { C.reply[c.id] = v; }, () => reply(c), () => { C.reply[c.id] = ''; C.active = null; rerender(); }, '返信する（Ctrl+Enter で送信）', '返信')) : null);
 }
