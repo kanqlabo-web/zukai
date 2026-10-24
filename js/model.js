@@ -230,6 +230,8 @@ export function parseCast(text) {
     if (!line) continue;
     let cols = line.split('\t').map((s) => s.trim());
     let tag = '';
+    // 「ぐっち：ビーヴァー奥さん」（名前：役）
+    if (cols.length === 1 && /[：:]/.test(line)) cols = line.split(/[：:]/).map((x) => x.trim());
     if (cols.length === 1) {
       const m = line.match(/^(\S+)\s+(.+)$/);
       cols = m ? [m[1], m[2]] : [line];
