@@ -408,14 +408,64 @@ async function addItem(w, d, b, item) {
   return id;
 }
 
-async function moveItem(w, b, items, i, dir) {
-  const j = i + dir;
-  if (j < 0 || j >= items.length) return;
+async function moveItem(w, b, items, i, to) {
+  if (to < 0 || to >= items.length || to === i) return;
   const a = items.slice();
-  [a[i], a[j]] = [a[j], a[i]];
+  const [m] = a.splice(i, 1);
+  a.splice(to, 0, m);
   const patch = {};
   a.forEach((it, k) => { patch[`items.${it.id}.order`] = k + 1; });
   await db.update(blockPath(w, b), patch);
+}
+
+// 説明・図・写真を、つまみをドラッグ（スマホは指）して並べ替える。
+// 高さがまちまちなので、動かしている間は画面の要素を直接ずらし、離したときに順番を保存する
+function startItemDrag(e, w, b, items, i) {
+  e.preventDefault();
+  const el = e.target.closest('.item');
+  const box = el && el.parentElement;
+  if (!box) return;
+  const els = [...box.children].filter((x) => x.classList.contains('item'));
+  if (els.length < 2) return;
+  const rects = els.map((x) => x.getBoundingClientRect());
+  const gap = els.length > 1 ? Math.max(0, rects[1].top - rects[0].bottom) : 0;
+  const myH = rects[i].height + gap;
+  const startY = e.clientY;
+  let to = i;
+  el.classList.add('dragging');
+  try { e.target.setPointerCapture(e.pointerId); } catch (er) { /* noop */ }
+  const move = (ev) => {
+    const dy = ev.clientY - startY;
+    el.style.transform = `translateY(${dy}px)`;
+    // 動かしている項目の真ん中が、ほかの項目の真ん中を越えたら入れ替える
+    const mid = rects[i].top + rects[i].height / 2 + dy;
+    to = i;
+    for (let k = 0; k < els.length; k++) {
+      const c = rects[k].top + rects[k].height / 2;
+      if (k > i && mid > c) to = k;
+      if (k < i && mid < c && to === i) to = k;
+    }
+    els.forEach((x, k) => {
+      if (k === i) return;
+      const shift = i < to && k > i && k <= to ? -myH : i > to && k < i && k >= to ? myH : 0;
+      x.style.transform = shift ? `translateY(${shift}px)` : '';
+    });
+    if (ev.clientY < 80) window.scrollBy(0, -10);
+    else if (ev.clientY > window.innerHeight - 60) window.scrollBy(0, 10);
+  };
+  const up = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    window.removeEventListener('pointercancel', up);
+    el.classList.remove('dragging');
+    // 元の位置へ戻るアニメーションは出さない（すぐに新しい順番で描き直すため）
+    els.forEach((x) => { x.style.transition = 'none'; x.style.transform = ''; });
+    setTimeout(() => els.forEach((x) => { x.style.transition = ''; }), 300);
+    if (to !== i) moveItem(w, b, items, i, to);
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', up);
 }
 
 async function removeItem(w, d, b, it) {
@@ -534,8 +584,11 @@ function ItemView(w, d, b, it, i, items, rows) {
   const bar = (extra) => h('div', { class: 'item-tools' },
     extra,
     h('span', { class: 'grow' }),
-    h('button', { class: 'icon-btn', title: `この${name}を上へ`, 'aria-label': `この${name}を上へ`, disabled: i === 0, onclick: () => moveItem(w, b, items, i, -1) }, icon('up', 16)),
-    h('button', { class: 'icon-btn', title: `この${name}を下へ`, 'aria-label': `この${name}を下へ`, disabled: i === items.length - 1, onclick: () => moveItem(w, b, items, i, 1) }, icon('down', 16)),
+    items.length > 1 ? h('button', {
+      class: 'icon-btn item-grip', title: `ドラッグして、この${name}を並べ替え`, 'aria-label': `この${name}を並べ替え（矢印キーでも動かせます）`,
+      onpointerdown: (e) => startItemDrag(e, w, b, items, i),
+      onkeydown: (e) => { if (e.key === 'ArrowUp') { e.preventDefault(); moveItem(w, b, items, i, i - 1); } else if (e.key === 'ArrowDown') { e.preventDefault(); moveItem(w, b, items, i, i + 1); } },
+    }, icon('grip', 18)) : null,
     h('button', { class: 'btn tiny del-btn', onclick: () => removeItem(w, d, b, it) }, icon('trash', 14), `この${name}を削除`));
 
   if (it.kind === 'text') {

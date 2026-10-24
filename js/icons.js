@@ -20,6 +20,10 @@ const P = {
 
 export function icon(name, size = 18, cls = '') {
   const attrs = { class: 'ico' + (cls ? ' ' + cls : ''), viewBox: '0 0 24 24', width: size, height: size, 'aria-hidden': 'true', fill: 'none', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' };
+  if (name === 'grip') {
+    return h('svg', { ...attrs, stroke: 'none', fill: 'currentColor' },
+      [[9, 6], [15, 6], [9, 12], [15, 12], [9, 18], [15, 18]].map(([x, y]) => h('circle', { cx: x, cy: y, r: 1.7 })));
+  }
   if (name === 'more') {
     return h('svg', { ...attrs, stroke: 'none', fill: 'currentColor' },
       h('circle', { cx: 5, cy: 12, r: 1.8 }), h('circle', { cx: 12, cy: 12, r: 1.8 }), h('circle', { cx: 19, cy: 12, r: 1.8 }));
