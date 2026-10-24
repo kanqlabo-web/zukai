@@ -90,3 +90,6 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .cue.upd { color: inherit; }
 .cue.upd mark { color: #0000ff; }
 .fixed-mark { margin: 0; }
+/* 横に並べた写真 */
+.p-photo-row { display: flex; align-items: flex-start; gap: 2%; }
+.p-photo-row > .p-photo { flex: 0 0 auto; margin: 0; }

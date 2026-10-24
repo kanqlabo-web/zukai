@@ -58,7 +58,8 @@ function flatten(root) {
         const imgs = [...n.querySelectorAll('img')];
         const t = textOf(n);
         if (t.trim() || !imgs.length) out.push({ type: 'p', text: t.replace(/\n+$/, '') });
-        for (const im of imgs) out.push({ type: 'img', el: im });
+        // 同じ段落に続けて入っている写真は、横に並んでいる（2枚目からは「前の写真の横」）
+        imgs.forEach((im, k) => out.push({ type: 'img', el: im, beside: k > 0 }));
         continue;
       }
       walk(n);
@@ -215,7 +216,7 @@ function buildTrack(t) {
         flush();
         const f = figureOf(it.el);
         if (f && it.colW && f.w && !f.drawing) f.pct = Math.round(Math.max(10, Math.min(100, (f.w / it.colW) * 100)));
-        if (f) blk.parts.push({ kind: 'figure', fig: f });
+        if (f) blk.parts.push({ kind: 'figure', fig: f, beside: !!it.beside });
         continue;
       }
       if (it.type !== 'p') continue;

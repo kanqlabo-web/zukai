@@ -833,3 +833,6 @@ body.is-show { overflow: hidden; }
 /* 説明の中の URL（押すと開く） */
 a.tlink { color: #1155cc; text-decoration: underline; word-break: break-all; }
 [contenteditable="true"] a.tlink { cursor: text; }
+/* 横に並べた写真（前の写真の横に並べる） */
+.doc .item-row { display: flex; align-items: flex-start; gap: 2%; flex-wrap: wrap; }
+.doc .item-row > .item.image { flex: 0 0 auto; min-width: 60px; }

@@ -414,7 +414,7 @@ export async function importZukai(w, result, { epId, epTitle, replaceCast, exist
             const img = await compressImage(blob);
             const imgId = newId();
             ops.push({ op: 'set', path: P.doc(w, 'images', imgId), data: { draftId, ...img, createdAt: now() } });
-            items[iid] = { order: ++k, kind: 'image', refId: imgId, caption: '', size: 'l', ...(it.fig.pct ? { w: it.fig.pct } : {}) };
+            items[iid] = { order: ++k, kind: 'image', refId: imgId, caption: '', size: 'l', ...(it.fig.pct ? { w: it.fig.pct } : {}), ...(it.beside ? { beside: true } : {}) };
           } catch (e) { failed.push(b.cue || ''); }
           tick();
         }

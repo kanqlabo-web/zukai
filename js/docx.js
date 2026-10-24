@@ -164,7 +164,8 @@ async function notesParas(t, row, idx, ids) {
     if (b.cue) out.push(para(run('《', NOTE) + run(b.cue, { size: 21, bold: true, shade: 'C4C4C4', color: u && u.cue ? '0000FF' : undefined }) + run('》', NOTE)
       + (b.cueEnd ? run('～《', NOTE) + run(b.cueEnd, { size: 21, bold: true, shade: 'C4C4C4' }) + run('》', NOTE) : '')));
     const items = Object.entries(b.items || {}).map(([id, it]) => ({ id, ...it })).sort(byOrder);
-    for (const it of items) {
+    for (const [k, it] of items.entries()) {
+      it._prevImg = k > 0 && items[k - 1].kind === 'image';
       if (it.kind === 'text') {
         const lines = String(it.text || '').replace(/\s+$/, '').split('\n');
         const src = String(it.text || '');
@@ -196,7 +197,11 @@ async function notesParas(t, row, idx, ids) {
           const m = addMedia(d.bytes, d.ext);
           const [iw, ih] = imageSize(d.bytes, d.ext);
           const wmm = (NOTES_W - CELL_PAD * 2) * (photoWidth(it) / 100);
-          out.push(para(imageXml(m, wmm, wmm * (ih / iw || 0.75), ++ids.n)));
+          const xml = imageXml(m, wmm, wmm * (ih / iw || 0.75), ++ids.n);
+          // 横に並べた写真は、前の写真と同じ段落に続けて置く（Word でも横に並ぶ）
+          const last = out[out.length - 1];
+          if (it.beside && it._prevImg && last && last.endsWith('</w:p>') && last.includes('<w:drawing>')) out[out.length - 1] = last.replace(/<\/w:p>$/, xml + '</w:p>');
+          else out.push(para(xml));
         }
       }
     }

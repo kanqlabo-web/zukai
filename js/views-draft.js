@@ -903,12 +903,15 @@ function ItemView(w, d, b, it, i, items, rows) {
   if (it.kind === 'image') {
     const im = (S.d.images || []).find((x) => x.id === it.refId);
     const pw = photoWidth(it);
-    return h('div', { ...pickable, class: 'item image' + (sel ? ' selected' : '') },
+    const items0 = items;
+    const prevImg = i > 0 && items0[i - 1].kind === 'image';
+    const inRow = (it.beside && prevImg) || (items0[i + 1] && items0[i + 1].kind === 'image' && items0[i + 1].beside);
+    return h('div', { ...pickable, class: 'item image' + (sel ? ' selected' : '') + (inRow ? ' in-row' : ''), style: inRow ? { width: pw + '%' } : null },
       h('input', {
         class: 'caption' + (it.caption ? '' : ' is-empty'), value: it.caption || '', placeholder: '写真の見出し（任意）例：＜木のイメージ＞', 'data-pkey': 'cap:' + it.id,
         oninput: (e) => { e.target.classList.toggle('is-empty', !e.target.value); saveLater(blockPath(w, b), { [`items.${it.id}.caption`]: e.target.value }); touch(w, d); },
       }),
-      h('div', { class: 'photo-box', style: { width: pw + '%' } },
+      h('div', { class: 'photo-box', style: { width: inRow ? '100%' : pw + '%' } },
         im ? h('img', { class: 'photo', src: im.data, alt: it.caption || '参考写真', onpointerdown: (e) => selectItem(it, e.target), draggable: 'false' }) : h('div', { class: 'muted small pad' }, '読み込み中…'),
         h('span', {
           class: 'photo-resize', title: 'ドラッグして大きさを変える', 'aria-label': '写真の大きさを変える（左右の矢印キーでも変えられます）', tabindex: '0', role: 'slider',
@@ -917,11 +920,23 @@ function ItemView(w, d, b, it, i, items, rows) {
           onkeydown: (e) => { const k = { ArrowLeft: -5, ArrowRight: 5, ArrowDown: -5, ArrowUp: 5 }[e.key]; if (k) { e.preventDefault(); setPhotoWidth(w, d, b, it, pw + k); } },
         }),
         h('span', { class: 'photo-pct' }, pw + '%')),
-      bar(h('button', { class: 'btn tiny', onclick: () => setPhotoWidth(w, d, b, it, 100) }, 'ページの幅に')));
+      bar([
+        inRow ? null : h('button', { class: 'btn tiny', onclick: () => setPhotoWidth(w, d, b, it, 100) }, 'ページの幅に'),
+        // 写真を横に並べる：前の写真の右に置く（2枚とも幅を半分くらいにする）
+        prevImg && !it.beside ? h('button', { class: 'btn tiny', onclick: () => setBeside(w, d, b, it, items0[i - 1], true) }, '前の写真の横に並べる') : null,
+        it.beside && prevImg ? h('button', { class: 'btn tiny', onclick: () => setBeside(w, d, b, it, items0[i - 1], false) }, '横並びをやめる') : null,
+      ]));
   }
   return null;
 }
 
+// 写真を前の写真の横に並べる（並べるときは、2枚が1行に入る幅にする）
+function setBeside(w, d, b, it, prev, on) {
+  const patch = { [`items.${it.id}.beside`]: on ? true : DEL };
+  if (on && photoWidth(prev) + photoWidth(it) > 98) { patch[`items.${prev.id}.w`] = 48; patch[`items.${it.id}.w`] = 48; }
+  db.update(blockPath(w, b), patch);
+  touch(w, d);
+}
 // 写真の大きさ（ページの幅に対する %）。角のつまみをドラッグして、自由に変える
 function setPhotoWidth(w, d, b, it, v) {
   v = Math.round(Math.max(10, Math.min(100, v)));
@@ -932,17 +947,20 @@ function startPhotoResize(e, w, d, b, it) {
   e.preventDefault();
   e.stopPropagation();
   const box = e.target.closest('.photo-box');
-  const page = box && box.parentElement;
+  // 横に並べた写真は、行（ページの幅）に対する割合。大きさを変えるのは写真のまとまり（項目）ごと
+  const rowEl = box && box.closest('.item-row');
+  const page = rowEl || (box && box.parentElement);
   if (!page) return;
   const full = page.getBoundingClientRect().width;
-  const left = box.getBoundingClientRect().left;
+  const target = rowEl ? box.closest('.item') : box;
+  const left = target.getBoundingClientRect().left;
   const pct = box.querySelector('.photo-pct');
   let v = photoWidth(it);
   box.classList.add('resizing');
   try { e.target.setPointerCapture(e.pointerId); } catch (er) { /* noop */ }
   const move = (ev) => {
     v = Math.round(Math.max(10, Math.min(100, ((ev.clientX - left) / full) * 100)));
-    box.style.width = v + '%';
+    target.style.width = v + '%';
     if (pct) pct.textContent = v + '%';
   };
   const up = () => {
@@ -988,7 +1006,15 @@ function BlockCard(w, d, b, r, rowIndex, indexInRow, rows) {
   // 指で押したときは、選ばれていない段のタイミングを1回目に押しても、付け替えにはせず選ぶだけにする
   const pick = (e) => { if (S.ui.activeBlock !== b.id) { S.ui.activeBlock = b.id; S.ui.justPicked = e && e.pointerType === 'touch' ? b.id : null; rerender(); } };
   const doc = [];
-  items.forEach((it, i) => { doc.push(InsertSlot(w, d, b, i, rows, false)); doc.push(ItemView(w, d, b, it, i, items, rows)); });
+  // 「前の写真の横に並べる」写真は、前の写真と同じ行にまとめる
+  let row = null;
+  items.forEach((it, i) => {
+    const v = ItemView(w, d, b, it, i, items, rows);
+    if (it.kind === 'image' && it.beside && row && items[i - 1] && items[i - 1].kind === 'image') { row.children.push(v); return; }
+    doc.push(InsertSlot(w, d, b, i, rows, false));
+    if (it.kind === 'image' && items[i + 1] && items[i + 1].kind === 'image' && items[i + 1].beside) { row = h('div', { key: 'row-' + it.id, class: 'item-row' }, v); doc.push(row); }
+    else { row = null; doc.push(v); }
+  });
   doc.push(InsertSlot(w, d, b, items.length, rows, true));
   return h('div', {
     key: b.id, class: 'block' + (b.cue ? '' : ' nocue') + (here.length ? ' has-pres' : '') + (active ? ' active' : ''), 'data-pblock': b.id, style: ringStyle(here),

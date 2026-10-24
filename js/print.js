@@ -72,9 +72,20 @@ function NoteBlock(t, b, idx) {
       }
       if (it.kind === 'image') {
         const im = t.images[it.refId];
-        return h('figure', { key: it.id, class: 'p-fig p-photo size-' + (it.size || 'm') },
-          it.caption ? h('figcaption', null, it.caption) : null,
-          im ? h('img', { src: im.data, alt: it.caption || '参考写真', style: { width: photoWidth(it) + '%' } }) : null);
+        // 横に並べた写真：前の写真の横（並びの1枚目は、ここで並びの全部を出す）
+        const k = items.indexOf(it);
+        if (it.beside && k > 0 && items[k - 1].kind === 'image') return null;
+        const group = [it];
+        for (let j = k + 1; j < items.length && items[j].kind === 'image' && items[j].beside; j++) group.push(items[j]);
+        const one = (x, inRow) => {
+          const m2 = t.images[x.refId];
+          return h('figure', { key: x.id, class: 'p-fig p-photo size-' + (x.size || 'm'), style: inRow ? { width: photoWidth(x) + '%' } : null },
+            x.caption ? h('figcaption', null, x.caption) : null,
+            m2 ? h('img', { src: m2.data, alt: x.caption || '参考写真', style: { width: inRow ? '100%' : photoWidth(x) + '%' } }) : null);
+        };
+        if (group.length > 1) return h('div', { key: 'row-' + it.id, class: 'p-photo-row' }, group.map((x) => one(x, true)));
+        void im;
+        return one(it, false);
       }
       return null;
     }));
