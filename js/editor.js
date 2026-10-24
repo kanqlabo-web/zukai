@@ -3,7 +3,7 @@ import { h, render } from './vdom.js';
 import { db, DEL, newId } from './db.js';
 import { S, rerender, toast, pickFile } from './state.js';
 import { P, createImage, thumbOf } from './model.js';
-import { loadPhoto, loadPhotoSrc, warpToStage, TracePicker, TraceChooser, initialCorners, detectCorners, prepareInk, inkDataUrl, InkPicker } from './trace.js';
+import { loadPhoto, loadPhotoSrc, warpToStage, TracePicker, TraceChooser, initialCorners, detectCorners, prepareInk, inkDataUrl, photoForSave } from './trace.js';
 import { textInRegion } from './drawimport.js';
 import { shapesFromClipboard, MARK } from './clippaste.js';
 import { W, H, stageFrame, StageSVG, shapeNode, sortShapes, moveShape, shapeCenter, shapeBBox, simplify, LAYER, layoutLabels, isRegion, isFillable, canName, insideShape, linePoints } from './stage.js';
@@ -982,7 +982,7 @@ function InlineBox() {
 }
 
 function onKey(e) {
-  if (!E || isDialogOpen() || E.tracePick || E.traceChoose || E.inkPick) return;
+  if (!E || isDialogOpen() || E.tracePick || E.traceChoose) return;
   const tag = (e.target && e.target.tagName) || '';
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
   const mod = e.ctrlKey || e.metaKey;
@@ -2037,20 +2037,14 @@ function pageImages() {
   return out;
 }
 
-// ページに写真・画像があれば一覧から選べるようにする（ないときは今までどおりファイルから）
+// 下絵の写真を選ぶ：ページに写真・画像が1枚だけならそれを使い、2枚以上なら一覧から選ぶ（ないときはファイルから）
 function pickTrace() {
   if (!E) return;
   const list = pageImages();
   if (!list.length) { pickTraceFile(); return; }
+  if (list.length === 1) { pickTraceSrc(list[0].src); return; }
   E.traceChoose = list;
   draw();
-}
-
-// 四隅の最初の位置：写真から舞台の枠を自動で探す。見つからなければ今までどおり少し内側
-function startCorners(photo) {
-  const auto = detectCorners(photo);
-  if (auto) toast('舞台の枠の四隅を自動で合わせました。ずれていたら丸を動かしてください');
-  return auto || initialCorners(photo);
 }
 
 async function pickTraceFile() {
@@ -2058,11 +2052,7 @@ async function pickTraceFile() {
   draw();
   const f = await pickFile('image/*');
   if (!f || !E) return;
-  try {
-    const photo = await loadPhoto(f);
-    E.tracePick = { photo, pts: startCorners(photo), drag: null };
-    draw();
-  } catch (e) { toast(e.message || String(e), 'error', 6000); }
+  try { autoTrace(await loadPhoto(f)); } catch (e) { toast(e.message || String(e), 'error', 6000); }
 }
 
 async function pickTraceSrc(src) {
@@ -2070,62 +2060,107 @@ async function pickTraceSrc(src) {
   draw();
   try {
     const photo = await loadPhotoSrc(src);
-    if (!E) return;
-    E.tracePick = { photo, pts: startCorners(photo), drag: null };
+    if (E) autoTrace(photo);
+  } catch (e) { toast(e.message || String(e), 'error', 6000); }
+}
+
+// 舞台の枠の四隅を自動で探して、確かめずにそのまま下絵にする。見つからないときだけ四隅を合わせる画面を出す
+function autoTrace(photo) {
+  const pts = detectCorners(photo);
+  if (pts) { makeTrace(photo, pts, null, '下絵を敷きました（四隅は自動で合わせました。ずれていたら右の「四隅を合わせ直す」で直せます）'); return; }
+  toast('舞台の枠を見つけられませんでした。四隅を合わせてください', 'info', 5000);
+  E.tracePick = { photo, pts: initialCorners(photo), drag: null };
+  draw();
+}
+
+// 四隅を合わせる画面で決めたとき（新しい写真、または合わせ直し）
+function finishTrace(corners) {
+  const st = E.tracePick;
+  E.tracePick = null;
+  draw();
+  makeTrace(st.photo, corners, st.orig || null, st.orig ? '下絵の四隅を合わせ直しました' : '下絵を敷きました。上からなぞって図を作ってください');
+}
+
+// 下絵を作って保存する。元の写真（orig）と四隅（pts）も残して、あとで合わせ直せるようにする
+// orig：合わせ直しのときの元の写真の id（写真はそのまま使う）
+async function makeTrace(photo, corners, orig, msg) {
+  toast('下絵を作っています…');
+  try {
+    const img = warpToStage(photo, corners);
+    const old = E.trace || {};
+    const iid = await createImage(E.w, E.draftId, img);
+    let oid = orig, pts = corners;
+    if (!oid) {
+      const sv = photoForSave(photo);
+      oid = await createImage(E.w, E.draftId, { data: sv.data, w: sv.w, h: sv.h });
+      pts = corners.map(([x, y]) => [x * sv.k, y * sv.k]);
+    }
+    await db.update(path(), { trace: { img: iid, orig: oid, pts, op: old.op || 0.5 } });
+    if (old.img) db.remove(P.doc(E.w, 'images', old.img));
+    if (old.orig && old.orig !== oid) db.remove(P.doc(E.w, 'images', old.orig));
+    E.traceHidden = false;
+    toast(msg, 'info', 6000);
+    // 取り込んだ線があれば、新しい下絵から作り直す
+    if (inkIds().length) await redoInk(img.data);
+  } catch (e) { toast('下絵を作れませんでした: ' + (e.message || e), 'error', 6000); }
+}
+
+// 保存してある元の写真と四隅で、四隅を合わせる画面を開く
+async function adjustTrace() {
+  const t = E && E.trace;
+  if (!t || !t.orig) return;
+  try {
+    const im = await db.get(P.doc(E.w, 'images', t.orig));
+    if (!im || !E) throw new Error('元の写真が見つかりません');
+    const photo = await loadPhotoSrc(im.data);
+    E.tracePick = { photo, pts: (t.pts || initialCorners(photo)).map((p) => p.slice()), drag: null, orig: t.orig };
     draw();
   } catch (e) { toast(e.message || String(e), 'error', 6000); }
 }
 
-async function finishTrace(corners) {
-  const st = E.tracePick;
-  E.tracePick = null;
-  draw();
-  toast('下絵を作っています…');
-  try {
-    const img = warpToStage(st.photo, corners);
-    const old = E.trace && E.trace.img;
-    const iid = await createImage(E.w, E.draftId, img);
-    await db.update(path(), { trace: { img: iid, op: (E.trace && E.trace.op) || 0.5 } });
-    if (old) db.remove(P.doc(E.w, 'images', old));
-    E.traceHidden = false;
-    toast('下絵を敷きました。上からなぞって図を作ってください');
-  } catch (e) { toast('下絵を作れませんでした: ' + (e.message || e), 'error', 6000); }
-}
-
 async function removeTrace() {
-  const old = E.trace && E.trace.img;
+  const old = E.trace || {};
   await db.update(path(), { trace: DEL });
-  if (old) db.remove(P.doc(E.w, 'images', old));
+  if (old.img) db.remove(P.doc(E.w, 'images', old.img));
+  if (old.orig) db.remove(P.doc(E.w, 'images', old.orig));
 }
 
-// 下絵の黒い線だけを取り出して、図の中に画像として入れる（白い所は透明）
+// 下絵の黒い線だけを取り出して、図の中に画像として入れる（白い所は透明）。確かめずにすぐ入れ、線の量はあとから右の欄で変えられる
+const INK_LEVEL = 20;
+let inkCache = { src: null, ink: null };
+async function inkFor(src) {
+  if (inkCache.src !== src) inkCache = { src, ink: await prepareInk(src) };
+  return inkCache.ink;
+}
+
 async function startInk() {
   if (!E || !E.traceSrc) return;
-  const src = E.traceSrc;
-  E.inkPick = { ink: null, level: 20, url: null };
-  draw();
   try {
-    const ink = await prepareInk(src);
-    if (!E || !E.inkPick) return;
-    E.inkPick = { ...E.inkPick, ink, url: inkDataUrl(ink, E.inkPick.level) };
-    draw();
-  } catch (e) { E.inkPick = null; draw(); toast(e.message || String(e), 'error', 6000); }
+    const ink = await inkFor(E.traceSrc);
+    if (!E) return;
+    const id = newId(8);
+    commit({ [id]: { t: 'image', ink: true, inkLevel: INK_LEVEL, src: inkDataUrl(ink, INK_LEVEL), x: W / 2, y: H / 2, w: W, h: H, rot: 0, id, z: zFor('image') } });
+    toast('下絵の黒い線を図に取り込みました。線の量は右の「拾う線」で変えられます');
+  } catch (e) { toast(e.message || String(e), 'error', 6000); }
 }
 
 const inkIds = () => Object.values(E.shapes).filter((x) => x && x.t === 'image' && x.ink).map((x) => x.id);
+const inkLevelNow = () => { const id = inkIds()[0]; const l = id && E.shapes[id].inkLevel; return l == null ? INK_LEVEL : l; };
 
-function setInkLevel(level) {
-  const st = E && E.inkPick;
-  if (!st || !st.ink) return;
-  E.inkPick = { ...st, level, url: inkDataUrl(st.ink, level) };
-  draw();
-}
-
-function finishInk(src) {
-  E.inkPick = null;
-  const id = newId(8);
-  commit({ [id]: { t: 'image', ink: true, src, x: W / 2, y: H / 2, w: W, h: H, rot: 0, id, z: zFor('image') } });
-  toast('下絵の黒い線を図に取り込みました。外すときは右の「取り込んだ線を外す」を押してください');
+// 取り込んだ線を作り直す（線の量を変えたとき・下絵を合わせ直したとき）
+async function redoInk(src, level) {
+  if (!E || !src) return;
+  try {
+    const ink = await inkFor(src);
+    if (!E) return;
+    const ch = {};
+    for (const id of inkIds()) {
+      const s = E.shapes[id];
+      const lv = level == null ? (s.inkLevel == null ? INK_LEVEL : s.inkLevel) : level;
+      ch[id] = { ...s, inkLevel: lv, src: inkDataUrl(ink, lv) };
+    }
+    commit(ch);
+  } catch (e) { toast(e.message || String(e), 'error', 6000); }
 }
 
 function TraceSection() {
@@ -2149,8 +2184,15 @@ function TraceSection() {
       h('button', { class: 'btn tiny', onclick: () => { E.traceHidden = !E.traceHidden; draw(); } }, E.traceHidden ? '下絵を見せる' : '下絵を隠す'),
       h('button', { class: 'btn tiny', onclick: pickTrace }, '別の写真にする'),
       h('button', { class: 'btn tiny danger', onclick: removeTrace }, '下絵を外す')),
+    t.orig ? h('div', { class: 'panel-actions' },
+      h('button', { class: 'btn tiny', onclick: adjustTrace, title: '自動で合わせた四隅がずれていたら、丸を動かして直します' }, '四隅を合わせ直す')) : null,
+    inkIds().length ? h('label', { class: 'prop' }, h('span', null, '拾う線'),
+      h('input', {
+        type: 'range', min: 4, max: 70, step: 2, value: inkLevelNow(), class: 'grow', 'aria-label': '取り込んだ線の量（左ほど薄い線も拾う）', title: '左ほど薄い線も拾います',
+        onchange: (e) => redoInk(E.traceSrc, +e.target.value),
+      })) : null,
     h('div', { class: 'panel-actions' },
-      h('button', { class: 'btn tiny', disabled: !E.traceSrc, onclick: startInk, title: '下絵の黒い線や文字だけを、図の中の画像として取り込みます（書き出しにも出ます）' }, '黒い線を図に取り込む'),
+      inkIds().length ? null : h('button', { class: 'btn tiny', disabled: !E.traceSrc, onclick: startInk, title: '下絵の黒い線や文字だけを、図の中の画像として取り込みます（書き出しにも出ます）' }, '黒い線を図に取り込む'),
       inkIds().length ? h('button', { class: 'btn tiny danger', onclick: () => commit(Object.fromEntries(inkIds().map((id) => [id, null]))) }, '取り込んだ線を外す') : null),
     !E.traceSrc ? h('p', { class: 'muted small' }, '下絵を読み込んでいます…') : null);
 }
@@ -2401,7 +2443,6 @@ export function EditorView() {
         E.hmode ? HeightPanel() : E.tool === 'person' ? PersonPanel(shapes) : ['line', 'curve', 'carrow', 'cblock'].includes(E.tool) ? PolyPanel() : E.tool === 'block' ? BlockToolPanel() : SelPanel())),
     E.xf ? XfHint() : null,
     ContextMenu(),
-    E.inkPick ? InkPicker(E.inkPick, { onDone: finishInk, onCancel: () => { E.inkPick = null; draw(); }, onLevel: setInkLevel }) : null,
     E.traceChoose ? TraceChooser(E.traceChoose, { onPick: pickTraceSrc, onFile: pickTraceFile, onCancel: () => { E.traceChoose = null; draw(); } }) : null,
     E.tracePick ? TracePicker(E.tracePick, { onDone: finishTrace, onCancel: () => { E.tracePick = null; draw(); }, redraw: draw }) : null);
 }

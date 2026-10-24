@@ -807,9 +807,6 @@ body.is-show { overflow: hidden; }
 .trace-pick-body { flex: 1; min-height: 0; display: grid; place-items: center; padding: 10px; }
 .trace-pick-svg { max-width: 100%; max-height: 100%; width: auto; height: 100%; touch-action: none; user-select: none; -webkit-user-select: none; }
 .trace-pick-foot { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; padding: 10px max(14px, env(safe-area-inset-left)) max(10px, env(safe-area-inset-bottom)); background: #fff; }
-.ink-pick-body { background: #fff; }
-.ink-pick-img { max-width: 100%; max-height: 100%; border: 1px solid #ddd; background: #fff; }
-.ink-pick-level { display: flex; align-items: center; gap: 6px; margin-right: auto; white-space: nowrap; }
 .trace-choose-body { flex: 1; min-height: 0; overflow: auto; padding: 14px max(14px, env(safe-area-inset-left)); }
 .trace-choose-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
 .trace-choose-item { display: flex; flex-direction: column; gap: 6px; padding: 6px; border: 2px solid transparent; border-radius: 8px; background: #fff; color: var(--ink); cursor: pointer; text-align: left; font: inherit; }

@@ -376,22 +376,15 @@ export function inkDataUrl(ink, level) {
   return url;
 }
 
-// 取り込む前の確認画面。st = { ink, level, url }。onDone(url) / onCancel() / onLevel(level)
-export function InkPicker(st, { onDone, onCancel, onLevel }) {
-  return h('div', { class: 'trace-pick' },
-    h('div', { class: 'trace-pick-head' },
-      h('b', null, '下絵の黒い線を図に取り込む'),
-      h('div', { class: 'muted small' }, '下絵の写真から、黒い線や文字だけを取り出して図の中に入れます。白い所は透明になります。取り込んだ線は書き出し・閲覧モードにも出ます。')),
-    h('div', { class: 'trace-pick-body ink-pick-body' },
-      st.url ? h('img', { class: 'ink-pick-img', src: st.url, alt: '取り込む線' }) : h('div', { class: 'muted' }, '作っています…')),
-    h('div', { class: 'trace-pick-foot' },
-      h('label', { class: 'ink-pick-level' }, h('span', null, '拾う線'),
-        h('span', { class: 'muted small' }, '多い'),
-        h('input', {
-          type: 'range', min: 4, max: 70, step: 2, value: st.level, 'aria-label': '拾う線の量（左ほど薄い線も拾う）',
-          onchange: (e) => onLevel(+e.target.value),
-        }),
-        h('span', { class: 'muted small' }, '少ない')),
-      h('button', { class: 'btn ghost', onclick: onCancel }, 'やめる'),
-      h('button', { class: 'btn primary', disabled: !st.url, onclick: () => onDone(st.url) }, '図に取り込む')));
+// 四隅をあとで合わせ直せるよう、元の写真を保存できる大きさにする（1つの文書に入るように縮める）。k：元の写真からの倍率
+export function photoForSave(photo) {
+  let k = Math.min(1, 1600 / Math.max(photo.w, photo.h)), data;
+  for (;;) {
+    const c = document.createElement('canvas');
+    c.width = Math.round(photo.w * k); c.height = Math.round(photo.h * k);
+    c.getContext('2d').drawImage(photo.canvas, 0, 0, c.width, c.height);
+    data = c.toDataURL('image/jpeg', 0.8);
+    if (data.length < 600000 || k < 0.3) return { data, w: c.width, h: c.height, k };
+    k *= 0.8;
+  }
 }
