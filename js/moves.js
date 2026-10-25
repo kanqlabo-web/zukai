@@ -7,6 +7,7 @@
 //   moves: { [図形の id]: { x, y, fx, fy } }（fx・fy は送ったときの元の位置）, note（一言）,
 //   me（送った人がメンバー一覧のだれか。cid）, by: { name, email }, ts,
 //   state: 'open' | 'done'（反映した） | 'skip'（見送った）, doneBy, doneAt }
+// ベータ版の機能（beta.js）。オンにした端末だけに、ボタン・知らせ・図の編集の欄が出る。
 // 閲覧者も送れるように、firestore.rules で moves だけは参加者全員が作れる。元に戻すの履歴には入れない。
 import { h } from './vdom.js';
 import { db, newId } from './db.js';
@@ -14,6 +15,7 @@ import { S, rerender, toast, fmtTime, go, adminMsg } from './state.js';
 import { P } from './model.js';
 import { W, H, stageFrame, sortShapes, shapeNode, layoutLabels } from './stage.js';
 import { workIndex, personCast, personNo, personRole, roleShort } from './cast.js';
+import { betaOn } from './beta.js';
 
 export const movesOf = () => (S.d.moves || []).filter((m) => m && m.state === 'open');
 const byTs = (a, b) => (b.ts || 0) - (a.ts || 0);
@@ -140,7 +142,7 @@ export function ShowFigure(data, t, s, ix) {
 
 // 閲覧モードの上のボタン
 export function ShowMoveButton(data, t, s) {
-  if (!s.b) return null;
+  if (!betaOn() || !s.b) return null;
   if (M.on) return null;
   return h('button', { class: 'btn mv-start', title: '練習で動きが変わったら、自分の位置を動かして図解部に送ります', onclick: () => startMove(t, s) },
     h('svg', { class: 'ico', viewBox: '0 0 24 24', width: 18, height: 18, 'aria-hidden': 'true', fill: 'none', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round' },
@@ -150,6 +152,7 @@ export function ShowMoveButton(data, t, s) {
 
 // 図の下（または上）に出す、送るための欄
 export function MoveSheet(data, t, s, ix) {
+  if (!betaOn()) return null;
   const fid = s.fig ? s.fig.refId : null;
   const mine = movesOf().filter((m) => m.by && S.user && m.by.email === S.user.email && s.b && m.blockId === s.b.id
     && (s.carried ? m.base === fid : m.gid === fid));
@@ -215,6 +218,7 @@ async function closeMove(w, m, state) {
 
 // ライブラリーのページのトラックの行に出す数
 export function TrackMoveChip(w, trackId, latestDraftId) {
+  if (!betaOn()) return null;
   const draftIds = new Set((S.d.drafts || []).filter((d) => d.trackId === trackId).map((d) => d.id));
   const n = movesOf().filter((m) => m.trackId === trackId || draftIds.has(m.draftId)).length;
   if (!n) return null;
@@ -226,6 +230,7 @@ export function TrackMoveChip(w, trackId, latestDraftId) {
 
 // トラックのページの上に出す知らせ（同じトラックのどの稿に送られたものも）
 export function DraftMovesBar(w, d, draft, openFig, makeFig) {
+  if (!betaOn()) return null;
   const list = movesOf().filter((m) => m.draftId === d || (draft && m.trackId === draft.trackId)).sort(byTs);
   if (!list.length) return null;
   const ix = workIndex(S.d.work);
@@ -256,6 +261,7 @@ export function DraftMovesBar(w, d, draft, openFig, makeFig) {
 
 // 図の編集：この図への変更の候補（右の欄のいちばん上）
 export function EditorMovesSection(w, gid, shapes, ix, apply) {
+  if (!betaOn()) return null;
   const list = movesOf().filter((m) => m.gid === gid).sort(byTs);
   if (!list.length) return null;
   return h('section', { class: 'mv-ed' },
@@ -278,7 +284,7 @@ export function EditorMovesSection(w, gid, shapes, ix, apply) {
 // 図の編集：送られてきた新しい位置（オレンジの円と点線）
 export function EditorMovesLayer(gid, shapes, upx) {
   const out = [];
-  for (const m of movesOf()) {
+  if (betaOn()) for (const m of movesOf()) {
     if (m.gid !== gid) continue;
     for (const [id, p] of Object.entries(m.moves || {})) {
       const s = shapes[id];

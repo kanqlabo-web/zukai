@@ -16,6 +16,7 @@ import { ShowView, afterShow } from './show.js';
 import { CommentsPanel, paintCommentMarks, WorkCommentsPanel } from './comments.js';
 import { ContextMenu } from './menubar.js';
 import { canEdit as canEditWork } from './access.js';
+import { betaOn, setBeta } from './beta.js';
 import { versionLabel, CHANGELOG_URL, watchForUpdate, reloadToLatest } from './version.js';
 
 const $app = document.getElementById('app');
@@ -80,7 +81,7 @@ function onRoute() {
     watch('drafts', (cb) => db.watchList(P.col(w, 'drafts'), null, cb, denied));
   }
   // 練習で送られてきた動きの変更（moves.js）
-  if (w && (r.name === 'work' || r.name === 'draft' || r.name === 'show')) watch('moves', (cb) => db.watchList(P.col(w, 'moves'), ['state', 'open'], cb, () => {}));
+  if (w && betaOn() && (r.name === 'work' || r.name === 'draft' || r.name === 'show')) watch('moves', (cb) => db.watchList(P.col(w, 'moves'), ['state', 'open'], cb, () => {}));
   if (r.name === 'work') watch('comments', (cb) => db.watchList(P.col(w, 'comments'), null, cb, () => {}));
   if (r.name === 'draft') {
     watch('blocks', (cb) => db.watchList(P.col(w, 'blocks'), ['draftId', d], cb, () => { S.d.work = null; rerender(); }));
@@ -189,6 +190,9 @@ function Header() {
         h('div', { class: 'menu' },
           h('div', { class: 'menu-who' }, S.user.name, h('small', null, S.user.email)),
           mode !== 'local' ? h('button', { class: 'linklike', onclick: () => auth.signOut() }, 'ログアウト') : null,
+          h('label', { class: 'menu-beta', title: 'ためし中の機能（練習で演者が動きの変更を送る）を、この端末で使います' },
+            h('input', { type: 'checkbox', checked: betaOn(), onchange: (e) => { setBeta(e.target.checked); S.route = {}; onRoute(); } }),
+            h('span', null, 'ベータ版の機能を使う')),
           VersionLink('menu-version'),
         )) : null,
     ));

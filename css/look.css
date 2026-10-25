@@ -351,3 +351,6 @@
 .mv-warn { color: var(--danger); }
 .mv-list li > .linklike { flex: none; width: auto; }
 .mv-list li > .linklike { color: var(--accent-2); }
+.menu-beta { display: flex; align-items: center; gap: 8px; padding: 9px 14px; font-size: 14px; cursor: pointer; }
+.menu-beta input { width: auto; flex: none; min-height: 0; margin: 0; padding: 0; border: 0; box-shadow: none; background: none; }
+.menu-beta span { white-space: nowrap; }
