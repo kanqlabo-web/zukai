@@ -292,9 +292,10 @@ function lidUnits(text, lid) {
     if (v >= INF) continue;
     // 音声のところを飛ばす（曲・効果音・テマ友にないところ）
     if (j < q) { const c = v + (blocks[j].lang === 'm' ? 0.1 : blocks[j].lang === '?' ? 0.2 : 1) + 0.1 * blocks[j].sp; if (c < D[i][j + 1]) { D[i][j + 1] = c; BK[i][j + 1] = [i, j, 0]; } }
-    // テマ友のまとまりを飛ばす（読まれていない。歌や音楽のところの前後なら、そこで歌われているとみて安く）
-    const nearM = (j < q && blocks[j].lang === 'm') || (j > 0 && blocks[j - 1].lang === 'm');
-    if (i < p) { const c = v + (nearM ? 0.5 + runs[i].dur * 0.05 : 3 + runs[i].dur * 0.3); if (c < D[i + 1][j]) { D[i + 1][j] = c; BK[i + 1][j] = [i, j, 0]; } }
+    // テマ友のまとまりを飛ばす（読まれていない。歌や音楽のところの前後なら、そこで歌われているとみて安く。
+    // ただし、そのところの長さに比べて長いまとまりほど高く（2.48.5〜。安すぎると、歌のあとの話し声の行まで飛ばして、後ろが1組ずつずれた）
+    const mb = j < q && blocks[j].lang === 'm' ? blocks[j] : j > 0 && blocks[j - 1].lang === 'm' ? blocks[j - 1] : null;
+    if (i < p) { const c = v + (mb ? 1 + 10 * runs[i].dur * k / (mb.e - mb.s) : 3 + runs[i].dur * 0.3); if (c < D[i + 1][j]) { D[i + 1][j] = c; BK[i + 1][j] = [i, j, 0]; } }
     // まとまり i を、音声の j から続くいくつかのところに対応させる（言語が違うところはまたがない）
     if (i < p) {
       let sp = 0, conf = 0;
