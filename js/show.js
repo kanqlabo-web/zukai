@@ -11,6 +11,7 @@ import { openEditorAfter } from './editor.js';
 import { canEdit } from './access.js';
 import { icon } from './icons.js';
 import { ShowFigure, ShowMoveButton, MoveSheet, moveEditing } from './moves.js';
+import { ShowAudioBar, audioOnNav, audioKey } from './audio.js';
 
 const byOrder = (a, b) => (a.order || 0) - (b.order || 0) || (a.createdAt || 0) - (b.createdAt || 0);
 const V = { key: '', i: 0, scrolled: -1, side: null };
@@ -49,16 +50,19 @@ function steps() {
   return cache.steps;
 }
 
-function goTo(i) {
+// auto：音声に合わせて送ったとき（音声の位置は動かさない）
+function goTo(i, auto = false) {
   const n = steps().length;
   const j = Math.max(0, Math.min(n - 1, i));
   if (j === V.i) return;
   V.i = j;
+  if (!auto) audioOnNav(steps()[j]);
   V.zoom = null;
   try { history.replaceState(null, '', location.hash.replace(/\?.*$/, '') + '?' + (j + 1)); } catch (e) { /* noop */ }
   rerender();
 }
 const next = () => goTo(V.i + 1);
+const AUDIO = { steps, cur: () => V.i, goTo };
 const prev = () => goTo(V.i - 1);
 
 function backHref() {
@@ -137,6 +141,7 @@ export function ShowView() {
       ShowMoveButton(data, t, s),
       s.fig && canEdit(data.work) ? h('button', { class: 'btn', title: 'この図を編集する', onclick: () => openEditorAfter(data.w, t.draft.id, s.fig.refId) }, icon('pencil', 16), '図を編集') : null,
       h('button', { class: 'btn', title: '全画面（F）', onclick: toggleFull }, '全画面')),
+    ShowAudioBar(data, t, s, AUDIO),
     h('div', { class: 'show-body' },
       h('div', { class: 'show-fig' + (moveEditing() ? ' is-moving' : ''), onclick: (e) => { if (moveEditing()) return; const r = e.currentTarget.getBoundingClientRect(); if (e.clientX - r.left < r.width * 0.35) prev(); else next(); } },
         Figure(data, t, s, idx),
@@ -187,6 +192,7 @@ export function afterShow() {
 
 document.addEventListener('keydown', (e) => {
   if (S.route.name !== 'show' || e.target.closest('input,select,textarea') || moveEditing()) return;
+  if (audioKey(e)) { e.preventDefault(); return; }
   if (V.zoom) { if (e.key === 'Escape' || e.key === ' ' || e.key === 'Enter') { e.preventDefault(); V.zoom = null; rerender(); } return; }
   if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ' || e.key === 'ArrowDown') { e.preventDefault(); next(); }
   else if (e.key === 'ArrowLeft' || e.key === 'PageUp' || e.key === 'ArrowUp') { e.preventDefault(); prev(); }
