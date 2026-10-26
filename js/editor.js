@@ -954,7 +954,7 @@ function showShortcuts() {
     title: 'キーボード ショートカット', ok: '閉じる', cancel: false, fields: [],
     message: SHORTCUTS.map(([a, k]) => `${a}　${MOD}${k}`).join('\n')
       + '\n\nBlender と同じ操作\n' + BLENDER_KEYS.map(([a, k]) => `${a}　${k}`).join('\n')
-      + '\n\n道具を切り替える　数字キー 1〜9（' + BAR.map((t, i) => `${i + 1} ${Array.isArray(t) ? '線と矢印' : TOOL_LABEL[t]}`).join('・') + '）。線と矢印は数字キーでプルダウンが開き、続けて数字で選びます'
+      + '\n\n道具を切り替える　数字キー（' + BAR.map((t, i) => `${barKey(i)} ${typeof t === 'object' ? t.label : TOOL_LABEL[t]}`).join('・') + '）。線・矢印は数字キーでプルダウンが開き、続けて数字で選びます'
       + '\n\nそのほか\n削除　Delete / Backspace\n少し動かす　矢印キー（Shift で大きく）\n次・前の図形を選ぶ　Tab / Shift+Tab\n名前・文字を書く　Enter / ダブルクリック\n選ぶのをやめる　Esc\n前・次の図へ　PageUp / PageDown\n図の編集を終える　' + MOD + 'Enter\nメニューを開く　Alt+E（編集）・V（表示）・I（挿入）・O（配置）・H（ヘルプ）',
   });
 }
@@ -1026,7 +1026,7 @@ function onKey(e) {
     else if (k === 'g' || k === 'r' || k === 's') { e.preventDefault(); const ids = Object.keys(E.xf.orig); endXf(false); E.sel = new Set(ids); startXf(k); }
     return;
   }
-  if (!menuOpen() || E.lineMenu) { if (toolKey(e)) return; }
+  if (!menuOpen() || E.groupMenu) { if (toolKey(e)) return; }
   if (blenderKey(e, mod)) return;
   if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redoAll() : undoAll(); return; }
   if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redoAll(); return; }
@@ -1560,39 +1560,46 @@ const TOOLS = [
   ['line', '直線'], ['curve', '曲線'], ['freeline', '手書き線'], ['arrow', '矢印'], ['carrow', '曲線矢印'], ['block', '太矢印'], ['cblock', '太い曲線矢印'], ['text', '文字'], ['pan', 'スクロール'],
 ];
 const TOOL_LABEL = Object.fromEntries(TOOLS);
-// 線と矢印は1つのボタンにまとめ、押すとプルダウンで選ぶ
-const LINE_TOOLS = ['line', 'curve', 'freeline', 'arrow', 'carrow', 'block', 'cblock'];
-// 道具バーの並び。数字キー（1〜9）で切り替える。まとめたボタンは、数字キーでプルダウンが開き、続けて数字で選ぶ
-const BAR = ['select', 'person', 'role', 'ellipse', 'rect', 'blob', LINE_TOOLS, 'text', 'pan'];
+// 線・矢印は、それぞれ1つのボタンにまとめ、押すとプルダウンで選ぶ
+const GROUPS = [
+  { id: 'lines', label: '線', tools: ['line', 'curve', 'freeline'] },
+  { id: 'arrows', label: '矢印', tools: ['arrow', 'carrow', 'block', 'cblock'] },
+];
+const groupOf = (t) => GROUPS.find((g) => g.tools.includes(t)) || null;
+// 道具バーの並び。数字キー（1〜9・0）で切り替える。まとめたボタンは、数字キーでプルダウンが開き、続けて数字で選ぶ
+const BAR = ['select', 'person', 'role', 'ellipse', 'rect', 'blob', GROUPS[0], GROUPS[1], 'text', 'pan'];
+const barKey = (i) => String((i + 1) % 10);
 function useTool(t) {
-  E.lineMenu = false;
+  E.groupMenu = null;
   if (E.poly) finishPoly();
   E.tool = t;
-  if (LINE_TOOLS.includes(t)) E.lineTool = t;
+  const g = groupOf(t);
+  if (g) E.groupTool = { ...(E.groupTool || {}), [g.id]: t };
   if (t === 'person') E.personRid = null;
   if (t === 'role') { E.personCid = null; if (!E.personRid) E.personRid = nextRid(merged()); }
   if (t !== 'select') E.sel = new Set();
   draw();
 }
-function openLineMenu(el) {
-  const btn = el || document.querySelector('.ed-tools .tool-group');
+function openGroupMenu(g, el) {
+  const btn = el || document.querySelector(`.ed-tools .tool-group[data-group="${g.id}"]`);
   if (!btn) return;
   const r = btn.getBoundingClientRect();
-  E.lineMenu = true;
-  openContextMenu(r.left, r.bottom + 4, LINE_TOOLS.map((t, i) => ({ label: TOOL_LABEL[t], kbd: String(i + 1), checked: E.tool === t, onclick: () => useTool(t) })), draw, { hi: TOOL_LABEL[E.tool] || null });
+  E.groupMenu = g.id;
+  openContextMenu(r.left, r.bottom + 4, g.tools.map((t, i) => ({ label: TOOL_LABEL[t], kbd: String(i + 1), checked: E.tool === t, onclick: () => useTool(t) })), draw, { hi: TOOL_LABEL[E.tool] || null });
 }
 function toolKey(e) {
   if (e.ctrlKey || e.metaKey || e.altKey || !/^Digit[0-9]$|^Numpad[0-9]$/.test(e.code || '')) return false;
-  const n = Number(e.code.slice(-1));
-  if (E.lineMenu && menuOpen()) {
-    const t = LINE_TOOLS[n - 1];
-    if (t) { e.preventDefault(); closeMenus(); E.lineMenu = false; useTool(t); }
+  const k = e.code.slice(-1);
+  const g = E.groupMenu && menuOpen() ? GROUPS.find((x) => x.id === E.groupMenu) : null;
+  if (g) {
+    const t = g.tools[Number(k) - 1];
+    if (t) { e.preventDefault(); closeMenus(); useTool(t); }
     return true;
   }
-  const slot = BAR[n - 1];
+  const slot = BAR.find((x, i) => barKey(i) === k);
   if (!slot) return false;
   e.preventDefault();
-  if (Array.isArray(slot)) openLineMenu(); else useTool(slot);
+  if (typeof slot === 'object') openGroupMenu(slot); else useTool(slot);
   return true;
 }
 const HINTS = {
@@ -2354,7 +2361,7 @@ function onContext(e) {
     '-',
     { label: E.trace ? '下絵の写真を変える' : '写真を下絵にする', onclick: pickTrace },
   ];
-  E.lineMenu = false;
+  E.groupMenu = null;
   openContextMenu(e.clientX, e.clientY, items, draw);
 }
 
@@ -2529,15 +2536,16 @@ export function EditorView() {
         h('span', { class: 'sep' })),
       h('nav', { class: 'ed-tools', 'aria-label': '道具' },
         BAR.map((t, i) => {
-          const n = i + 1;
-          if (Array.isArray(t)) {
-            const lt = LINE_TOOLS.includes(E.tool) ? E.tool : (E.lineTool || 'line');
-            const on = LINE_TOOLS.includes(E.tool);
+          const n = barKey(i);
+          if (typeof t === 'object') {
+            const g = t;
+            const on = g.tools.includes(E.tool);
+            const lt = on ? E.tool : ((E.groupTool || {})[g.id] || g.tools[0]);
             return h('button', {
-              key: 'lines', class: 'tool tool-group' + (on ? ' on' : ''), onclick: (e) => openLineMenu(e.currentTarget), 'data-tip': `線と矢印（${n}）`, 'aria-label': '線と矢印', 'aria-haspopup': 'menu', 'aria-pressed': on ? 'true' : 'false',
+              key: g.id, 'data-group': g.id, class: 'tool tool-group' + (on ? ' on' : ''), onclick: (e) => openGroupMenu(g, e.currentTarget), 'data-tip': `${g.label}（${n}）`, 'aria-label': g.label, 'aria-haspopup': 'menu', 'aria-pressed': on ? 'true' : 'false',
             }, h('svg', { viewBox: '0 0 24 24', width: 24, height: 24, 'aria-hidden': 'true' }, ICONS[lt]()),
             h('svg', { class: 'tool-caret', viewBox: '0 0 10 10', width: 8, height: 8, 'aria-hidden': 'true' }, h('path', { d: 'M1.5 3.5L5 7l3.5-3.5', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.6 })),
-            h('span', null, '線と矢印'));
+            h('span', null, g.label));
           }
           const label = TOOL_LABEL[t];
           return h('button', {
