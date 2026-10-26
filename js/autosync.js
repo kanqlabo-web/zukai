@@ -3,7 +3,6 @@
 // 英語と日本語が交互に出てくるので、言語ごとに聞き取り、その言語の文字だけで照らし合わせてから合わせる。
 const JA = /[぀-ヿ㐀-鿿豈-﫿々〆ー]/;
 const EN = /[a-z0-9]/;
-const classOf = (lang) => (lang === 'ja' ? JA : EN);
 
 function norm(c) {
   c = c.normalize('NFKC').toLowerCase();
@@ -23,89 +22,168 @@ export function langsOf(text) {
   return out.length ? out : [ja > en ? 'ja' : 'en'];
 }
 
-function scriptChars(text, re) {
-  const out = [];
-  for (let i = 0; i < text.length; i++) { const c = norm(text[i]); if (re.test(c)) out.push({ c, off: i }); }
-  return out;
-}
+// 聞き取った文字。1秒より長い切れ目には「|」を入れる（切れ目をまたいで並べ合わせない）
+// 同じ文が何度も続くのは聞き取りの空回り（音楽のところなど）なので、はじめの1つだけ使う
 function heardChars(chunks, re) {
   const out = [];
+  let last = '';
   for (const ch of chunks) {
-    const cs = [...(ch.text || '')].map(norm).filter((c) => re.test(c));
-    cs.forEach((c, k) => out.push({ c, t: ch.s + (ch.e - ch.s) * k / Math.max(1, cs.length) }));
+    const tx = (ch.text || '').trim();
+    if (tx.length > 10 && tx === last) continue;
+    last = tx;
+    const cs = [...tx].map(norm).filter((c) => re.test(c));
+    if (out.length && ch.s - out[out.length - 1].e > 1) out.push({ c: '|', t: ch.s, e: ch.s });
+    cs.forEach((c, k) => out.push({ c, t: ch.s + (ch.e - ch.s) * k / Math.max(1, cs.length), e: ch.s + (ch.e - ch.s) * (k + 1) / Math.max(1, cs.length) }));
   }
   return out;
 }
 
-// 同じ文字の並び（英語は6文字、日本語は4文字）が、テマ友と聞き取った文字の両方にあるところを対応の候補にする。
-// 聞き取りには、もう一方の言語を訳した文や聞き違いがたくさん混ざるので、全体を並べ合わせるより、この方が崩れにくい。
-// テマ友の中で何度も出てくる並び（4回以上）は、どこのことか決められないので使わない
-export function gramPoints(A, B, k) {
-  if (A.length < k || B.length < k) return [];
-  const at = new Map();
-  for (let i = 0; i + k <= A.length; i++) {
-    let g = ''; for (let x = 0; x < k; x++) g += A[i + x].c;
-    const l = at.get(g);
-    if (l) l.push(i); else at.set(g, [i]);
-  }
-  const out = [];
-  for (let j = 0; j + k <= B.length; j++) {
-    let g = ''; for (let x = 0; x < k; x++) g += B[j + x].c;
-    const l = at.get(g);
-    if (!l || l.length > 3) continue;
-    for (const i of l) out.push({ off: A[i].off, t: B[j].t });
-  }
-  return out;
-}
-
-// 時刻が後戻りしない点だけを残す（いちばん長い増える並び。同じ位置からは1つだけ）
-function monotone(points) {
-  points.sort((a, b) => a.off - b.off || b.t - a.t);
-  const tails = [], prevIx = new Int32Array(points.length), tailIx = [];
-  points.forEach((p, i) => {
-    let lo = 0, hi = tails.length;
-    while (lo < hi) { const mid = (lo + hi) >> 1; if (tails[mid] < p.t) lo = mid + 1; else hi = mid; }
-    tails[lo] = p.t; tailIx[lo] = i; prevIx[i] = lo ? tailIx[lo - 1] : -1;
-  });
-  const out = [];
-  for (let i = tailIx[tails.length - 1]; i != null && i >= 0; i = prevIx[i]) out.push(points[i]);
-  return out.reverse();
-}
-
-// 行の頭の話し手の名前（「NARRATOR:」「語り:」など。CD では読まれない）を飛ばした位置
+const RATE = { en: 0.065, ja: 0.13 }; // 1文字を読むおよその秒
+// 行の頭の話し手の名前（「NARRATOR:」「語り:」など。CD では読まれない）
 const LABEL = /^[^\S\n]*[^\n:：。、.!?！？]{1,16}[:：][^\S\n]*/;
-function spokenFrom(text, o) {
-  if (o > 0 && text[o - 1] !== '\n') return o;
-  const m = LABEL.exec(text.slice(o, o + 40));
-  return m ? o + m[0].length : o;
+
+// テマ友を「同じ言語の文字が続くまとまり」に分ける（行の頭の話し手の名前は除く）
+function unitsOf(text) {
+  const units = [];
+  let pos = 0;
+  for (const line of text.split('\n')) {
+    const m = LABEL.exec(line);
+    let cur = null;
+    for (let i = m ? m[0].length : 0; i < line.length; i++) {
+      const c = norm(line[i]);
+      const lang = JA.test(c) ? 'ja' : EN.test(c) ? 'en' : null;
+      if (!lang) continue;
+      if (!cur || cur.lang !== lang) { cur = { off: pos + i, lang, cs: [], offs: [] }; units.push(cur); }
+      cur.cs.push(c); cur.offs.push(pos + i);
+    }
+    pos += line.length + 1;
+  }
+  return units;
+}
+
+// まとまりの文字 A と、聞き取った文字 H[lo, hi) を1文字ずつ並べ合わせ、いちばん似ているところを探す（聞き違い・抜け・余分を許す）
+// 返す：{ i: A の何文字目から, j: H のどこから, endi, endj, sc: 似ている度合い（0〜1。長い行は頭の cap 文字分で 1）}
+function local(A, H, lo, hi, cap) {
+  const n = A.length, m = hi - lo;
+  let prev = new Float32Array(m + 1), cur = new Float32Array(m + 1);
+  const st = new Int32Array((n + 1) * (m + 1)).fill(-1);
+  let best = 0, bi = 0, bj = 0;
+  for (let i = 1; i <= n; i++) {
+    cur[0] = 0;
+    for (let j = 1; j <= m; j++) {
+      const hc = H[lo + j - 1].c, eq = A[i - 1] === hc, pen = hc === '|' ? 5 : 1;
+      const d = prev[j - 1] + (eq ? 2 : -pen), u = prev[j] - 1, l = cur[j - 1] - pen;
+      let v = 0, s0 = -1;
+      if (d > v) { v = d; s0 = st[(i - 1) * (m + 1) + j - 1]; if (s0 < 0 && eq) s0 = (i - 1) * (m + 1) + j - 1; }
+      if (u > v) { v = u; s0 = st[(i - 1) * (m + 1) + j]; }
+      if (l > v) { v = l; s0 = st[i * (m + 1) + j - 1]; }
+      cur[j] = v; st[i * (m + 1) + j] = v > 0 ? s0 : -1;
+      if (v > best) { best = v; bi = i; bj = j; }
+    }
+    [prev, cur] = [cur, prev];
+  }
+  const s0 = st[bi * (m + 1) + bj];
+  return s0 < 0 ? null : { i: Math.floor(s0 / (m + 1)), j: lo + (s0 % (m + 1)), endi: bi - 1, endj: lo + bj - 1, sc: Math.min(1, best / (2 * Math.min(n, cap))) };
+}
+
+// まとまりが読まれていそうなところの候補（3文字の並びが同じところを種にして、そのまわりを並べ合わせる）
+function candidates(u, H) {
+  const L = Math.min(u.cs.length, 60);
+  if (L < 3) return [];
+  const A = u.cs.slice(0, L);
+  const first = new Map();
+  for (let k = 0; k + 2 < L; k++) { const g = A[k] + A[k + 1] + A[k + 2]; if (!first.has(g)) first.set(g, k); }
+  // 種の多いところ（3文字の並びがいくつも同じところ）から順に、多くても40か所だけ並べ合わせる
+  const votes = new Map();
+  for (const [g, k] of first) for (const j of H.tri.get(g) || []) { const b = (j - k) >> 3; votes.set(b, (votes.get(b) || 0) + 1); }
+  const out = [];
+  for (const [b] of [...votes].sort((x, y) => y[1] - x[1]).slice(0, 40)) {
+    const at = b * 8 + 4;
+    const r = local(A, H, Math.max(0, at - 14), Math.min(H.length, at + L + 14), u.lang === 'ja' ? 12 : 24);
+    if (r && r.sc >= 0.3 && !out.some((o) => o.j === r.j)) {
+      out.push({ j: r.j, sc: r.sc, t: Math.max(0, H[r.j].t - r.i * RATE[u.lang]), end: H[r.endj].e + Math.max(0, u.cs.length - 1 - r.endi) * RATE[u.lang] });
+    }
+  }
+  out.sort((a, b) => b.sc - a.sc);
+  const keep = [];
+  for (const c of out) { if (keep.length >= 12) break; if (keep.every((k) => Math.abs(k.t - c.t) > 1)) keep.push(c); }
+  return keep;
+}
+
+// テマ友のまとまりごとに時刻を決める
+// 1) まとまりごとに候補を出し、テマ友の順に時刻が戻らない組み合わせで、似ている度合いの合計がいちばん大きいものを選ぶ。
+//    同じ言語どうしは前のまとまりを読む時間をあける。違う言語どうしは聞き取りの時刻が粗いので2秒まで戻ってよい
+// 2) 見つからなかったまとまりは、前後の見つかったまとまりのあいだに置く（言語の順番は決めつけない）。
+//    すぐ前のまとまりが別の言語で、その終わりから次の見つかったまとまりまでが短ければ、その終わりのすぐあと。
+//    そうでなければ、前後のあいだを読む長さ（言語ごとの速さ×文字数）の割合で割り振る
+function alignUnits(text, heard) {
+  const units = unitsOf(text);
+  const H = { en: heard.en ? heardChars(heard.en, EN) : [], ja: heard.ja ? heardChars(heard.ja, JA) : [] };
+  for (const l in H) {
+    // 3文字の並び → 聞き取った文字の位置
+    const tri = new Map(), cs = H[l];
+    for (let j = 0; j + 2 < cs.length; j++) { const g = cs[j].c + cs[j + 1].c + cs[j + 2].c; const a = tri.get(g); if (a) a.push(j); else tri.set(g, [j]); }
+    cs.tri = tri;
+  }
+  units.forEach((u) => { u.cand = H[u.lang].length ? candidates(u, H[u.lang]) : []; u.dur = u.cs.length * RATE[u.lang]; });
+  const states = [];
+  for (let ui = 0; ui < units.length; ui++) {
+    const u = units[ui], add = [];
+    for (const c of u.cand) {
+      let best = null;
+      for (const s of states) if ((units[s.ui].lang === u.lang ? s.ready : s.c.t - 2) <= c.t && (!best || s.v > best.v)) best = s;
+      add.push({ ui, c, ready: c.t + u.dur * 0.35, v: (best ? best.v : 0) + c.sc * Math.min(1, u.cs.length / 12), prev: best });
+    }
+    states.push(...add);
+  }
+  let top = null;
+  for (const s of states) if (!top || s.v > top.v) top = s;
+  for (let s = top; s; s = s.prev) Object.assign(units[s.ui], { t: s.c.t, end: s.c.end, hit: true });
+  const span = (from, to) => { let d = 0; for (let k = from; k < to; k++) d += units[k].dur + 0.4; return d; };
+  for (let ui = 0; ui < units.length; ui++) {
+    const u = units[ui];
+    if (u.t != null) continue;
+    let a = ui - 1; while (a >= 0 && units[a].t == null) a--;
+    let b = ui + 1; while (b < units.length && !units[b].hit) b++;
+    const A = units[a], B = units[b];
+    if (!A && !B) continue;
+    if (A && A.end != null && a === ui - 1 && A.lang !== u.lang && (!B || B.t - A.end <= u.dur * 2 + 3)) { u.t = Math.min(A.end + 0.4, B ? B.t - 0.3 : Infinity); u.t = Math.max(u.t, A.t); continue; }
+    if (A && B) u.t = A.t + (B.t - A.t) * span(a, ui) / span(a, b);
+    else if (A) u.t = A.t + span(a, ui);
+    else u.t = Math.max(0, B.t - span(ui, b));
+  }
+  // 時刻が戻らないように
+  for (let ui = 1; ui < units.length; ui++) if (units[ui].t != null && units[ui - 1].t != null && units[ui].t < units[ui - 1].t) units[ui].t = units[ui - 1].t;
+  return units;
+}
+
+// 同じテマ友・同じ聞き取りなら照らし合わせは1回で済ませる（歌詞の表示で何度も呼ばれる）
+const memo = new WeakMap();
+function unitsFor(text, heard) {
+  let m = memo.get(heard);
+  if (!m) { m = new Map(); memo.set(heard, m); }
+  if (!m.has(text)) { if (m.size > 20) m.clear(); m.set(text, alignUnits(text, heard)); }
+  return m.get(text);
 }
 
 // heard：{ en: [{ text, s, e }], ja: […] }、offs：タイミングのテマ友の位置
-// 返す：{ secs: [秒 または null], found: 文字で見つかった数, points: 対応の数 }
+// 返す：{ secs: [秒 または null], found: 文字で見つかった数, points: 見つかったまとまりの数 }
+// 文字が多少違っても（聞き違い・抜け・余分）、似ているところを探して当てはめる
 export function matchTimes(text, heard, offs) {
-  let points = [];
-  for (const lang in heard) {
-    const re = classOf(lang);
-    points = points.concat(gramPoints(scriptChars(text, re), heardChars(heard[lang], re), lang === 'ja' ? 4 : 6));
-  }
-  points = monotone(points);
-  if (points.length < 2) return { secs: offs.map(() => null), found: 0, points: points.length };
-  const first = points[0], last = points[points.length - 1];
-  const rate = (last.t - first.t) / Math.max(1, last.off - first.off); // 1文字あたりの秒（両端の外側用）
+  const units = unitsFor(text, heard);
   let found = 0;
-  const secs = offs.map((o0) => {
-    const o = spokenFrom(text, o0);
-    let k = 0;
-    while (k < points.length && points[k].off < o) k++;
-    const p1 = points[k], p0 = points[k - 1];
-    // 行の頭から、見つかった文字までに読む文字が少ししかなければ、そこを行の始まりとみなす（1文字 0.07秒ほど前に）
-    const skip = p1 ? [...text.slice(o, p1.off)].map(norm).filter((c) => JA.test(c) || EN.test(c)).length : 99;
-    if (skip <= 3) { found++; return Math.max(0, p1.t - skip * 0.07); }
-    if (p0 && p1) return p0.t + (p1.t - p0.t) * (o - p0.off) / (p1.off - p0.off);
-    if (p1) return Math.max(0, p1.t - (p1.off - o) * rate);
-    return p0.t + (o - p0.off) * rate;
+  const secs = offs.map((o) => {
+    let k = -1;
+    for (let i = 0; i < units.length; i++) if (units[i].off <= o) k = i; else break;
+    // 位置がまとまりの外（話し手の名前・空白・記号）なら、次のまとまり
+    let u = units[k];
+    if (!u || u.offs[u.offs.length - 1] < o) u = units[k + 1];
+    if (!u || u.t == null) return null;
+    if (u.hit) found++;
+    const i = Math.max(0, u.offs.findIndex((x) => x >= o));
+    return u.t + i * RATE[u.lang];
   });
-  return { secs, found, points: points.length };
+  return { secs, found, points: units.filter((u) => u.hit).length };
 }
 
 // 音声を 16kHz・モノラルにする（Whisper の入力）
