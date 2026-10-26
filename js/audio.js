@@ -239,6 +239,22 @@ function aidOf(ti) {
   const t = S.d.print && S.d.print.targets[ti];
   return t && t.track && t.track.audio ? t.track.audio.id : '';
 }
+// 照らし合わせるテマ友：英日の判定（heard.lid）のときは、同じ音声のトラックのテマ友を並び順につないだものと、そこでのこのトラックの位置（2.48.1〜）。
+// 判定は英日の並びしか見ないので、トラックごとに1話まるごとの音声と照らし合わせると、ほかのトラックの似た並びに当てはまってしまうため。
+// 文字にしたとき（heard.en / ja）は、文字で場所が決まるのでトラックのテマ友だけ
+function matchText(ti, heard) {
+  const own = S.d.print.targets[ti].draft.script || '';
+  if (!heard || !heard.lid || !aidOf(ti)) return { text: own, base: 0 };
+  let text = '', base = 0;
+  S.d.print.targets.forEach((t, k) => {
+    const x = t.draft.script || '';
+    if (aidOf(k) !== aidOf(ti) || !x) return;
+    if (text) text += '\n';
+    if (k === ti) base = text.length;
+    text += x;
+  });
+  return { text, base };
+}
 // 閲覧モードの並び（show.js）から、同じ音声を使うトラックの、時刻のあるタイミングの最初の1枚
 function timedSteps(ti) {
   const out = [];
@@ -369,7 +385,7 @@ async function loadHeard(w, meta) {
 }
 
 let lyricCache = { key: '', times: [] };
-function lineTimes(t, starts) {
+function lineTimes(t, ti, starts) {
   const text = t.draft.script || '';
   const blocks = (t.blocks || []).filter((b) => b.sec != null);
   const heard = heardMem[t.track.audio.id];
@@ -378,7 +394,8 @@ function lineTimes(t, starts) {
   // タイミングの時刻（手で直したものを含む）を決まった点にし、そのあいだの行を割り振る。
   // 聞き取った文字があれば、行の時刻の「間隔」をそれで決める（なければ文字数で）
   const pts = blocks.map((b) => ({ off: resolveAnchor(text, b.anchor).offset, t: b.sec })).sort((a, b) => a.off - b.off);
-  const est = heard ? matchTimes(text, heard, [...starts, ...pts.map((p) => p.off)]).secs : null;
+  const mt = matchText(ti, heard);
+  const est = heard ? matchTimes(mt.text, heard, [...starts, ...pts.map((p) => p.off)].map((o) => o + mt.base)).secs : null;
   const hOf = (k) => (est ? est[k] : null); // starts[k] の聞き取りの時刻
   pts.forEach((p, i) => { p.h = est ? est[starts.length + i] : null; });
   const rate = pts.length > 1 ? (pts[pts.length - 1].t - pts[0].t) / Math.max(1, pts[pts.length - 1].off - pts[0].off) : 0.12;
@@ -412,7 +429,7 @@ function shownLines() {
   if (!s || !pane || aidOf(s.ti) !== A.aid) return null;
   const els = [...pane.querySelectorAll('.sline[data-ls]')].filter((el) => !el.classList.contains('blank'));
   const t = data.targets[s.ti];
-  return { pane, els, ti: s.ti, times: lineTimes(t, els.map((el) => +el.dataset.ls)) };
+  return { pane, els, ti: s.ti, times: lineTimes(t, s.ti, els.map((el) => +el.dataset.ls)) };
 }
 function paintLyric(now) {
   const L = shownLines();
@@ -561,7 +578,7 @@ async function autoSync(data, ti) {
   const meta = aidOf(ti) && data.targets[ti].track.audio;
   // 1話まるごとの音源なら、閲覧モードにある同じ音声のトラックをまとめて
   const group = data.targets.map((t, k) => ({ t, k })).filter(({ k }) => aidOf(k) === (meta && meta.id))
-    .map(({ t }) => ({ t, text: t.draft.script || '', sorted: sortBlocks(t.draft.script || '', t.blocks || []) }))
+    .map(({ t, k }) => ({ t, k, text: t.draft.script || '', sorted: sortBlocks(t.draft.script || '', t.blocks || []) }))
     .filter((g) => g.text && g.sorted.length);
   if (!meta || !group.length) { toast('テマ友・タイミング・音声がそろっているときに使えます', 'error'); return; }
   const all = group.reduce((a, g) => a + g.sorted.length, 0);
@@ -612,7 +629,8 @@ async function autoSync(data, ti) {
     const ops = [];
     let found = 0;
     for (const g of group) {
-      const m = matchTimes(g.text, heard, g.sorted.map(({ r: x }) => x.offset));
+      const mt = matchText(g.k, heard);
+      const m = matchTimes(mt.text, heard, g.sorted.map(({ r: x }) => x.offset + mt.base));
       found += m.found;
       g.sorted.forEach(({ b }, k) => {
         if (m.secs[k] == null || (only && b.sec != null)) return;

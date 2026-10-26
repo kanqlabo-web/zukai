@@ -271,6 +271,16 @@ function lidUnits(text, lid) {
     const l = lab(g.d), b = blocks[blocks.length - 1];
     if (b && b.lang === l && g.s - b.e < 1.5) { b.e = g.e; b.segs.push(g); b.sp += g.e - g.s; } else blocks.push({ lang: l, s: g.s, e: g.e, segs: [g], sp: g.e - g.s });
   }
+  // 英語とも日本語とも決まらないところが8秒より長く続くところは、歌や音楽（m）とみて1つにまとめる（2.48.1〜）。
+  // 歌の行は読むより長く、言語もはっきりしないので、ここに当てはめずに飛ばし（安く）、あとでこの中に並べる。
+  // これがないと、歌の行が近くの話し声（最初に読まれる題名など）に当てはまって、そこから後ろがずれる
+  for (let j = blocks.length - 1, z = null; j >= -1; j--) {
+    const b = blocks[j];
+    if (j >= 0 && b.lang === '?') continue;
+    const a = j >= 0 ? b.e : 0;
+    if (z != null && blocks[z].s - a > 8) blocks.splice(j + 1, z - j - 1, { lang: 'm', s: a, e: blocks[z].s, segs: [], sp: 0 });
+    z = j;
+  }
   const totSp = blocks.filter((b) => b.lang !== '?').reduce((a, b) => a + b.sp, 0), totDur = runs.reduce((a, r) => a + r.dur, 0);
   const k = totSp / Math.max(1, totDur); // 読む速さ（文字数からの見積もりに対する実際の長さ）
   const p = runs.length, q = blocks.length, INF = 1e9, SPAN = 4;
@@ -280,15 +290,16 @@ function lidUnits(text, lid) {
     const v = D[i][j];
     if (v >= INF) continue;
     // 音声のところを飛ばす（曲・効果音・テマ友にないところ）
-    if (j < q) { const c = v + (blocks[j].lang === '?' ? 0.2 : 1) + 0.1 * blocks[j].sp; if (c < D[i][j + 1]) { D[i][j + 1] = c; BK[i][j + 1] = [i, j, 0]; } }
-    // テマ友のまとまりを飛ばす（読まれていない）
-    if (i < p) { const c = v + 3 + runs[i].dur * 0.3; if (c < D[i + 1][j]) { D[i + 1][j] = c; BK[i + 1][j] = [i, j, 0]; } }
+    if (j < q) { const c = v + (blocks[j].lang === 'm' ? 0.1 : blocks[j].lang === '?' ? 0.2 : 1) + 0.1 * blocks[j].sp; if (c < D[i][j + 1]) { D[i][j + 1] = c; BK[i][j + 1] = [i, j, 0]; } }
+    // テマ友のまとまりを飛ばす（読まれていない。歌や音楽のところの前後なら、そこで歌われているとみて安く）
+    const nearM = (j < q && blocks[j].lang === 'm') || (j > 0 && blocks[j - 1].lang === 'm');
+    if (i < p) { const c = v + (nearM ? 0.5 + runs[i].dur * 0.05 : 3 + runs[i].dur * 0.3); if (c < D[i + 1][j]) { D[i + 1][j] = c; BK[i + 1][j] = [i, j, 0]; } }
     // まとまり i を、音声の j から続くいくつかのところに対応させる（言語が違うところはまたがない）
     if (i < p) {
       let sp = 0, conf = 0;
       for (let j2 = j; j2 < Math.min(q, j + SPAN); j2++) {
         const b = blocks[j2];
-        if (b.lang !== '?' && b.lang !== runs[i].lang) break;
+        if (b.lang === 'm' || (b.lang !== '?' && b.lang !== runs[i].lang)) break;
         sp += b.sp; if (b.lang !== '?') conf++;
         if (!conf) continue;
         const c = v + 2 * Math.abs(Math.log((sp + 0.3) / (runs[i].dur * k + 0.3))) + (j2 - j) * 0.3;
@@ -311,11 +322,19 @@ function lidUnits(text, lid) {
     }
     i = pi; j = pj;
   }
-  // 対応しなかったまとまりは前後から
+  // 対応しなかったまとまりは前後から。あいだに歌や音楽のところがあれば、その中に読む長さの割合で並べる
   for (let ui = 0; ui < units.length; ui++) {
     const u = units[ui];
     if (u.t != null) continue;
     const A = units.slice(0, ui).reverse().find((x) => x.t != null), B = units.slice(ui + 1).find((x) => x.t != null);
+    const m = blocks.find((b) => b.lang === 'm' && (!A || b.e > A.t) && (!B || b.s < B.t));
+    if (m) {
+      const gap = units.slice(ui, B ? units.indexOf(B) : units.length);
+      const tot = gap.reduce((a, x) => a + x.dur, 0);
+      let cum = 0;
+      for (const x of gap) { x.t = m.s + (m.e - m.s) * cum / tot; cum += x.dur; }
+      continue;
+    }
     u.t = A && B ? (A.t + B.t) / 2 : A ? A.t + A.dur : B ? Math.max(0, B.t - u.dur) : null;
   }
   for (let ui = 1; ui < units.length; ui++) if (units[ui].t != null && units[ui - 1].t != null && units[ui].t < units[ui - 1].t) units[ui].t = units[ui - 1].t;
