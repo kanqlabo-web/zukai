@@ -346,6 +346,8 @@ export function audioOnNav(s) {
 // 流している間、テマ友のいまの行を目立たせ、画面の上から3分の1あたりに来るように流す。
 // 行の時刻は、聞き取った文字があればそれと照らし合わせて、なければタイミングの時刻のあいだを文字数で割り振って決める。
 const heardMem = {}; // 音声の id → 聞き取った文字（なければ null）
+// 聞き取りの形の版。2：単語ごとの時刻（2.42.0〜）。古い版（文ごとの時刻）は自動で合わせるときに聞き取り直す（テマ友の流れには使う）
+const HEARD_V = 2;
 async function loadHeard(w, meta) {
   if (heardMem[meta.id] !== undefined) return;
   heardMem[meta.id] = null;
@@ -363,20 +365,28 @@ function lineTimes(t, starts) {
   const heard = heardMem[t.track.audio.id];
   const key = [t.draft.id, text.length, starts.join(','), blocks.map((b) => b.id + b.sec).join(','), heard ? 'h' : ''].join('|');
   if (lyricCache.key === key) return lyricCache.times;
-  let times;
-  if (heard) times = matchTimes(text, heard, starts).secs;
-  else {
-    const pts = blocks.map((b) => ({ off: resolveAnchor(text, b.anchor).offset, t: b.sec })).sort((a, b) => a.off - b.off);
-    const rate = pts.length > 1 ? (pts[pts.length - 1].t - pts[0].t) / Math.max(1, pts[pts.length - 1].off - pts[0].off) : 0.12;
-    times = starts.map((o) => {
-      let k = 0;
-      while (k < pts.length && pts[k].off <= o) k++;
-      const p0 = pts[k - 1], p1 = pts[k];
-      if (!p0) return null; // 最初のタイミングより前は分からない
-      if (!p1) return p0.t + (o - p0.off) * rate;
-      return p0.t + (p1.t - p0.t) * (o - p0.off) / (p1.off - p0.off);
-    });
-  }
+  // タイミングの時刻（手で直したものを含む）を決まった点にし、そのあいだの行を割り振る。
+  // 聞き取った文字があれば、行の時刻の「間隔」をそれで決める（なければ文字数で）
+  const pts = blocks.map((b) => ({ off: resolveAnchor(text, b.anchor).offset, t: b.sec })).sort((a, b) => a.off - b.off);
+  const est = heard ? matchTimes(text, heard, [...starts, ...pts.map((p) => p.off)]).secs : null;
+  const hOf = (k) => (est ? est[k] : null); // starts[k] の聞き取りの時刻
+  pts.forEach((p, i) => { p.h = est ? est[starts.length + i] : null; });
+  const rate = pts.length > 1 ? (pts[pts.length - 1].t - pts[0].t) / Math.max(1, pts[pts.length - 1].off - pts[0].off) : 0.12;
+  const times = starts.map((o, k) => {
+    const h0 = hOf(k);
+    if (!pts.length) return h0;
+    let j = 0;
+    while (j < pts.length && pts[j].off <= o) j++;
+    const p0 = pts[j - 1], p1 = pts[j];
+    if (h0 != null) {
+      if (p0 && p1 && p0.h != null && p1.h != null && p1.h > p0.h) return p0.t + (p1.t - p0.t) * Math.min(1, Math.max(0, (h0 - p0.h) / (p1.h - p0.h)));
+      if (p0 && !p1 && p0.h != null) return p0.t + Math.max(0, h0 - p0.h);
+      if (!p0 && p1 && p1.h != null) return Math.max(0, p1.t - Math.max(0, p1.h - h0));
+    }
+    if (!p0) return null; // 最初のタイミングより前は分からない
+    if (!p1) return p0.t + (o - p0.off) * rate;
+    return p0.t + (p1.t - p0.t) * (o - p0.off) / (p1.off - p0.off);
+  });
   lyricCache = { key, times };
   return times;
 }
@@ -550,14 +560,14 @@ async function autoSync(data, ti) {
   const hkey = meta.id + '_heard';
   let heard = null;
   const c = await cacheGet(hkey);
-  if (c && c.langs === langs.join(',')) heard = c.out;
+  if (c && c.langs === langs.join(',') && c.v === HEARD_V) heard = c.out;
   if (!heard && meta.parts) {
     const d = await db.getQuiet(P.doc(data.w, 'audio', hkey));
-    if (d && d.langs === langs.join(',')) { heard = d.out; cachePut(hkey, d); }
+    if (d && d.langs === langs.join(',') && d.v === HEARD_V) { heard = d.out; cachePut(hkey, d); }
   }
   const pkey = meta.id + '_partial';
   const p0 = heard ? null : await cacheGet(pkey);
-  const partial = p0 && p0.langs === langs.join(',') ? p0 : null;
+  const partial = p0 && p0.langs === langs.join(',') && p0.v === HEARD_V ? p0 : null;
   const r = await ask({
     title: '時刻を自動で合わせる（ためし）',
     message: '音声をこの端末で聞き取って文字にし、テマ友と照らし合わせて、タイミングに時刻を付けます。' + (group.length > 1 ? `（${group.length}トラック）` : ''),
@@ -576,8 +586,8 @@ async function autoSync(data, ti) {
     if (!heard) {
       const audio = await toMono16k(await loadBlob(data.w, meta), meta.name);
       if (!A.auto) return;
-      heard = await listen(audio, langs, partial, (upto, out) => cachePut(pkey, { langs: langs.join(','), upto, out }));
-      const rec = { langs: langs.join(','), out: heard };
+      heard = await listen(audio, langs, partial, (upto, out) => cachePut(pkey, { v: HEARD_V, langs: langs.join(','), upto, out }));
+      const rec = { v: HEARD_V, langs: langs.join(','), out: heard };
       cachePut(hkey, rec);
       cacheDel(pkey);
       if (meta.parts && JSON.stringify(rec).length < 900000) db.setQuiet(P.doc(data.w, 'audio', hkey), rec).catch(() => {});

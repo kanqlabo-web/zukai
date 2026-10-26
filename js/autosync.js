@@ -72,6 +72,14 @@ function monotone(points) {
   return out.reverse();
 }
 
+// 行の頭の話し手の名前（「NARRATOR:」「語り:」など。CD では読まれない）を飛ばした位置
+const LABEL = /^[^\S\n]*[^\n:：。、.!?！？]{1,16}[:：][^\S\n]*/;
+function spokenFrom(text, o) {
+  if (o > 0 && text[o - 1] !== '\n') return o;
+  const m = LABEL.exec(text.slice(o, o + 40));
+  return m ? o + m[0].length : o;
+}
+
 // heard：{ en: [{ text, s, e }], ja: […] }、offs：タイミングのテマ友の位置
 // 返す：{ secs: [秒 または null], found: 文字で見つかった数, points: 対応の数 }
 export function matchTimes(text, heard, offs) {
@@ -85,11 +93,14 @@ export function matchTimes(text, heard, offs) {
   const first = points[0], last = points[points.length - 1];
   const rate = (last.t - first.t) / Math.max(1, last.off - first.off); // 1文字あたりの秒（両端の外側用）
   let found = 0;
-  const secs = offs.map((o) => {
+  const secs = offs.map((o0) => {
+    const o = spokenFrom(text, o0);
     let k = 0;
     while (k < points.length && points[k].off < o) k++;
     const p1 = points[k], p0 = points[k - 1];
-    if (p1 && p1.off - o <= 4) { found++; return p1.t; }
+    // 行の頭から、見つかった文字までに読む文字が少ししかなければ、そこを行の始まりとみなす（1文字 0.07秒ほど前に）
+    const skip = p1 ? [...text.slice(o, p1.off)].map(norm).filter((c) => JA.test(c) || EN.test(c)).length : 99;
+    if (skip <= 3) { found++; return Math.max(0, p1.t - skip * 0.07); }
     if (p0 && p1) return p0.t + (p1.t - p0.t) * (o - p0.off) / (p1.off - p0.off);
     if (p1) return Math.max(0, p1.t - (p1.off - o) * rate);
     return p0.t + (o - p0.off) * rate;
