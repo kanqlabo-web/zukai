@@ -58,6 +58,8 @@ export const db = {
   update: (path, patch) => track([path], () => raw.update(path, patch)),
   remove: (path) => track([path], () => raw.remove(path)),
   list: (col, where) => guard(impl.list(col, where)),
+  // 読めなくてもエラーを出さない（ホームのカードの絵など、なくても困らないもの）
+  listQuiet: (col, where) => impl.list(col, where),
   watchDoc: (path, cb, onErr) => impl.watchDoc(path, cb, onErr || errorHandler),
   watchList: (col, where, cb, onErr) => impl.watchList(col, where, cb, onErr || errorHandler),
   batch: (ops) => track(ops.map((o) => o.path), () => raw.batch(ops)),

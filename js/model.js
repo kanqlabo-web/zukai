@@ -30,9 +30,15 @@ export function draftTitle(work, ep, track, draft) {
   return `${prefix}${ep ? ep.title : ''}図解_${track ? shortTrack(track.title) : ''}_${draftName(draft)}`;
 }
 
+// 新しいライブラリー：「1話」と「トラック1」（第1稿）まで一度に作る
 export async function createWork(title, user) {
-  const id = newId();
-  await db.set(P.work(id), { title, prefix: '【表現活動】', participants: [user.email], owners: [user.email], viewers: [], linkRole: 'off', linkKey: newId(20), cast: [{ id: newId(8), tag: 'CD', name: '', roles: [] }], createdAt: now(), updatedAt: now(), createdBy: user.name });
+  const id = newId(), ep = newId(), tr = newId(), d = newId();
+  await db.batchUntracked([
+    { op: 'set', path: P.work(id), data: { title, prefix: '【表現活動】', participants: [user.email], owners: [user.email], viewers: [], linkRole: 'off', linkKey: newId(20), cast: [{ id: newId(8), tag: 'CD', name: '', roles: [] }], createdAt: now(), updatedAt: now(), createdBy: user.name } },
+    { op: 'set', path: P.doc(id, 'episodes', ep), data: { title: '1話', order: 1, createdAt: now() } },
+    { op: 'set', path: P.doc(id, 'tracks', tr), data: { episodeId: ep, title: 'トラック1', order: 1, createdAt: now() } },
+    { op: 'set', path: P.doc(id, 'drafts', d), data: emptyDraft(tr, 1, user) },
+  ]);
   return id;
 }
 

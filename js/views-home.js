@@ -67,7 +67,8 @@ const thumbs = {};
 async function findThumb(w) {
   thumbs[w.id] = 'loading';
   try {
-    const list = await db.list(P.col(w.id, 'diagrams'));
+    // 作った直後のライブラリーは、まだサーバーに届いておらず読めないことがある（エラーは出さない）
+    const list = await db.listQuiet(P.col(w.id, 'diagrams'));
     const score = (g) => [stageCount(g.shapes), g.updatedAt || g.createdAt || 0];
     const better = (a, b) => { const x = score(a), y = score(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] > y[i]; return false; };
     const best = list.reduce((m, g) => (!m || better(g, m) ? g : m), null);
