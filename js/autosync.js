@@ -282,6 +282,11 @@ function lidUnits(text, lid) {
     if (z != null && blocks[z].s - a > 8) blocks.splice(j + 1, z - j - 1, { lang: 'm', s: a, e: blocks[z].s, segs: [], sp: 0 });
     z = j;
   }
+  // 歌の途中で、歌詞の一部が英語か日本語と判定された短いところ（3秒まで）は、前後の歌とつないで1つにする（2.48.6〜。歌の行をまとめて等分するため）
+  for (let j = blocks.length - 2; j > 0; j--) {
+    const a = blocks[j - 1], b = blocks[j], c = blocks[j + 1];
+    if (a.lang === 'm' && c.lang === 'm' && b.lang !== 'm' && b.e - b.s <= 3) { a.e = c.e; blocks.splice(j, 2); j--; }
+  }
   const totSp = blocks.filter((b) => b.lang !== '?').reduce((a, b) => a + b.sp, 0), totDur = runs.reduce((a, r) => a + r.dur, 0);
   const k = totSp / Math.max(1, totDur); // 読む速さ（文字数からの見積もりに対する実際の長さ）
   const p = runs.length, q = blocks.length, INF = 1e9, SPAN = 4;
@@ -324,7 +329,7 @@ function lidUnits(text, lid) {
     }
     i = pi; j = pj;
   }
-  // 対応しなかったまとまりは前後から。あいだに歌や音楽のところがあれば、その中に読む長さの割合で並べる
+  // 対応しなかったまとまりは前後から。あいだに歌や音楽のところがあれば、その中に等分して並べる（2.48.6〜。それまでは読む長さの割合。歌は読む長さどおりに進まないため）
   for (let ui = 0; ui < units.length; ui++) {
     const u = units[ui];
     if (u.t != null) continue;
@@ -332,9 +337,7 @@ function lidUnits(text, lid) {
     const m = blocks.find((b) => b.lang === 'm' && (!A || b.e > A.t) && (!B || b.s < B.t));
     if (m) {
       const gap = units.slice(ui, B ? units.indexOf(B) : units.length);
-      const tot = gap.reduce((a, x) => a + x.dur, 0);
-      let cum = 0;
-      for (const x of gap) { x.t = m.s + (m.e - m.s) * cum / tot; cum += x.dur; }
+      gap.forEach((x, n) => { x.t = m.s + (m.e - m.s) * n / gap.length; });
       continue;
     }
     u.t = A && B ? (A.t + B.t) / 2 : A ? A.t + A.dur : B ? Math.max(0, B.t - u.dur) : null;
