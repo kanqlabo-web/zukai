@@ -10,7 +10,7 @@ import { DotText, CueTitle, ScriptLines } from './sheet.js';
 import { openEditorAfter } from './editor.js';
 import { canEdit } from './access.js';
 import { icon } from './icons.js';
-import { ShowFigure, ShowMoveButton, MoveSheet, moveEditing } from './moves.js';
+import { ShowFigure, ShowMoveButton, MoveSheet, moveEditing, ShowMeSelect, MeNote } from './moves.js';
 import { ShowAudioBar, audioOnNav, audioKey } from './audio.js';
 
 const byOrder = (a, b) => (a.order || 0) - (b.order || 0) || (a.createdAt || 0) - (b.createdAt || 0);
@@ -85,9 +85,9 @@ function jumpToText(ti, off) {
   }
 }
 
-function Figure(data, t, s, idx) {
+function Figure(data, t, s, idx, prevShapes) {
   if (!s.fig) return h('div', { class: 'show-empty' }, 'このタイミングには図がありません');
-  return ShowFigure(data, t, s, idx);
+  return ShowFigure(data, t, s, idx, prevShapes);
 }
 
 export function ShowView() {
@@ -119,6 +119,14 @@ export function ShowView() {
   const rows = buildRows(text, t.blocks || [], t.draft.spkFix);
   const hls = highlightRanges(text, t.blocks || []);
   const side = V.side || 'auto';
+  // ひとつ前の図（自分目線で、前の位置を出すのに使う）
+  const prevShapes = (() => {
+    for (let i = V.i - 1; i >= 0; i--) {
+      const p = list[i];
+      if (p.fig && !(s.fig && p.fig.refId === s.fig.refId)) { const g = data.targets[p.ti].diagrams[p.fig.refId]; return g ? g.shapes || {} : null; }
+    }
+    return null;
+  })();
 
   // いまのタイミングのテマ友の段（次のタイミングの手前まで）
   const nextOff = (() => {
@@ -138,13 +146,14 @@ export function ShowView() {
         class: 'show-side', title: '説明とテーマ活動の友の位置', value: side,
         onchange: (e) => { V.side = e.target.value === 'auto' ? null : e.target.value; try { localStorage.setItem('zukai.showSide', V.side || ''); } catch (er) { /* noop */ } V.scrolled = -1; rerender(); },
       }, h('option', { value: 'auto' }, '説明の位置：自動'), h('option', { value: 'right' }, '説明の位置：右'), h('option', { value: 'bottom' }, '説明の位置：下')),
+      ShowMeSelect(data),
       ShowMoveButton(data, t, s),
       s.fig && canEdit(data.work) ? h('button', { class: 'btn', title: 'この図を編集する', onclick: () => openEditorAfter(data.w, t.draft.id, s.fig.refId) }, icon('pencil', 16), '図を編集') : null,
       h('button', { class: 'btn', title: '全画面（F）', onclick: toggleFull }, '全画面')),
     ShowAudioBar(data, t, s, AUDIO),
     h('div', { class: 'show-body' },
       h('div', { class: 'show-fig' + (moveEditing() ? ' is-moving' : ''), onclick: (e) => { if (moveEditing()) return; const r = e.currentTarget.getBoundingClientRect(); if (e.clientX - r.left < r.width * 0.35) prev(); else next(); } },
-        Figure(data, t, s, idx),
+        Figure(data, t, s, idx, prevShapes),
         s.carried ? h('div', { class: 'show-carried' }, '前の図のまま') : null,
         s.part ? h('div', { class: 'show-carried' }, `このタイミングの図 ${s.part[0]} / ${s.part[1]}`) : null,
         V.i > 0 && !moveEditing() ? h('div', { class: 'show-arrow left' }, '‹') : null,
@@ -152,6 +161,7 @@ export function ShowView() {
       MoveSheet(data, t, s, idx),
       h('div', { class: 'show-side-pane' },
         h('div', { class: 'show-notes' },
+          MeNote(data, t, s, idx, prevShapes),
           s.b && s.b.cue ? CueTitle(s.b.cue, false, s.b.cueEnd) : h('div', { class: 'cue muted' }, s.b ? '（タイミングの語句なし）' : ''),
           (s.texts || []).map((it) => h('div', { key: it.id, class: 'p-text' }, DotText(it.text, null, it.marks))),
           (s.imgs || []).length ? h('div', { class: 'show-photos' }, s.imgs.map((it) => {

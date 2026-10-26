@@ -380,3 +380,25 @@
   .au-time { min-width: 0; font-size: 12.5px; }
   .au-hint { display: none; }
 }
+/* ---------- 自分目線・写真から人を置く・ぶつかりチェック（ベータ版） ---------- */
+.mv-me-path { stroke: #f59e0b; stroke-width: 4; stroke-dasharray: 9 6; fill: none; }
+.mv-me-from { fill: none; stroke: #f59e0b; stroke-width: 2.5; stroke-dasharray: 5 4; }
+.show-me { max-width: 220px; }
+.me-note { background: #fff7e0; border: 1px solid #f5d48a; border-radius: 8px; padding: 6px 10px; margin-bottom: 8px; font-size: 14px; }
+.pick-bar { position: sticky; top: 0; left: 0; margin: 0 auto 8px; z-index: 5; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  background: #fff; border: 2px solid #ea580c; border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,.15); padding: 6px 10px; width: min(560px, calc(100% - 16px)); font-size: 14px; }
+.pick-count { color: var(--muted); font-size: 12px; }
+.clash-sec { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin-bottom: 12px; }
+.clash-sec.has { border-color: #f1a5a8; background: #fff5f5; }
+.clash-sec h3 { margin: 0 0 4px; font-size: 14px; }
+.clash-sec.has h3 { color: var(--danger); }
+.clash-sec ul { list-style: none; margin: 0; padding: 0; }
+.clash-sec .linklike { padding: 4px 2px; font-size: 13px; display: flex; gap: 6px; align-items: baseline; }
+.clash-sec p { margin: 4px 0 0; }
+.clash-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--danger); display: inline-block; }
+.clash-dot.far { background: #d97706; }
+.clash-mark { fill: rgba(192, 38, 45, .08); stroke: #c0262d; }
+.clash-mark.far { fill: none; stroke: #d97706; }
+.clash-path { stroke: #c0262d; fill: none; opacity: .8; }
+.clash-path.far { stroke: #d97706; }
+.clash-dot.scene { background: #d97706; }

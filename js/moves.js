@@ -60,9 +60,12 @@ function myShapeIds(shapes, ix, me) {
 
 // 図（閲覧モードの StageSVG と同じ描き方。人の上に、自分の印と動かした跡を重ねる。囲みの塗りに隠れないように）
 // 最後の g は名前（閲覧モードのすべる動きが、名前を遅れて出すのに使う）
-function stageWith(shapes, ix, roleVis, under, attrs = {}) {
+// focus：自分目線のとき、自分（メンバーの id）以外の人を薄くする
+function stageWith(shapes, ix, roleVis, under, attrs = {}, focus = '') {
   const list = sortShapes(shapes);
+  const css = focus ? `g[data-pk]:not([data-pk="c${focus}"]){opacity:.3}` : '';
   return h('svg', { class: 'stage show-stage', viewBox: `0 0 ${W} ${H}`, xmlns: 'http://www.w3.org/2000/svg', preserveAspectRatio: 'xMidYMid meet', ...attrs },
+    h('style', null, css),
     stageFrame(),
     h('g', null, list.map((s) => shapeNode(s, { idx: ix }))),
     h('g', { class: 'mv-marks', 'pointer-events': 'none' }, under),
@@ -88,7 +91,7 @@ function nearestPerson(shapes, x, y, range) {
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 // 閲覧モードの図。動かしている間は、人を指（マウス）でつまんで動かせる
-export function ShowFigure(data, t, s, ix) {
+export function ShowFigure(data, t, s, ix, prevShapes = null) {
   const g = s.fig && t.diagrams[s.fig.refId];
   syncStep(t, s);
   if (!g) return null;
@@ -101,6 +104,16 @@ export function ShowFigure(data, t, s, ix) {
     const p = shapes[id];
     under.push(h('circle', { key: 'me-' + id, cx: p.x, cy: p.y, r: (p.r || 20) + 9, class: 'mv-me' }));
   }
+  // 自分目線（ベータ版）：前の図での自分の位置から、今の位置までを点線で
+  const focus = betaOn() && me && !editing && myShapeIds(shapes, ix, me).length ? me : '';
+  if (focus && prevShapes) {
+    const [from] = myShapeIds(prevShapes, ix, me).map((id) => prevShapes[id]);
+    const [to] = myShapeIds(shapes, ix, me).map((id) => shapes[id]);
+    if (from && to && Math.hypot(from.x - to.x, from.y - to.y) > 6) {
+      under.push(h('line', { key: 'me-l', x1: from.x, y1: from.y, x2: to.x, y2: to.y, class: 'mv-me-path' }));
+      under.push(h('circle', { key: 'me-o', cx: from.x, cy: from.y, r: from.r || 20, class: 'mv-me-from' }));
+    }
+  }
   if (editing) {
     for (const id in M.temp) {
       const o = g.shapes[id], p = shapes[id];
@@ -110,7 +123,7 @@ export function ShowFigure(data, t, s, ix) {
       under.push(h('circle', { key: 'n-' + id, cx: p.x, cy: p.y, r: (p.r || 20) + 6, class: 'mv-moved' }));
     }
   }
-  if (!editing) return stageWith(shapes, ix, g.roleVis || {}, under);
+  if (!editing) return stageWith(shapes, ix, g.roleVis || {}, under, {}, focus);
   const down = (e) => {
     const [x, y] = svgPoint(e);
     const hit = nearestPerson(shapes, x, y, 30);
@@ -138,6 +151,32 @@ export function ShowFigure(data, t, s, ix) {
     class: 'stage show-stage mv-editing', onpointerdown: down, onpointermove: move, onpointerup: up, onpointercancel: up,
     onclick: (e) => e.stopPropagation(),
   });
+}
+
+// 自分目線（ベータ版）：閲覧モードの上で「自分」を選ぶ
+export function ShowMeSelect(data) {
+  if (!betaOn()) return null;
+  const me = meOf(data.w);
+  return h('select', { class: 'show-me', title: '自分を選ぶと、自分以外を薄くして、前の図からの自分の動きを点線で出します', value: me, onchange: (e) => { setMe(data.w, e.target.value); rerender(); } },
+    h('option', { value: '' }, '自分目線：なし'),
+    workIndex(data.work).list.filter((c) => c.id && !c.tag).map((c) => h('option', { key: c.id, value: c.id }, `自分目線：${c.no} ${c.name}`)));
+}
+// 自分目線のときの、説明欄のいちばん上の一言
+export function MeNote(data, t, s, ix, prevShapes) {
+  const me = meOf(data.w);
+  if (!betaOn() || !me) return null;
+  const g = s.fig && t.diagrams[s.fig.refId];
+  const c = ix.byId[me];
+  if (!g || !c) return null;
+  const now = myShapeIds(g.shapes, ix, me).map((id) => g.shapes[id])[0];
+  const was = prevShapes ? myShapeIds(prevShapes, ix, me).map((id) => prevShapes[id])[0] : null;
+  const who = `${c.no} ${c.name}`;
+  let msg;
+  if (!now) msg = was ? 'この図にはいません（前の図にはいました）' : 'この図にはいません';
+  else if (!prevShapes) msg = '最初の図です（オレンジの円）';
+  else if (!was) msg = 'この図から出てきます（オレンジの円）';
+  else msg = Math.hypot(now.x - was.x, now.y - was.y) > 6 ? '前の図の位置（点線の円）から動きます' : '前の図と同じ位置です';
+  return h('div', { class: 'me-note' }, h('strong', null, who), '：', msg);
 }
 
 // 閲覧モードの上のボタン

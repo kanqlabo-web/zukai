@@ -18,6 +18,8 @@ import { previousShapes, minCostAssign, diagramSequence } from './assign.js';
 import { neighborDrafts, loadNeighbor, edgeDiagram } from './neighbors.js';
 import { setPresence, others, colorOf, sharePointer } from './presence.js';
 import { EditorMovesSection, EditorMovesLayer } from './moves.js';
+import { clashesOf, ClashSection, ClashLayer } from './clash.js';
+import { betaOn } from './beta.js';
 
 let E = null;
 let unsub = null;
@@ -1127,6 +1129,7 @@ function down(e) {
   }
   if (E.tool === 'pan') return;
   if (e.button != null && e.button > 0) return;
+  if (E.pick) { e.preventDefault(); pickAt(svgPt(e)); return; }
   if (E.inline) { e.preventDefault(); endInline(true); return; }
   e.preventDefault();
   const svg = svgEl();
@@ -2206,6 +2209,8 @@ function TraceSection() {
       h('button', { class: 'btn tiny danger', onclick: removeTrace }, '下絵を外す')),
     t.orig ? h('div', { class: 'panel-actions' },
       h('button', { class: 'btn tiny', onclick: adjustTrace, title: '自動で合わせた四隅がずれていたら、丸を動かして直します' }, '四隅を合わせ直す')) : null,
+    betaOn() ? h('div', { class: 'panel-actions' },
+      h('button', { class: 'btn tiny', disabled: !E.traceSrc || !!E.pick, onclick: startPick, title: '練習の写真（舞台の床の四隅を合わせたもの）の上で、番号の順に一人ずつ足もとをタップして置きます' }, '写真から人を置く')) : null,
     inkIds().length ? h('label', { class: 'prop' }, h('span', null, '拾う線'),
       h('input', {
         type: 'range', min: 4, max: 70, step: 2, value: inkLevelNow(), class: 'grow', 'aria-label': '取り込んだ線の量（左ほど薄い線も拾う）', title: '左ほど薄い線も拾います',
@@ -2349,6 +2354,57 @@ function GhostLayer(shapes, ix, upx) {
     h('g', { class: 'ghost-shapes', opacity: 0.22 }, list.map((s) => shapeNode({ ...s, id: 'ghost-' + s.id }, { idx: ix }))),
     h('g', null, lines));
 }
+// ---------- 写真から人を置く（ベータ版） ----------
+// 下絵にした練習の写真（舞台の床の四隅を合わせたもの）の上で、番号の順に一人ずつ足もとをタップして置いていく。
+// この図にいる人を番号順に。図にまだ人がいなければ、メンバー一覧の順に新しく置く。動いた人は「前の図」の点線で分かる
+function startPick() {
+  const ix = idx();
+  const num = (s) => { const n = parseInt(personNo(s, ix), 10); return Number.isFinite(n) ? n : 9999; };
+  const ps = Object.values(E.shapes).filter((s) => s && s.t === 'person').sort((a, b) => num(a) - num(b) || a.x - b.x);
+  const queue = ps.length ? ps.map((s) => ({ sid: s.id })) : onStage(ix).map((c) => ({ cid: c.id }));
+  if (!queue.length) { toast('置く人がいません。メンバー一覧にメンバーを入れてください', 'error'); return; }
+  E.pick = { queue, i: 0 };
+  E.tool = 'select';
+  E.traceHidden = false;
+  pickSel();
+  draw();
+}
+function pickSel() {
+  const q = E.pick && E.pick.queue[E.pick.i];
+  E.sel = new Set(q && q.sid && E.shapes[q.sid] ? [q.sid] : []);
+}
+function pickStep(d) {
+  E.pick.i = Math.max(0, E.pick.i + d);
+  if (E.pick.i >= E.pick.queue.length) { E.pick = null; E.sel = new Set(); toast('全員を置きました'); } else pickSel();
+  draw();
+}
+function endPick() { E.pick = null; E.sel = new Set(); draw(); }
+function pickAt(p) {
+  const q = E.pick.queue[E.pick.i];
+  const x = Math.round(Math.max(0, Math.min(W, p[0]))), y = Math.round(Math.max(0, Math.min(H, p[1])));
+  const s = q.sid && E.shapes[q.sid];
+  if (s) commit({ [s.id]: { ...s, x, y } });
+  else if (q.cid) {
+    const ex = findPersonOf(E.shapes, q.cid, idx());
+    if (ex) commit({ [ex.id]: { ...ex, x, y } });
+    else { const id = newId(8); commit({ [id]: withCid({ id, t: 'person', x, y, fill: 'white', r: 20, z: zFor('person') }, q.cid) }); q.sid = id; }
+  }
+  pickStep(1);
+}
+function PickBar(ix) {
+  const q = E.pick.queue[E.pick.i];
+  const s = q.sid && E.shapes[q.sid];
+  const c = s ? personCast(s, ix) : ix.byId[q.cid];
+  const label = [s ? personNo(s, ix) : c && c.no, c && c.name].filter(Boolean).join(' ') || '番号なしの人';
+  return h('div', { class: 'pick-bar', role: 'status' },
+    h('span', { class: 'pick-count' }, `${E.pick.i + 1}／${E.pick.queue.length}`),
+    h('strong', null, label), h('span', null, ' の足もとをタップ'),
+    h('span', { class: 'grow' }),
+    h('button', { class: 'btn tiny', disabled: E.pick.i === 0, onclick: () => pickStep(-1) }, '1人戻る'),
+    h('button', { class: 'btn tiny', onclick: () => pickStep(1), title: 'この人は動かさずに次へ' }, '飛ばす'),
+    h('button', { class: 'btn tiny primary', onclick: endPick }, '終わる'));
+}
+
 // 練習で送られてきた動きの変更を、この図に反映する（ふつうに動かしたのと同じく、元に戻せる。「あとの図にも反映」も効く）
 function applyMoves(moves) {
   const ch = {};
@@ -2389,6 +2445,7 @@ export function EditorView() {
   const seq = diagramSequence().filter((id) => (S.d.diagrams || []).some((g) => g.id === id));
   const nbs = neighborDrafts(S.route.params.d);
   const strip = seq.length > 1 || !!(nbs.prev || nbs.next);
+  const clashes = betaOn() ? clashesOf(shapes, previousShapes(E.id), ix) : [];
   const prevNote = E.ghost && seq.indexOf(E.id) === 0 && edgeDiagram('prev', S.route.params.d) ? `前のトラック（${edgeDiagram('prev', S.route.params.d).track.title || ''}）の最後の図を薄く重ねています` : '';
   return h('div', { class: 'ed-root', role: 'dialog', 'aria-label': '図の編集' },
     // Googleスライドのように、上に名前とメニューバー（編集・表示・挿入・配置・ヘルプ）、その下に道具バー
@@ -2451,6 +2508,7 @@ export function EditorView() {
     h('div', { class: 'ed-body' + (strip ? ' has-strip' : '') + (E.hidePanel ? ' no-panel' : '') },
       strip ? Filmstrip(seq, ix) : null,
       h('div', { class: 'ed-canvas-wrap' + (E.tool === 'pan' ? ' panning' : '') },
+        E.pick ? PickBar(ix) : null,
         !E.loaded ? h('div', { class: 'muted pad' }, '読み込み中…') : null,
         h('svg', {
           id: 'ed-svg', class: 'ed-svg tool-' + E.tool, viewBox: `0 0 ${W} ${H}`, xmlns: 'http://www.w3.org/2000/svg',
@@ -2468,6 +2526,7 @@ export function EditorView() {
           EditorMovesLayer(E.id, shapes, upx),
           h('g', null, list.map((s) => shapeNode(s, { selected: E.sel.has(s.id), interactive: true, idx: ix }))),
           h('g', null, layoutLabels(list, ix, E.roleVis, E.tool === 'select')),
+          ClashLayer(clashes, upx),
           h('g', { class: 'pres-marks' }, PresenceMarks(shapes, here, upx)),
           single ? h('g', { class: 'handles' }, handlesFor(single, upx)) : null,
           marquee,
@@ -2477,6 +2536,7 @@ export function EditorView() {
       h('aside', { class: 'ed-panel' + (E.hidePanel ? ' is-hidden' : '') },
         h('div', { class: 'rotate-hint' }, '2本指で広げると拡大、2本指で動かすとスクロールします。横向きにすると大きく編集できます。'),
         EditorMovesSection(E.w, E.id, shapes, ix, applyMoves),
+        ClashSection(clashes, shapes, ix, (ids) => { E.tool = 'select'; E.sel = new Set(ids.filter((id) => E.shapes[id])); draw(); }),
         E.hmode ? HeightPanel() : E.tool === 'person' ? PersonPanel(shapes) : ['line', 'curve', 'carrow', 'cblock'].includes(E.tool) ? PolyPanel() : E.tool === 'block' ? BlockToolPanel() : SelPanel())),
     E.xf ? XfHint() : null,
     ContextMenu(),
