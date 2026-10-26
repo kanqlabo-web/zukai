@@ -1233,7 +1233,6 @@ function down(e) {
     const nid = newId(8);
     commit({ [nid]: { id: nid, t: 'text', x: Math.round(p[0]), y: Math.round(p[1]), text: '文字', size: 24, z: zFor('text') } });
     E.sel = new Set([nid]);
-    E.tool = 'select';
     E.focusText = nid;
   }
   draw();
@@ -1385,7 +1384,6 @@ function up(e) {
     }
     commit({ [d.id]: s });
     E.sel = new Set([d.id]);
-    E.tool = 'select';
   } else if (d.type === 'freeline') {
     const pts = simplify(d.pts, 14).map((q) => [Math.round(q[0]), Math.round(q[1])]);
     const last = d.pts[d.pts.length - 1];
@@ -1394,7 +1392,6 @@ function up(e) {
     else {
       commit({ [d.id]: { id: d.id, t: 'line', mode: 'free', pts, z: E.temp[d.id].z } });
       E.sel = new Set([d.id]);
-      E.tool = 'select';
     }
   } else if (d.type === 'blob') {
     const pts = simplify(d.pts, 16).map((q) => [Math.round(q[0]), Math.round(q[1])]);
@@ -1402,7 +1399,6 @@ function up(e) {
     else {
       commit({ [d.id]: { id: d.id, t: 'blob', pts, z: E.temp[d.id].z } });
       E.sel = new Set([d.id]);
-      E.tool = 'select';
     }
   } else if (d.type === 'handle') {
     if (E.temp[d.id]) commit({ [d.id]: E.temp[d.id] });
@@ -1443,7 +1439,6 @@ function finishPoly() {
   if (pl.pts.length < 2) { draw(); return; }
   commit({ [pl.id]: { id: pl.id, t: 'line', mode: pl.mode, ...(pl.extra || {}), pts: pl.pts, z: pl.z } });
   E.sel = new Set([pl.id]);
-  E.tool = 'select';
   draw();
 }
 function cancelPoly() { E.poly = null; E.temp = {}; draw(); }
