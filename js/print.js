@@ -16,7 +16,8 @@ import { CastTable, Legend, ScriptLines, DotText, CueTitle } from './sheet.js';
 
 const byOrder = (a, b) => (a.order || 0) - (b.order || 0) || (a.createdAt || 0) - (b.createdAt || 0);
 
-export async function loadPrint({ w, kind, id }) {
+// wide：閲覧モード用。稿（kind 'd'）でも同じ話のトラックをすべて並べ（ほかのトラックは最新の稿）、トラックをまたいで見られるようにする
+export async function loadPrint({ w, kind, id }, wide = false) {
   const [work, episodes, tracks, drafts] = await Promise.all([
     db.get(P.work(w)), db.list(P.col(w, 'episodes')), db.list(P.col(w, 'tracks')), db.list(P.col(w, 'drafts')),
   ]);
@@ -30,6 +31,13 @@ export async function loadPrint({ w, kind, id }) {
     const e = t && episodes.find((x) => x.id === t.episodeId);
     targets = [{ draft: d, track: t, ep: e }];
     fileName = draftTitle(work, e, t, d);
+    if (wide && t && e) {
+      targets = tracks.filter((x) => x.episodeId === e.id).sort(byOrder).map((x) => {
+        if (x.id === t.id) return { draft: d, track: x, ep: e };
+        const dd = drafts.filter((y) => y.trackId === x.id).sort((a, b) => (b.no || 0) - (a.no || 0))[0];
+        return dd ? { draft: dd, track: x, ep: e } : null;
+      }).filter(Boolean);
+    }
   } else {
     const e = episodes.find((x) => x.id === id);
     if (!e) throw new Error('話が見つかりません');
@@ -53,7 +61,7 @@ export async function loadPrint({ w, kind, id }) {
     t.diagrams = Object.fromEntries(diagrams.map((g) => [g.id, g]));
     t.images = Object.fromEntries(images.map((im) => [im.id, im]));
   }
-  return { work, targets, fileName, w, kind, id };
+  return { work, targets, fileName, w, kind, id, focus: kind === 'd' ? id : null };
 }
 
 function NoteBlock(t, b, idx) {

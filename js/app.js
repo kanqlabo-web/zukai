@@ -94,7 +94,7 @@ function onRoute() {
     // 「書き出す」から来たとき（#…?export）は、すぐに書き出しの画面を出す
     const exp = r.name === 'print' && /\?export\b/.test(location.hash);
     if (exp) window.history.replaceState(window.history.state, '', location.href.replace(/\?export\b/, ''));
-    loadPrint(r.params).then((data) => { S.d.print = data; rerender(); if (exp) autoExport(); })
+    loadPrint(r.params, r.name === 'show').then((data) => { S.d.print = data; rerender(); if (exp) autoExport(); })
       .catch((e) => { S.d.printError = e.message || String(e); rerender(); });
   }
   window.scrollTo(0, 0);

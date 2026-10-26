@@ -99,6 +99,8 @@ export function ShowView() {
     V.key = data;
     const m = /\?(\d+)$/.exec(location.hash);
     V.i = m ? Math.max(0, +m[1] - 1) : 0;
+    // トラックから来たときは、そのトラックの最初の図から（前後のトラックへもそのまま進める）
+    if (!m && data.focus) V.i = Math.max(0, steps().findIndex((s) => data.targets[s.ti].draft.id === data.focus));
     // 図の編集から来たとき（?g=図の id）は、その図から
     const g = /\?g=([^&]+)$/.exec(location.hash);
     if (g) {
