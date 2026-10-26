@@ -348,6 +348,10 @@ export function audioOnNav(s) {
 const heardMem = {}; // 音声の id → 聞き取った文字（なければ null）
 // 聞き取りの形の版。2：単語ごとの時刻（2.42.0〜）。古い版（文ごとの時刻）は自動で合わせるときに聞き取り直す（テマ友の流れには使う）
 const HEARD_V = 2;
+// 聞き取りのモデル（2.45.0〜 small。それまでは base）。聞き取った文字にはどのモデルかを残し、違うモデルの分は自動で合わせるときに聞き取り直す
+const ASR_MODEL = 'Xenova/whisper-small';
+const asrModel = () => (window.ZUKAI_ASR && window.ZUKAI_ASR.model) || ASR_MODEL;
+const heardOk = (r, langs) => r && r.langs === langs.join(',') && r.v === HEARD_V && (r.model || 'Xenova/whisper-base') === asrModel();
 async function loadHeard(w, meta) {
   if (heardMem[meta.id] !== undefined) return;
   heardMem[meta.id] = null;
@@ -560,20 +564,20 @@ async function autoSync(data, ti) {
   const hkey = meta.id + '_heard';
   let heard = null;
   const c = await cacheGet(hkey);
-  if (c && c.langs === langs.join(',') && c.v === HEARD_V) heard = c.out;
+  if (heardOk(c, langs)) heard = c.out;
   if (!heard && meta.parts) {
     const d = await db.getQuiet(P.doc(data.w, 'audio', hkey));
-    if (d && d.langs === langs.join(',') && d.v === HEARD_V) { heard = d.out; cachePut(hkey, d); }
+    if (heardOk(d, langs)) { heard = d.out; cachePut(hkey, d); }
   }
   const pkey = meta.id + '_partial';
   const p0 = heard ? null : await cacheGet(pkey);
-  const partial = p0 && p0.langs === langs.join(',') && p0.v === HEARD_V ? p0 : null;
+  const partial = heardOk(p0, langs) ? p0 : null;
   const r = await ask({
     title: '時刻を自動で合わせる（ためし）',
     message: '音声をこの端末で聞き取って文字にし、テマ友と照らし合わせて、タイミングに時刻を付けます。' + (group.length > 1 ? `（${group.length}トラック）` : ''),
     detail: heard ? 'この音声はもう聞き取ってあるので、すぐに終わります。付けたあと、ずれているところは「時刻を合わせる」で直してください。'
       : partial ? `前回の聞き取りの続き（${fmtShort(partial.upto * 30)} まで済み）から始めます。この端末のこのページを開いたままにしてください（閉じても、次はまた続きから始めます）。`
-      : '初めてのときは聞き取りのしくみ（約80MB）を読み込みます（次からはいりません）。聞き取りには、音声の長さと同じくらいかそれ以上かかることがあります（1話まるごとの音源なら1時間以上）。パソコンでの利用をおすすめします。聞き取った文字は保存するので、同じ音声のほかのトラックはすぐに終わります。付けたあと、ずれているところは「時刻を合わせる」で直してください。',
+      : '初めてのときは聞き取りのしくみ（約250MB）を読み込みます（次からはいりません）。聞き取りには、音声の長さと同じくらいかそれ以上かかることがあります（1話まるごとの音源なら1時間以上）。パソコンでの利用をおすすめします。聞き取った文字は保存するので、同じ音声のほかのトラックはすぐに終わります。付けたあと、ずれているところは「時刻を合わせる」で直してください。',
     fields: [],
     choices: has ? [['missing', `時刻のないタイミングだけ（${all - has}件）`], ['all', `すべて付け直す（${all}件）`]] : [['all', '始める']],
   });
@@ -586,8 +590,8 @@ async function autoSync(data, ti) {
     if (!heard) {
       const audio = await toMono16k(await loadBlob(data.w, meta), meta.name);
       if (!A.auto) return;
-      heard = await listen(audio, langs, partial, (upto, out) => cachePut(pkey, { v: HEARD_V, langs: langs.join(','), upto, out }));
-      const rec = { v: HEARD_V, langs: langs.join(','), out: heard };
+      heard = await listen(audio, langs, partial, (upto, out) => cachePut(pkey, { v: HEARD_V, model: asrModel(), langs: langs.join(','), upto, out }));
+      const rec = { v: HEARD_V, model: asrModel(), langs: langs.join(','), out: heard };
       cachePut(hkey, rec);
       cacheDel(pkey);
       if (meta.parts && JSON.stringify(rec).length < 900000) db.setQuiet(P.doc(data.w, 'audio', hkey), rec).catch(() => {});
@@ -634,7 +638,7 @@ function listen(audio, langs, partial, onWin) {
     };
     wk.onerror = (e) => { wk.terminate(); rej(new Error(e.message || '聞き取りを始められませんでした')); };
     const cfg = window.ZUKAI_ASR || {};
-    wk.postMessage({ audio, langs, model: cfg.model, tjs: cfg.tjs, local: cfg.local, from: partial ? partial.upto : 0, prev: partial ? partial.out : null }, [audio.buffer]);
+    wk.postMessage({ audio, langs, model: asrModel(), tjs: cfg.tjs, local: cfg.local, from: partial ? partial.upto : 0, prev: partial ? partial.out : null }, [audio.buffer]);
   });
 }
 function cancelAuto() {

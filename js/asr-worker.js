@@ -1,9 +1,9 @@
 // 音声の聞き取り（audio.js の「時刻を自動で合わせる」用。画面が固まらないように Worker で動かす）
-// Whisper（transformers.js）をブラウザの中で動かす。モデルは初回だけ Hugging Face から読み、ブラウザに控えが残る。
+// Whisper（transformers.js、2.45.0〜 small）をブラウザの中で動かす。モデルは初回だけ Hugging Face から読み、ブラウザに控えが残る。
 // 受け取る：{ audio: Float32Array（16kHz・モノラル）, langs: ['en', 'ja'], model, tjs, local, from（続きから始める30秒の番号）, prev（それまでに聞き取った分） }
 // 返す：{ type: 'load', p } 読み込みの進み（0〜1） / { type: 'step', done, of } / { type: 'win', upto, out }（30秒ごと。途中までの分を保存して、止まっても続きから） / { type: 'done', out: { en: [{ text, s, e }], ja: […] } } / { type: 'error', msg }
 const TJS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.1/dist/transformers.min.js';
-const MODEL = 'Xenova/whisper-base';
+const MODEL = 'Xenova/whisper-small';
 const SR = 16000, WIN = 30; // 30秒ずつ（Whisper が一度に聞ける長さ）
 let pipe = null;
 
