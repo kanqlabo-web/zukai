@@ -19,7 +19,7 @@ import { betaOn } from './beta.js';
 import { openContextMenu } from './menubar.js';
 import { confirmBox, ask } from './dialog.js';
 import { sortBlocks, resolveAnchor } from './script.js';
-import { langsOf, matchTimes, pausesOf, segmentsOf, toMono16k } from './autosync.js';
+import { langsOf, matchTimes, onsetsOf, vadSegments, toMono16k } from './autosync.js';
 
 const PART = 700 * 1024;
 const MAX = 80 * 1024 * 1024; // 1話まるごとの音源も入るように
@@ -348,9 +348,10 @@ export function audioOnNav(s) {
 const heardMem = {}; // 音声の id → 聞き取った文字（なければ null）
 // 聞き取りの形の版。2：単語ごとの時刻（2.42.0〜）。古い版（文ごとの時刻）は自動で合わせるときに聞き取り直す（テマ友の流れには使う）
 const HEARD_V = 2;
-// 聞き取りのしかた（2.47.0〜）。英日のテマ友は、Whisper tiny で声のまとまりごとに英語か日本語かだけを判定する（速い）。
+// 聞き取りのしかた。英日のテマ友は、声のまとまりごとに英語か日本語かだけを判定する（速い。2.47.0〜。
+// 2.48.0〜は Silero VAD で声のところを探し、VoxLingua107 で判定する。lid-worker.js。2.47 は Whisper tiny）。
 // 1つの言語だけのテマ友は、Whisper base で文字にする。記録にはどのしかたかを残し、違うしかたの分は自動で合わせるときに聞き直す
-const ASR_MODEL = 'Xenova/whisper-base', LID_MODEL = 'Xenova/whisper-tiny';
+const ASR_MODEL = 'Xenova/whisper-base', LID_MODEL = 'voxlingua107-int8+silero-vad';
 const useLid = (langs) => langs.length > 1;
 const asrModel = (langs) => {
   const cfg = window.ZUKAI_ASR || {};
@@ -582,7 +583,7 @@ async function autoSync(data, ti) {
     message: (useLid(langs) ? '音声をこの端末で聞き、テマ友と照らし合わせて、タイミングに時刻を付けます。' : '音声をこの端末で聞き取って文字にし、テマ友と照らし合わせて、タイミングに時刻を付けます。') + (group.length > 1 ? `（${group.length}トラック）` : ''),
     detail: heard ? 'この音声はもう聞き取ってあるので、すぐに終わります。付けたあと、ずれているところは「時刻を合わせる」で直してください。'
       : partial ? `前回の聞き取りの続き（${fmtShort(partial.at != null ? partial.at : partial.upto * 30)} まで済み）から始めます。この端末のこのページを開いたままにしてください（閉じても、次はまた続きから始めます）。`
-      : useLid(langs) ? '声のまとまりごとに英語か日本語かを判定し、テマ友の英語の行・日本語の行と順番に対応させます。初めてのときは判定のしくみ（約40MB）を読み込みます（次からはいりません）。判定には、音声の長さの半分くらいかかることがあります。パソコンでの利用をおすすめします。判定した結果は保存するので、同じ音声のほかのトラックはすぐに終わります。付けたあと、ずれているところは「時刻を合わせる」で直してください。'
+      : useLid(langs) ? '声のまとまりごとに英語か日本語かを判定し、テマ友の英語の行・日本語の行と順番に対応させます。初めてのときは判定のしくみ（約30MB）を読み込みます（次からはいりません）。判定には、音声の長さの10分の1くらいかかります。パソコンでの利用をおすすめします。判定した結果は保存するので、同じ音声のほかのトラックはすぐに終わります。付けたあと、ずれているところは「時刻を合わせる」で直してください。'
       : '初めてのときは聞き取りのしくみ（約80MB）を読み込みます（次からはいりません）。聞き取りには、音声の長さと同じくらいかそれ以上かかることがあります（1話まるごとの音源なら1時間以上）。パソコンでの利用をおすすめします。聞き取った文字は保存するので、同じ音声のほかのトラックはすぐに終わります。付けたあと、ずれているところは「時刻を合わせる」で直してください。',
     fields: [],
     choices: has ? [['missing', `時刻のないタイミングだけ（${all - has}件）`], ['all', `すべて付け直す（${all}件）`]] : [['all', '始める']],
@@ -596,10 +597,9 @@ async function autoSync(data, ti) {
     if (!heard) {
       const audio = await toMono16k(await loadBlob(data.w, meta), meta.name);
       if (!A.auto) return;
-      // 声の間（聞き取りに渡すと audio が使えなくなるので先に）
-      const pauses = pausesOf(audio), on = pauses.map((x) => x[1]);
-      const segs = useLid(langs) ? segmentsOf(pauses, audio.length / 16000) : null;
-      heard = await listen(audio, langs, segs, partial, (upto, out, at) => cachePut(pkey, { v: HEARD_V, model: asrModel(langs), langs: langs.join(','), upto, at, out }));
+      // 声の出だし（聞き取りに渡すと audio が使えなくなるので先に）
+      const on = onsetsOf(audio);
+      heard = await listen(audio, langs, partial, (upto, out, at) => cachePut(pkey, { v: HEARD_V, model: asrModel(langs), langs: langs.join(','), upto, at, out }));
       heard = { ...heard, on };
       const rec = { v: HEARD_V, model: asrModel(langs), langs: langs.join(','), out: heard };
       cachePut(hkey, rec);
@@ -631,12 +631,12 @@ async function autoSync(data, ti) {
   }
 }
 // asr-worker.js で聞き取る
-// segs：言語を判定する区切り（英日のとき。なければ文字にする）。partial：前回の途中までの分。onWin(upto, out, at)：ときどき途中までの分を保存する（at：済んだところの秒）
-function listen(audio, langs, segs, partial, onWin) {
-  return segs ? listenLid(audio, segs, partial, onWin) : listenText(audio, langs, partial, onWin);
+// 英日のときは言語を判定するだけ（lid-worker.js）、ほかは文字にする。partial：前回の途中までの分。onWin(upto, out, at)：ときどき途中までの分を保存する（at：済んだところの秒）
+function listen(audio, langs, partial, onWin) {
+  return useLid(langs) ? listenLid(audio, partial, onWin) : listenText(audio, langs, partial, onWin);
 }
-function asrWorker(rej) {
-  const wk = new Worker(new URL('./asr-worker.js', import.meta.url), { type: 'module' });
+function asrWorker(rej, file = './asr-worker.js') {
+  const wk = new Worker(new URL(file, import.meta.url), { type: 'module' });
   A.auto.workers = (A.auto.workers || []).concat(wk);
   A.auto.reject = rej;
   wk.onerror = (e) => { stopWorkers(); rej(new Error(e.message || '聞き取りを始められませんでした')); };
@@ -645,50 +645,77 @@ function asrWorker(rej) {
 function stopWorkers() { if (A.auto) for (const w of A.auto.workers || []) w.terminate(); }
 function asrOpts(langs) {
   const cfg = window.ZUKAI_ASR || {};
-  return { model: asrModel(langs).replace(/^lid:/, ''), tjs: cfg.tjs, local: useLid(langs) ? cfg.lidLocal || cfg.local : cfg.local };
+  return { model: asrModel(langs), tjs: cfg.tjs, local: cfg.local };
 }
-// 英日の判定：Worker をいくつか（端末のコア数に合わせて最大4つ）並べ、区切りを5つずつ配る
-function listenLid(audio, segs, partial, onWin) {
-  return new Promise((res, rej) => {
-    const out = partial && partial.out && partial.out.lid ? partial.out.lid.slice() : [];
-    let next = out.length, busy = 0, saved = out.length;
+// Worker をいくつか（端末のコア数に合わせて最大4つ）並べ、jobs を1つずつ配る。1つめの Worker でモデルを読み終えてから（ブラウザに控えができてから）残りを始める。
+// jobs：[() => ({ msg, transfer })]（音は配るときに切り出す。長い音源で手元の記憶を食わないように）。onOut(k, m)：k 番目の job の答え。onLoad(p)：モデルの読み込みの進み。wks：前の段の Worker（使い回す）
+function runPool(wks, jobs, onOut, onLoad, rej) {
+  return new Promise((res) => {
     const n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
-    A.auto.phase = 'load';
-    const step = () => {
-      let k = 0; while (out[k]) k++;
-      if (A.auto.phase !== 'listen') { A.auto.t0 = Date.now(); A.auto.d0 = k; }
-      A.auto.phase = 'listen'; A.auto.done = k; A.auto.of = segs.length; rerender();
-      if (k - saved >= 10 || (k === segs.length && k > saved)) { saved = k; onWin(k, { lid: out.slice(0, k) }, segs[k - 1].e); }
-      return k;
-    };
+    let next = 0, busy = 0;
     const give = (wk) => {
       if (!A.auto) return;
-      if (next >= segs.length) { if (!busy) { stopWorkers(); res({ lid: out }); } return; }
-      const from = next;
-      const batch = segs.slice(from, from + 5).map((g) => ({ ...g, pcm: audio.slice(Math.floor(g.s * 16000), Math.floor(g.e * 16000)) }));
-      next += batch.length; busy++;
-      wk.from = from;
-      wk.postMessage({ batch, langs: ['en', 'ja'], ...asrOpts(['en', 'ja']) }, batch.map((g) => g.pcm.buffer));
+      if (next >= jobs.length) { if (!busy) res(); return; }
+      wk.job = next++; busy++;
+      const j = jobs[wk.job]();
+      wk.postMessage(j.msg, j.transfer);
     };
-    // 1つめの Worker でモデルを読み終えてから（ブラウザに控えができてから）残りを始める
-    let more = n - 1;
-    const spawn = () => {
-      const wk = asrWorker(rej);
+    const hire = (wk) => {
       wk.onmessage = (e) => {
         const m = e.data;
         if (!A.auto) return;
-        if (m.type === 'load') { if (A.auto.phase === 'load') { A.auto.p = m.p; rerender(); } }
-        else if (m.type === 'lid') {
-          m.out.forEach((x, j) => { out[wk.from + j] = x; });
-          busy--; step(); give(wk);
-          for (; more > 0 && next < segs.length; more--) spawn();
-        }
+        if (m.type === 'load') onLoad(m.p);
         else if (m.type === 'error') { stopWorkers(); rej(new Error(m.msg)); }
+        else {
+          busy--; onOut(wk.job, m); give(wk);
+          while (spare.length && next < jobs.length) hire(spare.shift());
+          while (wks.length < n && next < jobs.length) { const w2 = asrWorker(rej, './lid-worker.js'); wks.push(w2); hire(w2); }
+        }
       };
       give(wk);
     };
-    spawn();
+    if (!wks.length) wks.push(asrWorker(rej, './lid-worker.js'));
+    const spare = wks.slice(1);
+    hire(wks[0]);
   });
+}
+// 英日の判定：まず声のところを探し（Silero VAD。30秒ずつ）、その区切りごとに英語か日本語かを判定する（VoxLingua107。5つずつ）
+async function listenLid(audio, partial, onWin) {
+  const cfg = window.ZUKAI_ASR || {}, SR = 16000, W = 30, PRE = 0.5, wks = [];
+  let rej;
+  const failed = new Promise((_, r) => { rej = r; });
+  const run = (jobs, onOut, onLoad) => Promise.race([runPool(wks, jobs, onOut, onLoad, rej), failed]);
+  // 声らしさ
+  const vjobs = [];
+  for (let s = 0; s * SR < audio.length; s += W) {
+    const a = Math.max(0, s - PRE);
+    vjobs.push(() => {
+      const pcm = audio.slice(Math.floor(a * SR), Math.min(audio.length, (s + W) * SR));
+      return { msg: { vad: [{ s, pre: s - a, pcm }], cfg }, transfer: [pcm.buffer] };
+    });
+  }
+  const vp = [];
+  await run(vjobs, (k, m) => { vp[k] = m.out[0].p; }, () => {});
+  const segs = vadSegments(vp.flat());
+  // 英日
+  const out = partial && partial.out && partial.out.lid ? partial.out.lid.slice(0, segs.length) : [];
+  let saved = out.length;
+  A.auto.phase = 'load'; A.auto.p = 0; rerender();
+  const froms = [];
+  for (let from = out.length; from < segs.length; from += 5) froms.push(from);
+  const ljobs = froms.map((from) => () => {
+    const batch = segs.slice(from, from + 5).map((g) => ({ ...g, pcm: audio.slice(Math.floor(g.s * SR), Math.floor(g.e * SR)) }));
+    return { msg: { batch, cfg }, transfer: batch.map((g) => g.pcm.buffer) };
+  });
+  await run(ljobs, (k, m) => {
+    m.out.forEach((x, j) => { out[froms[k] + j] = x; });
+    let d = 0; while (out[d]) d++;
+    if (A.auto.phase !== 'listen') { A.auto.t0 = Date.now(); A.auto.d0 = d; }
+    A.auto.phase = 'listen'; A.auto.done = d; A.auto.of = segs.length; rerender();
+    if (d - saved >= 10 || (d === segs.length && d > saved)) { saved = d; onWin(d, { lid: out.slice(0, d) }, segs[d - 1].e); }
+  }, (p) => { if (A.auto.phase === 'load') { A.auto.p = p; rerender(); } });
+  stopWorkers();
+  return { lid: out };
 }
 function listenText(audio, langs, partial, onWin) {
   return new Promise((res, rej) => {

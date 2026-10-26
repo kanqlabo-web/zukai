@@ -233,7 +233,30 @@ export function segmentsOf(pauses, len) {
   return out;
 }
 
-// 言語の判定だけで合わせる（英日のテマ友用。Whisper で文字にしない）
+// 言語を判定する区切り（2.48.0〜）：Silero VAD の声らしさ（32ミリ秒ごと）から声のところを取る。
+// 0.3 を超えたら始まり、0.2 を下回るところが0.2秒より長く続いたら終わり（音の大きさで決めるより、BGM のあるところでも細かく切れる）。
+// 6秒より長いところは segmentsOf と同じく3秒ずつに分ける
+export function vadSegments(p) {
+  const F = 512 / 16000, runs = [];
+  let cur = null;
+  p.forEach((v, i) => {
+    const t = i * F;
+    if (!cur) { if (v >= 0.3) cur = [t, t + F]; }
+    else if (v >= 0.2) cur[1] = t + F;
+    else if (t - cur[1] > 0.2) { runs.push(cur); cur = null; }
+  });
+  if (cur) runs.push(cur);
+  const r2 = (x) => Math.round(x * 100) / 100, out = [];
+  for (const [s, e] of runs) {
+    if (e - s < 0.3) continue;
+    if (e - s <= 6) { out.push({ s: r2(s), e: r2(e) }); continue; }
+    const k = Math.round((e - s) / 3);
+    for (let i = 0; i < k; i++) out.push({ s: r2(s + (e - s) * i / k), e: r2(s + (e - s) * (i + 1) / k), cut: i > 0 });
+  }
+  return out;
+}
+
+// 言語の判定だけで合わせる（英日のテマ友用。文字にしない）
 // lid：[{ s, e, d }]（d = 英語らしさ − 日本語らしさ。2.5より大きければ英語、-2.5より小さければ日本語（曲や効果音はそのあいだになりやすい）、あいだは分からない）
 // テマ友の「同じ言語が続く行のまとまり」と、音声の「同じ言語が続くところ」を、順番どおり・長さが近くなるように対応させ、
 // まとまりの最初の行をそこの始まりに、残りの行を文字数の割合で、近い声の出だしに置く
