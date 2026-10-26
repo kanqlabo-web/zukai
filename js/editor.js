@@ -19,6 +19,7 @@ import { previousShapes, minCostAssign, diagramSequence } from './assign.js';
 import { neighborDrafts, loadNeighbor, edgeDiagram } from './neighbors.js';
 import { setPresence, others, colorOf, sharePointer } from './presence.js';
 import { EditorMovesSection, EditorMovesLayer } from './moves.js';
+import { clashesOf, ClashSection, ClashLayer } from './clash.js';
 import { betaOn } from './beta.js';
 
 let E = null;
@@ -2505,6 +2506,7 @@ export function EditorView() {
   const seq = diagramSequence().filter((id) => (S.d.diagrams || []).some((g) => g.id === id));
   const nbs = neighborDrafts(S.route.params.d);
   const strip = seq.length > 1 || !!(nbs.prev || nbs.next);
+  const clashes = betaOn() ? clashesOf(shapes, previousShapes(E.id), ix) : [];
   const prevNote = E.ghost && seq.indexOf(E.id) === 0 && edgeDiagram('prev', S.route.params.d) ? `前のトラック（${edgeDiagram('prev', S.route.params.d).track.title || ''}）の最後の図を薄く重ねています` : '';
   return h('div', { class: 'ed-root', role: 'dialog', 'aria-label': '図の編集' },
     // Googleスライドのように、上に名前とメニューバー（編集・表示・挿入・配置・ヘルプ）、その下に道具バー
@@ -2599,6 +2601,7 @@ export function EditorView() {
           EditorMovesLayer(E.id, shapes, upx),
           h('g', null, list.map((s) => shapeNode(s, { selected: E.sel.has(s.id), interactive: true, idx: ix }))),
           h('g', null, layoutLabels(list, ix, E.roleVis, E.tool === 'select')),
+          ClashLayer(clashes, upx),
           h('g', { class: 'pres-marks' }, PresenceMarks(shapes, here, upx)),
           single ? h('g', { class: 'handles' }, handlesFor(single, upx)) : null,
           marquee,
@@ -2608,6 +2611,7 @@ export function EditorView() {
       h('aside', { class: 'ed-panel' + (E.hidePanel ? ' is-hidden' : '') },
         h('div', { class: 'rotate-hint' }, '2本指で広げると拡大、2本指で動かすとスクロールします。横向きにすると大きく編集できます。'),
         EditorMovesSection(E.w, E.id, shapes, ix, applyMoves),
+        ClashSection(clashes, shapes, ix, (ids) => { E.tool = 'select'; E.sel = new Set(ids.filter((id) => E.shapes[id])); draw(); }),
         E.hmode ? HeightPanel() : E.tool === 'person' ? PersonPanel(shapes) : E.tool === 'role' ? RolePanel(shapes) : ['line', 'curve', 'carrow', 'cblock'].includes(E.tool) ? PolyPanel() : E.tool === 'block' ? BlockToolPanel() : SelPanel())),
     E.xf ? XfHint() : null,
     E.traceChoose ? TraceChooser(E.traceChoose, { onPick: pickTraceSrc, onFile: pickTraceFile, onCancel: () => { E.traceChoose = null; draw(); } }) : null,
