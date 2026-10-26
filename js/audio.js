@@ -14,7 +14,9 @@ import { P } from './model.js';
 import { canEdit } from './access.js';
 import { betaOn } from './beta.js';
 import { openContextMenu, ContextMenu } from './menubar.js';
-import { confirmBox } from './dialog.js';
+import { confirmBox, ask } from './dialog.js';
+import { sortBlocks } from './script.js';
+import { langsOf, matchTimes, toMono16k } from './autosync.js';
 
 const PART = 700 * 1024;
 const MAX = 20 * 1024 * 1024;
@@ -141,7 +143,7 @@ async function loadBlob(w, meta) {
 
 // ---------- 再生 ----------
 // ti：閲覧モードのどのトラック（targets の番号）の音声か。lastAuto：最後に音声に合わせて出したタイミング
-const A = { el: null, url: '', aid: '', ti: -1, loading: false, err: '', playing: false, sync: false, lastAuto: '', saving: null, raf: 0, show: null };
+const A = { el: null, url: '', aid: '', ti: -1, loading: false, err: '', playing: false, sync: false, lastAuto: '', saving: null, raf: 0, show: null, auto: null };
 
 function audioEl() {
   if (A.el) return A.el;
@@ -329,6 +331,7 @@ export function ShowAudioBar(data, t, s, show) {
   A.show = show;
   const meta = t.track && t.track.audio;
   const editor = canEdit(data.work);
+  if (A.auto) return h('div', { class: 'show-audio' }, AutoRow());
   if (A.saving) {
     return h('div', { class: 'show-audio' }, h('span', { class: 'au-msg' },
       A.saving.of ? `音声を保存しています… ${A.saving.done} / ${A.saving.of}` : '音声を保存しています…'));
@@ -361,6 +364,7 @@ export function ShowAudioBar(data, t, s, show) {
     const r = e.currentTarget.getBoundingClientRect();
     openContextMenu(r.left, r.bottom + 4, [
       { label: '時刻を合わせる', checked: A.sync, hint: '音声を流しながら、タイミングが来たところで押して時刻を付けます', onclick: () => { A.sync = !A.sync; rerender(); } },
+      { label: '時刻を自動で合わせる（ためし）', hint: '音声を聞き取って、テマ友と照らし合わせて時刻を付けます', onclick: () => autoSync(data, s.ti) },
       '-',
       { label: '音声を差し替える', onclick: () => importAudio(data.w, t.track) },
       { label: 'このトラックの音声を外す', onclick: () => removeAudio(data.w, t.track) },
@@ -381,6 +385,87 @@ export function ShowAudioBar(data, t, s, show) {
       : 'タイミングに時刻がまだ付いていません。流すことはできますが、図は自動では進みません。') : null,
     A.sync && editor ? SyncRow(data, s) : null,
     ContextMenu());
+}
+
+// ---------- 時刻を自動で合わせる（asr-worker.js で聞き取り、autosync.js で照らし合わせる） ----------
+async function autoSync(data, ti) {
+  const t = data.targets[ti];
+  const meta = t && t.track && t.track.audio;
+  const text = (t && t.draft.script) || '';
+  if (!meta || !text) { toast('テマ友と音声の両方があるときに使えます', 'error'); return; }
+  const sorted = sortBlocks(text, t.blocks || []);
+  if (!sorted.length) { toast('タイミングがありません', 'error'); return; }
+  const has = sorted.filter(({ b }) => b.sec != null).length;
+  const r = await ask({
+    title: '時刻を自動で合わせる（ためし）',
+    message: '音声をこの端末で聞き取って文字にし、テマ友と照らし合わせて、タイミングに時刻を付けます。',
+    detail: '初めてのときは聞き取りのしくみ（約80MB）を読み込みます（次からはいりません）。聞き取りには、音声の長さと同じくらいかそれ以上かかることがあります。パソコンでの利用をおすすめします。付けたあと、ずれているところは「時刻を合わせる」で直してください。',
+    fields: [],
+    choices: has ? [['missing', `時刻のないタイミングだけ（${sorted.length - has}件）`], ['all', `すべて付け直す（${sorted.length}件）`]] : [['all', '始める']],
+  });
+  if (!r) return;
+  const only = r.choice === 'missing';
+  if (A.playing) A.el.pause();
+  const langs = langsOf(text);
+  A.auto = { phase: 'prep', p: 0, done: 0, of: 0, worker: null };
+  rerender();
+  try {
+    const audio = await toMono16k(await loadBlob(data.w, meta));
+    if (!A.auto) return;
+    const heard = await new Promise((res, rej) => {
+      const wk = new Worker(new URL('./asr-worker.js', import.meta.url), { type: 'module' });
+      A.auto.worker = wk;
+      A.auto.reject = rej;
+      wk.onmessage = (e) => {
+        const m = e.data;
+        if (!A.auto) return;
+        if (m.type === 'load') { A.auto.phase = 'load'; A.auto.p = m.p; rerender(); }
+        else if (m.type === 'step') { A.auto.phase = 'listen'; A.auto.done = m.done; A.auto.of = m.of; rerender(); }
+        else if (m.type === 'done') { wk.terminate(); res(m.out); }
+        else if (m.type === 'error') { wk.terminate(); rej(new Error(m.msg)); }
+      };
+      wk.onerror = (e) => { wk.terminate(); rej(new Error(e.message || '聞き取りを始められませんでした')); };
+      const cfg = window.ZUKAI_ASR || {};
+      wk.postMessage({ audio, langs, model: cfg.model, tjs: cfg.tjs, local: cfg.local }, [audio.buffer]);
+    });
+    A.auto.phase = 'match'; rerender();
+    window.__zukaiHeard = heard; // 調べるとき用（コンソールで見られる）
+    const { secs, found } = matchTimes(text, heard, sorted.map(({ r: x }) => x.offset));
+    const ops = [];
+    sorted.forEach(({ b }, k) => {
+      if (secs[k] == null || (only && b.sec != null)) return;
+      b.sec = Math.max(0, Math.round(secs[k] * 10) / 10);
+      ops.push({ op: 'update', path: P.doc(data.w, 'blocks', b.id), data: { sec: b.sec } });
+    });
+    if (!ops.length) { toast('聞き取った文字がテマ友と合わず、時刻を付けられませんでした', 'error', 6000); return; }
+    await db.batch(ops);
+    toast(`${ops.length}件のタイミングに時刻を付けました（${found}件はテマ友の文字で見つけ、残りは前後から見積もりました）。流してずれていたら「時刻を合わせる」で直してください。`, 'info', 9000);
+  } catch (e) {
+    if (e && e.message !== 'cancel') { console.error(e); toast('自動で合わせられませんでした：' + (e.message || e), 'error', 7000); }
+  } finally {
+    A.auto = null;
+    rerender();
+  }
+}
+function cancelAuto() {
+  if (!A.auto) return;
+  if (A.auto.worker) A.auto.worker.terminate();
+  const rej = A.auto.reject;
+  A.auto = null;
+  if (rej) rej(new Error('cancel'));
+  rerender();
+}
+function AutoRow() {
+  const a = A.auto;
+  const msg = a.phase === 'prep' ? '音声を準備しています…'
+    : a.phase === 'load' ? `聞き取りのしくみを読み込んでいます… ${Math.round(a.p * 100)}%`
+      : a.phase === 'listen' ? `聞き取っています… ${a.done} / ${a.of}`
+        : 'テマ友と照らし合わせています…';
+  const p = a.phase === 'load' ? a.p : a.phase === 'listen' && a.of ? a.done / a.of : a.phase === 'match' ? 1 : 0;
+  return h('div', { class: 'au-row' },
+    h('span', { class: 'au-msg' }, msg),
+    h('div', { class: 'au-bar' }, h('div', { class: 'au-done', style: { width: (p * 100) + '%' } })),
+    h('button', { class: 'btn', onclick: cancelAuto }, 'やめる'));
 }
 
 function SyncRow(data, s) {
