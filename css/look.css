@@ -409,3 +409,4 @@
 .img-toolbar .tb-btn { width: 32px; height: 32px; border-radius: 6px; }
 .img-toolbar .tb-btn.on { background: var(--accent-soft); color: var(--accent); }
 .img-toolbar .tb-sep { width: 1px; height: 20px; background: var(--line); margin: 0 3px; }
+.img-toolbar .tb-btn.tb-text { width: auto; padding: 0 10px 0 8px; gap: 6px; font-size: 13px; font-weight: 600; color: var(--accent); }

@@ -21,6 +21,7 @@ import { others, NameTags, ringStyle } from './presence.js';
 import { RichEdit, runSpan, shiftMarks, lastRichEditor, applyToSelection, TEXT_COLORS, BG_COLORS, readEditor, selectionIn, setSelectionIn, attrsOf, marksOf, runsOf, markStyle } from './richtext.js';
 import { blockUpdates, showUpdates, DIAGRAM_FIXED } from './update.js';
 import { neighborDrafts } from './neighbors.js';
+import { loadPhotoSrc, detectCorners, warpToStage, photoForSave } from './trace.js';
 import { CommentsButton, BlockCommentChip, startComment, commentOnBlock, toggleComments, commentsOpen } from './comments.js';
 
 const byOrder = (a, b) => (a.order || 0) - (b.order || 0);
@@ -910,6 +911,7 @@ function ItemView(w, d, b, it, i, items, rows) {
     const inRow = (it.beside && prevImg) || (items0[i + 1] && items0[i + 1].kind === 'image' && items0[i + 1].beside);
     // 写真の操作（Googleドキュメントの画像と同じく、選んだときだけ写真のすぐ下に小さなツールバー。削除などは ⋮ と右クリックのメニュー、Delete キー）
     const menuItems = () => [
+      im && diagramLike[im.id] === true ? { label: '図解にする', onclick: () => photoToDiagram(w, d, b, it, im) } : null,
       inRow ? null : { label: 'ページの幅に', onclick: () => setPhotoWidth(w, d, b, it, 100) },
       prevImg ? { label: '前の写真の横に並べる', checked: !!it.beside, onclick: () => setBeside(w, d, b, it, items0[i - 1], !it.beside) } : null,
       '-',
@@ -919,7 +921,13 @@ function ItemView(w, d, b, it, i, items, rows) {
       class: 'icon-btn tb-btn' + (pressed ? ' on' : ''), type: 'button', title: label, 'aria-label': label, 'aria-pressed': pressed == null ? null : String(pressed),
       onmousedown: (e) => e.preventDefault(), onclick,
     }, icon(ic, 18));
+    if (sel) checkDiagramLike(im);
+    const canDiagram = !!(im && diagramLike[im.id] === true);
     const toolbar = sel ? h('div', { class: 'img-toolbar', role: 'toolbar', 'aria-label': '写真の操作' },
+      canDiagram ? [
+        h('button', { class: 'icon-btn tb-btn tb-text', type: 'button', title: 'この写真を下絵にした図解を作り、写真は消します', onmousedown: (e) => e.preventDefault(), onclick: () => photoToDiagram(w, d, b, it, im) }, icon('stage', 18), '図解にする'),
+        h('span', { class: 'tb-sep' }),
+      ] : null,
       prevImg ? [
         tb('inline', '1枚で置く', () => { if (it.beside) setBeside(w, d, b, it, items0[i - 1], false); }, !it.beside),
         tb('beside', '前の写真の横に並べる', () => { if (!it.beside) setBeside(w, d, b, it, items0[i - 1], true); }, !!it.beside),
@@ -944,6 +952,35 @@ function ItemView(w, d, b, it, i, items, rows) {
       h('div', { class: 'item-tools' }, grip, toolbar));
   }
   return null;
+}
+
+// 図解っぽい写真（舞台の枠が写っている）か。写真を選んだときに一度だけ調べる（image id → true / false / 'wait'）
+const diagramLike = {};
+function checkDiagramLike(im) {
+  if (!im || !im.data || diagramLike[im.id] != null) return;
+  diagramLike[im.id] = 'wait';
+  loadPhotoSrc(im.data).then((p) => { diagramLike[im.id] = !!detectCorners(p); if (diagramLike[im.id]) rerender(); }).catch(() => { diagramLike[im.id] = false; });
+}
+// 写真を下絵にした図解を作り、写真の項目をその図解に置き換える（元の写真は消す。下絵の四隅はあとで合わせ直せる）
+async function photoToDiagram(w, d, b, it, im) {
+  toast('図解にしています…');
+  try {
+    const photo = await loadPhotoSrc(im.data);
+    const pts = detectCorners(photo);
+    if (!pts) throw new Error('舞台の枠が見つかりませんでした');
+    const sv = photoForSave(photo);
+    const iid = await createImage(w, d, warpToStage(photo, pts));
+    const oid = await createImage(w, d, { data: sv.data, w: sv.w, h: sv.h });
+    const gid = newId();
+    await db.batch([
+      { op: 'set', path: P.doc(w, 'diagrams', gid), data: { draftId: d, shapes: {}, trace: { img: iid, orig: oid, pts: pts.map(([x, y]) => [x * sv.k, y * sv.k]), op: 0.5 }, createdAt: Date.now() } },
+      { op: 'update', path: blockPath(w, b), data: { [`items.${it.id}`]: { kind: 'diagram', refId: gid, caption: it.caption || '', order: it.order || 0 } } },
+      { op: 'remove', path: P.doc(w, 'images', it.refId) },
+    ]);
+    touch(w, d);
+    S.ui.selItem = null;
+    openEditor(w, gid);
+  } catch (e) { toast('図解にできませんでした: ' + (e.message || e), 'error', 6000); }
 }
 
 // 写真を前の写真の横に並べる（並べるときは、2枚が1行に入る幅にする）
