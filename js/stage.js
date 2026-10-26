@@ -522,7 +522,7 @@ export function layoutLabels(list, idx, roleVis = {}, interactive = false) {
       const parts = c ? rolesOf(c).map((r, i) => (r.label && roleVisible(roleVis, c.id, i, s.ring) ? r.label : '')) : [];
       // 役で置いた人：その役の名前だけ（役が決まっていれば、メンバーの図ごとの表示・非表示に従う）
       if (pr && (!pr.c || roleVisible(roleVis, pr.c.id, pr.i, s.ring, true))) parts.push(roleShort(pr.role, pr.c && pr.c.roles[pr.i]));
-      if (s.label) parts.push(s.label);
+      if (s.label && !pr) parts.push(s.label); // 役で置いた人は役名だけ（前に付いていた書き添えは出さない）
       const text = parts.filter(Boolean).join('・');
       if (!text) continue;
       const r = s.r || 20;

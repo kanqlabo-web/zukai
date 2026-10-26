@@ -451,7 +451,7 @@ function withCid(s, cid) {
 function withRid(s, rid) {
   if (!rid) return withCid(s, '');
   const n = { ...s, rid };
-  delete n.no; delete n.cid;
+  delete n.no; delete n.cid; delete n.label; // 役で置いた人には書き添えを付けない
   return n;
 }
 // その役の人（役で置いた人か、その役のメンバーで置いた人）
@@ -955,6 +955,7 @@ function showShortcuts() {
 const inlineField = (s) => (s.t === 'text' ? 'text' : s.t === 'person' ? 'label' : 'name');
 function startInline(s) {
   if (!s || !(s.t === 'text' || s.t === 'person' || canName(s))) return;
+  if (s.t === 'person' && s.rid && !s.cid) return; // 役で置いた人は書き添えなし（役名だけ）
   E.sel = new Set([s.id]);
   E.inline = { id: s.id, value: s[inlineField(s)] || '' };
   draw();
@@ -1749,7 +1750,7 @@ function personsToShapes(persons) {
   for (const p of persons) {
     const c = personCast(p, ix);
     const pr = personRole(p, ix);
-    const name = (p.label || '').trim() || (pr ? roleShort(pr.role, pr.c && pr.c.roles[pr.i]) : '') || (c ? (rolesOf(c)[0] && (rolesOf(c)[0].label || rolesOf(c)[0].name)) || c.name || '' : '') || '';
+    const name = (pr ? '' : (p.label || '').trim()) || (pr ? roleShort(pr.role, pr.c && pr.c.roles[pr.i]) : '') || (c ? (rolesOf(c)[0] && (rolesOf(c)[0].label || rolesOf(c)[0].name)) || c.name || '' : '') || '';
     const r = (p.r || 20) + 4;
     const n = { id: p.id, t: 'ellipse', x: p.x, y: p.y, rx: r, ry: r, rot: 0, z: zFor('ellipse') };
     if (name) { n.name = name; n.showName = true; }
@@ -1823,9 +1824,9 @@ function SelPanel() {
       }),
       m ? h('span', { class: 'small' }, `${m.name}${roleText(m) ? '（' + roleText(m) + '）' : ''}`) : h('span', { class: 'muted small' }, pr ? '役者未定' : '番号なし')));
     parts.push(h('p', { class: 'muted small tight' }, 'ほかの人と同じ番号にすると、2人の番号を入れ替えます。'));
-    parts.push(h('label', { class: 'prop' }, h('span', null, m || pr ? '書き添え' : '役名'),
+    if (!pr) parts.push(h('label', { class: 'prop' }, h('span', null, m ? '書き添え' : '役名'),
       h('input', {
-        key: 'lb-' + one.id, value: one.label || '', placeholder: m || pr ? '役名の横に足す文字' : '例：村人、兵士', class: 'grow',
+        key: 'lb-' + one.id, value: one.label || '', placeholder: m ? '役名の横に足す文字' : '例：村人、兵士', class: 'grow',
         oninput: (e) => { E.temp[one.id] = { ...one, label: e.target.value }; draw(); },
         onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
         onchange: (e) => commit({ [one.id]: { ...E.shapes[one.id], label: e.target.value.trim() } }),
@@ -2287,7 +2288,7 @@ function onContext(e) {
     { label: '複製', kbd: MOD + 'D', onclick: () => duplicateList(selectedShapes()) },
     { label: '削除', kbd: 'Delete', onclick: deleteSel },
     '-',
-    one && (one.t === 'text' || one.t === 'person' || canName(one)) ? { label: one.t === 'person' ? '役名を書く' : one.t === 'text' ? '文字を直す' : '名前を書く', kbd: 'ダブルクリック', onclick: () => startInline(one) } : null,
+    one && (one.t === 'text' || (one.t === 'person' && !(one.rid && !one.cid)) || canName(one)) ? { label: one.t === 'person' ? '役名を書く' : one.t === 'text' ? '文字を直す' : '名前を書く', kbd: 'ダブルクリック', onclick: () => startInline(one) } : null,
     { label: '前面へ移動', kbd: MOD + 'Shift+↑', onclick: () => reorder(true) },
     { label: '背面へ移動', kbd: MOD + 'Shift+↓', onclick: () => reorder(false) },
   ] : [
