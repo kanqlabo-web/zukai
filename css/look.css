@@ -415,3 +415,10 @@
 .photo-box.has-conv .photo-pct { top: 40px; }
 .tool.tool-group { position: relative; }
 .tool-group .tool-caret { position: absolute; right: 1px; bottom: 3px; width: 8px; height: 8px; }
+/* 音声を流している間のテマ友（歌詞のように） */
+.show-script.is-lyric { scroll-behavior: smooth; }
+.show-script.is-lyric .show-row { opacity: 1; background: none; }
+.show-script.is-lyric .sline { opacity: .38; transition: opacity .35s, transform .35s, color .35s; transform-origin: left center; }
+.show-script.is-lyric .sline.sung { opacity: .6; }
+.show-script.is-lyric .sline.sing { opacity: 1; font-weight: 700; color: var(--accent, #3d3577); transform: scale(1.05); }
+@media (prefers-reduced-motion: reduce) { .show-script.is-lyric .sline { transition: none; } .show-script.is-lyric .sline.sing { transform: none; } }

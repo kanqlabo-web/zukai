@@ -5,6 +5,7 @@
 //   tracks/{t}.audio = { id, name, type, size, dur（秒）, parts（分けた数。デモモードでは 0）, by, ts, shared（話のトラックで共有） }
 //     1話まるごとの音源は、話のトラックすべてに同じ audio（同じ id）を付ける。時刻は話の音声の中の位置で、トラックをまたいで流れる
 //   works/{w}/audio/{id}_heard = { langs, out }（自動で合わせるときに聞き取った文字。トラックごとに聞き取り直さないように）
+//   聞き取りの途中の分は、この端末の IndexedDB の {id}_partial = { langs, upto, out } に30秒ごとに置き、止まっても続きから始める
 //   works/{w}/audio/{id}_{n} = { aid, n, data }（音声の中身を 700KB ずつ base64 にしたもの。Firestore の1件は 1MB まで）
 //   blocks/{b}.sec = そのタイミングが始まる、音声の中の位置（秒）。稿を複製するとそのまま付いていく
 // 一度読んだ音声は、この端末の IndexedDB（zukai-audio）に置き、次からはサーバーから読まない。
@@ -17,7 +18,7 @@ import { canEdit } from './access.js';
 import { betaOn } from './beta.js';
 import { openContextMenu } from './menubar.js';
 import { confirmBox, ask } from './dialog.js';
-import { sortBlocks } from './script.js';
+import { sortBlocks, resolveAnchor } from './script.js';
 import { langsOf, matchTimes, toMono16k } from './autosync.js';
 
 const PART = 700 * 1024;
@@ -147,6 +148,7 @@ function dropParts(w, meta) {
   db.removeQuiet(P.doc(w, 'audio', meta.id + '_heard')).catch(() => {});
   cacheDel(meta.id);
   cacheDel(meta.id + '_heard');
+  cacheDel(meta.id + '_partial');
 }
 
 async function removeAudio(w, track) {
@@ -189,7 +191,7 @@ function audioEl() {
   const el = new Audio();
   el.preload = 'auto';
   el.addEventListener('play', () => { A.playing = true; loop(); rerender(); });
-  el.addEventListener('pause', () => { A.playing = false; rerender(); });
+  el.addEventListener('pause', () => { A.playing = false; clearLyric(); rerender(); });
   el.addEventListener('ended', onEnded);
   A.el = el;
   return el;
@@ -214,6 +216,7 @@ async function ensure(w, ti, meta) {
     const el = audioEl();
     el.src = A.url;
     await new Promise((res) => { el.onloadedmetadata = res; el.onerror = res; });
+    loadHeard(w, meta);
     return A.aid === meta.id;
   } catch (e) {
     if (A.aid === meta.id) A.err = e.message || String(e);
@@ -261,6 +264,7 @@ function loop() {
     if (!A.el || !A.playing) return;
     if (S.route.name !== 'show') { A.el.pause(); return; }
     paintTime();
+    if (!A.sync) paintLyric(A.el.currentTime);
     if (!A.sync && A.show) {
       const x = targetAt(A.ti, A.el.currentTime);
       if (x && x.b.id !== A.lastAuto) {
@@ -336,6 +340,104 @@ export function audioOnNav(s) {
   if (A.sync) { if (s.b && s.b.sec != null) { A.el.currentTime = Math.max(0, s.b.sec - 3); paintTime(); } return; }
   if (s.b && s.b.sec != null) { A.el.currentTime = s.b.sec; A.lastAuto = s.b.id; paintTime(); }
   else { const x = targetAt(A.ti, A.el.currentTime); A.lastAuto = x ? x.b.id : ''; }
+}
+
+// ---------- 歌詞のように流れるテマ友 ----------
+// 流している間、テマ友のいまの行を目立たせ、画面の上から3分の1あたりに来るように流す。
+// 行の時刻は、聞き取った文字があればそれと照らし合わせて、なければタイミングの時刻のあいだを文字数で割り振って決める。
+const heardMem = {}; // 音声の id → 聞き取った文字（なければ null）
+async function loadHeard(w, meta) {
+  if (heardMem[meta.id] !== undefined) return;
+  heardMem[meta.id] = null;
+  const c = await cacheGet(meta.id + '_heard');
+  if (c) { heardMem[meta.id] = c.out; return; }
+  if (!meta.parts) return;
+  const d = await db.getQuiet(P.doc(w, 'audio', meta.id + '_heard'));
+  if (d && d.out) { heardMem[meta.id] = d.out; cachePut(meta.id + '_heard', d); }
+}
+
+let lyricCache = { key: '', times: [] };
+function lineTimes(t, starts) {
+  const text = t.draft.script || '';
+  const blocks = (t.blocks || []).filter((b) => b.sec != null);
+  const heard = heardMem[t.track.audio.id];
+  const key = [t.draft.id, text.length, starts.join(','), blocks.map((b) => b.id + b.sec).join(','), heard ? 'h' : ''].join('|');
+  if (lyricCache.key === key) return lyricCache.times;
+  let times;
+  if (heard) times = matchTimes(text, heard, starts).secs;
+  else {
+    const pts = blocks.map((b) => ({ off: resolveAnchor(text, b.anchor).offset, t: b.sec })).sort((a, b) => a.off - b.off);
+    const rate = pts.length > 1 ? (pts[pts.length - 1].t - pts[0].t) / Math.max(1, pts[pts.length - 1].off - pts[0].off) : 0.12;
+    times = starts.map((o) => {
+      let k = 0;
+      while (k < pts.length && pts[k].off <= o) k++;
+      const p0 = pts[k - 1], p1 = pts[k];
+      if (!p0) return null; // 最初のタイミングより前は分からない
+      if (!p1) return p0.t + (o - p0.off) * rate;
+      return p0.t + (p1.t - p0.t) * (o - p0.off) / (p1.off - p0.off);
+    });
+  }
+  lyricCache = { key, times };
+  return times;
+}
+
+let userScroll = 0;
+for (const ev of ['wheel', 'touchstart']) document.addEventListener(ev, (e) => { if (e.target.closest && e.target.closest('.show-script')) userScroll = Date.now(); }, { passive: true });
+
+// いま表示しているトラックの行（.sline の data-ls）と時刻
+function shownLines() {
+  const data = S.d.print;
+  const s = A.show && data && A.show.steps()[A.show.cur()];
+  const pane = document.querySelector('.show-script');
+  if (!s || !pane || aidOf(s.ti) !== A.aid) return null;
+  const els = [...pane.querySelectorAll('.sline[data-ls]')].filter((el) => !el.classList.contains('blank'));
+  const t = data.targets[s.ti];
+  return { pane, els, ti: s.ti, times: lineTimes(t, els.map((el) => +el.dataset.ls)) };
+}
+function paintLyric(now) {
+  const L = shownLines();
+  if (!L) return;
+  let cur = -1;
+  L.times.forEach((x, i) => { if (x != null && x <= now + 0.15) cur = i; });
+  L.pane.classList.add('is-lyric');
+  L.els.forEach((el, i) => {
+    el.classList.toggle('sing', i === cur);
+    el.classList.toggle('sung', cur >= 0 && i < cur);
+  });
+  const el = L.els[cur];
+  if (el && A.lyricEl !== el) {
+    A.lyricEl = el;
+    if (Date.now() - userScroll > 5000) {
+      const top = L.pane.scrollTop + el.getBoundingClientRect().top - L.pane.getBoundingClientRect().top - L.pane.clientHeight * 0.33;
+      L.pane.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    }
+  }
+}
+function clearLyric() {
+  A.lyricEl = null;
+  const pane = document.querySelector('.show-script.is-lyric');
+  if (!pane) return;
+  pane.classList.remove('is-lyric');
+  pane.querySelectorAll('.sline.sing, .sline.sung').forEach((el) => el.classList.remove('sing', 'sung'));
+}
+// 流している間は、閲覧モードがテマ友を段の先頭へ動かさない（show.js の afterShow）
+export const audioLyricOn = () => betaOn() && A.playing && !A.sync;
+// テマ友の行を押したとき：音声があれば、その行の時刻から（show.js から呼ぶ。合わせたら true）
+export function audioSeekLine(ti, ls) {
+  if (!betaOn() || !A.el || !A.aid || A.sync || A.loading || aidOf(ti) !== A.aid) return false;
+  const L = shownLines();
+  if (!L || L.ti !== ti) return false;
+  const i = L.els.findIndex((el) => +el.dataset.ls === ls);
+  const t = L.times[i];
+  if (i < 0 || t == null) return false;
+  A.el.currentTime = Math.max(0, t - 0.3);
+  const x = targetAt(ti, A.el.currentTime);
+  A.lastAuto = x ? x.b.id : '';
+  if (x) { A.ti = A.show.steps()[x.i].ti; A.show.goTo(x.i, true); }
+  A.lyricEl = null;
+  paintTime();
+  if (A.playing) paintLyric(A.el.currentTime);
+  return true;
 }
 
 // ---------- 時刻を合わせる ----------
@@ -453,10 +555,14 @@ async function autoSync(data, ti) {
     const d = await db.getQuiet(P.doc(data.w, 'audio', hkey));
     if (d && d.langs === langs.join(',')) { heard = d.out; cachePut(hkey, d); }
   }
+  const pkey = meta.id + '_partial';
+  const p0 = heard ? null : await cacheGet(pkey);
+  const partial = p0 && p0.langs === langs.join(',') ? p0 : null;
   const r = await ask({
     title: '時刻を自動で合わせる（ためし）',
     message: '音声をこの端末で聞き取って文字にし、テマ友と照らし合わせて、タイミングに時刻を付けます。' + (group.length > 1 ? `（${group.length}トラック）` : ''),
     detail: heard ? 'この音声はもう聞き取ってあるので、すぐに終わります。付けたあと、ずれているところは「時刻を合わせる」で直してください。'
+      : partial ? `前回の聞き取りの続き（${fmtShort(partial.upto * 30)} まで済み）から始めます。この端末のこのページを開いたままにしてください（閉じても、次はまた続きから始めます）。`
       : '初めてのときは聞き取りのしくみ（約80MB）を読み込みます（次からはいりません）。聞き取りには、音声の長さと同じくらいかそれ以上かかることがあります（1話まるごとの音源なら1時間以上）。パソコンでの利用をおすすめします。聞き取った文字は保存するので、同じ音声のほかのトラックはすぐに終わります。付けたあと、ずれているところは「時刻を合わせる」で直してください。',
     fields: [],
     choices: has ? [['missing', `時刻のないタイミングだけ（${all - has}件）`], ['all', `すべて付け直す（${all}件）`]] : [['all', '始める']],
@@ -470,13 +576,15 @@ async function autoSync(data, ti) {
     if (!heard) {
       const audio = await toMono16k(await loadBlob(data.w, meta), meta.name);
       if (!A.auto) return;
-      heard = await listen(audio, langs);
+      heard = await listen(audio, langs, partial, (upto, out) => cachePut(pkey, { langs: langs.join(','), upto, out }));
       const rec = { langs: langs.join(','), out: heard };
       cachePut(hkey, rec);
+      cacheDel(pkey);
       if (meta.parts && JSON.stringify(rec).length < 900000) db.setQuiet(P.doc(data.w, 'audio', hkey), rec).catch(() => {});
     }
     A.auto.phase = 'match'; rerender();
     window.__zukaiHeard = heard; // 調べるとき用（コンソールで見られる）
+    heardMem[meta.id] = heard;
     const ops = [];
     let found = 0;
     for (const g of group) {
@@ -499,7 +607,8 @@ async function autoSync(data, ti) {
   }
 }
 // asr-worker.js で聞き取る
-function listen(audio, langs) {
+// partial：前回の途中までの分。onWin(upto, out)：30秒ごとに途中までの分を保存する
+function listen(audio, langs, partial, onWin) {
   return new Promise((res, rej) => {
     const wk = new Worker(new URL('./asr-worker.js', import.meta.url), { type: 'module' });
     A.auto.worker = wk;
@@ -508,13 +617,14 @@ function listen(audio, langs) {
       const m = e.data;
       if (!A.auto) return;
       if (m.type === 'load') { A.auto.phase = 'load'; A.auto.p = m.p; rerender(); }
-      else if (m.type === 'step') { if (A.auto.phase !== 'listen') A.auto.t0 = Date.now(); A.auto.phase = 'listen'; A.auto.done = m.done; A.auto.of = m.of; rerender(); }
+      else if (m.type === 'step') { if (A.auto.phase !== 'listen') { A.auto.t0 = Date.now(); A.auto.d0 = m.done; } A.auto.phase = 'listen'; A.auto.done = m.done; A.auto.of = m.of; rerender(); }
+      else if (m.type === 'win') onWin(m.upto, m.out);
       else if (m.type === 'done') { wk.terminate(); res(m.out); }
       else if (m.type === 'error') { wk.terminate(); rej(new Error(m.msg)); }
     };
     wk.onerror = (e) => { wk.terminate(); rej(new Error(e.message || '聞き取りを始められませんでした')); };
     const cfg = window.ZUKAI_ASR || {};
-    wk.postMessage({ audio, langs, model: cfg.model, tjs: cfg.tjs, local: cfg.local }, [audio.buffer]);
+    wk.postMessage({ audio, langs, model: cfg.model, tjs: cfg.tjs, local: cfg.local, from: partial ? partial.upto : 0, prev: partial ? partial.out : null }, [audio.buffer]);
   });
 }
 function cancelAuto() {
@@ -527,7 +637,7 @@ function cancelAuto() {
 }
 function AutoRow() {
   const a = A.auto;
-  const left = a.phase === 'listen' && a.of && a.done ? Math.round((Date.now() - a.t0) / a.done * (a.of - a.done) / 60000) : null;
+  const left = a.phase === 'listen' && a.of && a.done > a.d0 ? Math.round((Date.now() - a.t0) / (a.done - a.d0) * (a.of - a.done) / 60000) : null;
   const msg = a.phase === 'prep' ? '音声を準備しています…'
     : a.phase === 'load' ? `聞き取りのしくみを読み込んでいます… ${Math.round(a.p * 100)}%`
       : a.phase === 'listen' ? `聞き取っています… ${a.done} / ${a.of}` + (left != null ? `（あと${left < 1 ? '1分以内' : `約${left}分`}）` : '')

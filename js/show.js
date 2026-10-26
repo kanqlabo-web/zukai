@@ -12,7 +12,7 @@ import { openEditorAfter } from './editor.js';
 import { canEdit } from './access.js';
 import { icon } from './icons.js';
 import { ShowFigure, ShowMoveButton, MoveSheet, moveEditing, ShowMeSelect, MeNote } from './moves.js';
-import { ShowAudioBar, audioOnNav, audioKey } from './audio.js';
+import { ShowAudioBar, audioOnNav, audioKey, audioLyricOn, audioSeekLine } from './audio.js';
 
 const byOrder = (a, b) => (a.order || 0) - (b.order || 0) || (a.createdAt || 0) - (b.createdAt || 0);
 const V = { key: '', i: 0, scrolled: -1, side: null };
@@ -175,7 +175,7 @@ export function ShowView() {
           text ? rows.map((row) => h('div', {
             key: 'r' + row.start,
             class: 'show-row' + (s.b && row.start <= s.off && s.off < row.end ? ' cur' : '') + (row.start > s.off && row.start < nextOff ? ' cur' : ''),
-          }, ScriptLines(text, row.lines, hls, { onLine: (e, l) => jumpToText(s.ti, l.end) })))
+          }, ScriptLines(text, row.lines, hls, { onLine: (e, l) => { if (!audioSeekLine(s.ti, l.start)) jumpToText(s.ti, l.end); } })))
             : h('p', { class: 'muted' }, '（テマ友なし）')))),
     V.zoom ? h('div', { class: 'show-zoom', onclick: () => { V.zoom = null; rerender(); } },
       h('img', { src: V.zoom.src, alt: V.zoom.cap || '参考写真' }),
@@ -192,6 +192,7 @@ export function afterShow() {
   if (S.route.name !== 'show') return;
   slidePeople();
   if (V.scrolled === V.i) return;
+  if (audioLyricOn()) { V.scrolled = V.i; return; } // 音声を流している間は audio.js が行ごとに流す
   const pane = document.querySelector('.show-script');
   const cur = pane && pane.querySelector('.show-row.cur');
   if (!pane) return;
