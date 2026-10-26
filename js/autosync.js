@@ -282,10 +282,6 @@ function lidUnits(text, lid) {
     if (z != null && blocks[z].s - a > 8) blocks.splice(j + 1, z - j - 1, { lang: 'm', s: a, e: blocks[z].s, segs: [], sp: 0 });
     z = j;
   }
-  // 音声の最初の30秒までに短い声がいくつかあって、そのあと歌や音楽（m）になるところは、CD の最初に読まれる題名や話の名前とみる（2.48.3〜）。
-  // テマ友にはないので、どの行にも当てはめない（当てはめると、最初の行がそこに付いて、後ろがずれる）
-  const f0 = blocks[0] && blocks[0].lang === 'm' ? 1 : 0, fm = blocks.findIndex((b, j) => j > f0 && b.lang === 'm');
-  if (fm > f0 && fm - f0 <= 6 && blocks[fm].s <= 30 && blocks.slice(f0, fm).every((b) => b.e - b.s < 6)) blocks.slice(f0, fm).forEach((b) => { b.lang = '?'; });
   const totSp = blocks.filter((b) => b.lang !== '?').reduce((a, b) => a + b.sp, 0), totDur = runs.reduce((a, r) => a + r.dur, 0);
   const k = totSp / Math.max(1, totDur); // 読む速さ（文字数からの見積もりに対する実際の長さ）
   const p = runs.length, q = blocks.length, INF = 1e9, SPAN = 4;
