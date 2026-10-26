@@ -350,6 +350,7 @@ function applyProp(list, which) {
 }
 
 async function commit(changes, record = true) {
+  if (record) changes = packWings(changes);
   const ids = Object.keys(changes);
   if (!ids.length) return;
   const before = {};
@@ -625,6 +626,38 @@ function fillRegions(regions) {
 // 袖は舞台の左右の枠（x 10〜90 と 910〜990）。重ならないよう、もとの上下の並び順のまま縦に並べる。
 // 入りきらないときは2列の互い違いにし、それでも足りなければ間を詰める
 const WINGS = { left: [10, 90], right: [910, 990] };
+// 袖ははけている所なので、細かい位置は関係ない。人が袖に入った・出たら、その袖の人を番号順に上から詰めて並べる
+// （2人ずつ横に並べ、入りきらなければ間を詰める）
+const wingOf = (s) => (!isPerson(s) ? null : s.x <= WINGS.left[1] ? 'left' : s.x >= WINGS.right[0] ? 'right' : null);
+function packWings(changes) {
+  const sides = new Set();
+  for (const [id, nw] of Object.entries(changes)) {
+    const old = E.shapes[id];
+    if (nw && isPerson(nw) && (!old || old.x !== nw.x || old.y !== nw.y)) { if (wingOf(nw)) sides.add(wingOf(nw)); if (old && wingOf(old)) sides.add(wingOf(old)); }
+    if (!nw && old && wingOf(old)) sides.add(wingOf(old));
+  }
+  if (!sides.size) return changes;
+  const ix = idx();
+  const all = { ...E.shapes, ...changes };
+  const out = { ...changes };
+  const num = (p) => { const n = parseInt(personNo(p, ix), 10); return Number.isFinite(n) ? n : 1e6; };
+  for (const side of sides) {
+    const [x0, x1] = WINGS[side];
+    const ps = Object.values(all).filter((p) => p && wingOf(p) === side).sort((a, b) => num(a) - num(b) || a.y - b.y);
+    if (!ps.length) continue;
+    const r = Math.max(...ps.map((p) => p.r || 20)) * 0.7; // 見えている丸の大きさ
+    const cx = (x0 + x1) / 2, dx = Math.max(0, Math.min(r + 2, (x1 - x0) / 2 - r));
+    const top = 10 + r + 4, bottom = 460 - r - 4;
+    const rows = Math.ceil(ps.length / 2);
+    const step = rows > 1 ? Math.min(2 * r + 6, (bottom - top) / (rows - 1)) : 0;
+    ps.forEach((p, i) => {
+      const x = Math.round(cx + (i % 2 ? dx : -dx)), y = Math.round(top + Math.floor(i / 2) * step);
+      if (p.x !== x || p.y !== y) out[p.id] = { ...p, x, y };
+    });
+  }
+  return out;
+}
+
 function exitPersons() {
   const ps = selectedShapes().filter(isPerson);
   if (!ps.length) return;
