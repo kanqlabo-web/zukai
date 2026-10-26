@@ -24,6 +24,9 @@ const P = {
   photo: 'M4 5h16v14H4zM4 16l5-5 4 4 2.5-2.5L20 17M15.5 8.5h.01',
   copy: 'M9 9h11v11H9zM5 15H4V4h11v1',
   comment: 'M4 5h16v11H10l-4 3.5V16H4z',
+  inline: 'M4 4h16M4 20h16M7 8h10v8H7z',
+  beside: 'M3 7h8v10H3zM13 7h8v10h-8z',
+  fitwidth: 'M3 5v14M21 5v14M7 12h10M10 9l-3 3 3 3M14 9l3 3-3 3',
   help: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6M12 17h.01',
 };
 

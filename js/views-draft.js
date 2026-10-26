@@ -10,7 +10,7 @@ import { CastTable, Legend, ScriptLines, DotText } from './sheet.js';
 import { openEditor, PresenceMarks } from './editor.js';
 import { DraftMovesBar } from './moves.js';
 import { confirmBox, ask } from './dialog.js';
-import { MenuBar, MOD } from './menubar.js';
+import { MenuBar, MOD, openContextMenu } from './menubar.js';
 import { undoAll, redoAll } from './undo.js';
 import { history } from './db.js';
 import { CHANGELOG_URL } from './version.js';
@@ -908,7 +908,26 @@ function ItemView(w, d, b, it, i, items, rows) {
     const items0 = items;
     const prevImg = i > 0 && items0[i - 1].kind === 'image';
     const inRow = (it.beside && prevImg) || (items0[i + 1] && items0[i + 1].kind === 'image' && items0[i + 1].beside);
-    return h('div', { ...pickable, class: 'item image' + (sel ? ' selected' : '') + (inRow ? ' in-row' : ''), style: inRow ? { width: pw + '%' } : null },
+    // 写真の操作（Googleドキュメントの画像と同じく、選んだときだけ写真のすぐ下に小さなツールバー。削除などは ⋮ と右クリックのメニュー、Delete キー）
+    const menuItems = () => [
+      inRow ? null : { label: 'ページの幅に', onclick: () => setPhotoWidth(w, d, b, it, 100) },
+      prevImg ? { label: '前の写真の横に並べる', checked: !!it.beside, onclick: () => setBeside(w, d, b, it, items0[i - 1], !it.beside) } : null,
+      '-',
+      { label: '写真を削除', kbd: 'Delete', onclick: () => removeItem(w, d, b, it) },
+    ];
+    const tb = (ic, label, onclick, pressed) => h('button', {
+      class: 'icon-btn tb-btn' + (pressed ? ' on' : ''), type: 'button', title: label, 'aria-label': label, 'aria-pressed': pressed == null ? null : String(pressed),
+      onmousedown: (e) => e.preventDefault(), onclick,
+    }, icon(ic, 18));
+    const toolbar = sel ? h('div', { class: 'img-toolbar', role: 'toolbar', 'aria-label': '写真の操作' },
+      prevImg ? [
+        tb('inline', '1枚で置く', () => { if (it.beside) setBeside(w, d, b, it, items0[i - 1], false); }, !it.beside),
+        tb('beside', '前の写真の横に並べる', () => { if (!it.beside) setBeside(w, d, b, it, items0[i - 1], true); }, !!it.beside),
+        h('span', { class: 'tb-sep' }),
+      ] : null,
+      inRow ? null : tb('fitwidth', 'ページの幅に', () => setPhotoWidth(w, d, b, it, 100)),
+      tb('more', '写真のオプション', (e) => { const r = e.currentTarget.getBoundingClientRect(); openContextMenu(r.left, r.bottom + 4, menuItems(), rerender); })) : null;
+    return h('div', { ...pickable, oncontextmenu: (e) => { if (e.target.closest('input')) return; selectItem(it, e.target); e.itemMenu = menuItems(); }, class: 'item image' + (sel ? ' selected' : '') + (inRow ? ' in-row' : ''), style: inRow ? { width: pw + '%' } : null },
       h('input', {
         class: 'caption' + (it.caption ? '' : ' is-empty'), value: it.caption || '', placeholder: '写真の見出し（任意）例：＜木のイメージ＞', 'data-pkey': 'cap:' + it.id,
         oninput: (e) => { e.target.classList.toggle('is-empty', !e.target.value); saveLater(blockPath(w, b), { [`items.${it.id}.caption`]: e.target.value }); touch(w, d); },
@@ -922,12 +941,7 @@ function ItemView(w, d, b, it, i, items, rows) {
           onkeydown: (e) => { const k = { ArrowLeft: -5, ArrowRight: 5, ArrowDown: -5, ArrowUp: 5 }[e.key]; if (k) { e.preventDefault(); setPhotoWidth(w, d, b, it, pw + k); } },
         }),
         h('span', { class: 'photo-pct' }, pw + '%')),
-      bar([
-        inRow ? null : h('button', { class: 'btn tiny', onclick: () => setPhotoWidth(w, d, b, it, 100) }, 'ページの幅に'),
-        // 写真を横に並べる：前の写真の右に置く（2枚とも幅を半分くらいにする）
-        prevImg && !it.beside ? h('button', { class: 'btn tiny', onclick: () => setBeside(w, d, b, it, items0[i - 1], true) }, '前の写真の横に並べる') : null,
-        it.beside && prevImg ? h('button', { class: 'btn tiny', onclick: () => setBeside(w, d, b, it, items0[i - 1], false) }, '横並びをやめる') : null,
-      ]));
+      h('div', { class: 'item-tools' }, grip, toolbar));
   }
   return null;
 }

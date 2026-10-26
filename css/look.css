@@ -402,3 +402,10 @@
 .clash-path { stroke: #c0262d; fill: none; opacity: .8; }
 .clash-path.far { stroke: #d97706; }
 .clash-dot.scene { background: #d97706; }
+
+/* 写真を選んだときだけ、写真のすぐ下に出る小さなツールバー（Googleドキュメントの画像と同じ使い方） */
+.item.image .item-tools { min-height: 36px; }
+.img-toolbar { display: inline-flex; align-items: center; gap: 2px; padding: 2px; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.img-toolbar .tb-btn { width: 32px; height: 32px; border-radius: 6px; }
+.img-toolbar .tb-btn.on { background: var(--accent-soft); color: var(--accent); }
+.img-toolbar .tb-sep { width: 1px; height: 20px; background: var(--line); margin: 0 3px; }

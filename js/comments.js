@@ -287,10 +287,12 @@ document.addEventListener('contextmenu', (e) => {
   const ds = window.getSelection();
   const hasSel = !!(ds && ds.rangeCount && !ds.isCollapsed && t.closest('.script-ed, .note-ed'));
   const block = t.closest('[data-pblock]');
-  if (!hasSel && !block) return;
+  const own = e.itemMenu || null; // 写真などを右クリックしたときの、その項目のメニュー（views-draft.js）
+  if (!hasSel && !block && !own) return;
   e.preventDefault();
   const copy = () => { try { document.execCommand('copy'); } catch (err) { /* noop */ } };
   openContextMenu(e.clientX, e.clientY, [
+    ...(own ? [...own, '-'] : []),
     hasSel ? { label: 'コピー', kbd: MOD + 'C', onclick: copy } : null,
     hasSel ? '-' : null,
     hasSel ? { label: 'コメント', kbd: MOD + 'Alt+M', onclick: startComment } : null,
