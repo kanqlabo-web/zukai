@@ -40,7 +40,7 @@ function heardChars(chunks, re) {
 
 const RATE = { en: 0.065, ja: 0.13 }; // 1文字を読むおよその秒
 // 行の頭の話し手の名前（「NARRATOR:」「語り:」など。CD では読まれない）
-const LABEL = /^[^\S\n]*[^\n:：。、.!?！？]{1,16}[:：][^\S\n]*/;
+const LABEL = /^[^\S\n]*[^\n:：。、.!?！？]{1,24}[:：][^\S\n]*/;
 
 // テマ友を「同じ言語の文字が続くまとまり」に分ける（行の頭の話し手の名前は除く）
 function unitsOf(text) {
@@ -101,7 +101,7 @@ function candidates(u, H) {
     const at = b * 8 + 4;
     const r = local(A, H, Math.max(0, at - 14), Math.min(H.length, at + L + 14), u.lang === 'ja' ? 12 : 24);
     if (r && r.sc >= 0.3 && !out.some((o) => o.j === r.j)) {
-      out.push({ j: r.j, sc: r.sc, t: Math.max(0, H[r.j].t - r.i * RATE[u.lang]), end: H[r.endj].e + Math.max(0, u.cs.length - 1 - r.endi) * RATE[u.lang] });
+      out.push({ j: r.j, sc: r.sc, lead: r.i, t: Math.max(0, H[r.j].t - r.i * RATE[u.lang]), end: H[r.endj].e + Math.max(0, u.cs.length - 1 - r.endi) * RATE[u.lang] });
     }
   }
   out.sort((a, b) => b.sc - a.sc);
@@ -139,19 +139,37 @@ function alignUnits(text, heard) {
   let top = null;
   for (const s of states) if (!top || s.v > top.v) top = s;
   for (let s = top; s; s = s.prev) Object.assign(units[s.ui], { t: s.c.t, end: s.c.end, hit: true });
-  const span = (from, to) => { let d = 0; for (let k = from; k < to; k++) d += units[k].dur + 0.4; return d; };
-  for (let ui = 0; ui < units.length; ui++) {
-    const u = units[ui];
-    if (u.t != null) continue;
-    let a = ui - 1; while (a >= 0 && units[a].t == null) a--;
-    let b = ui + 1; while (b < units.length && !units[b].hit) b++;
-    const A = units[a], B = units[b];
-    if (!A && !B) continue;
-    if (A && A.end != null && a === ui - 1 && A.lang !== u.lang && (!B || B.t - A.end <= u.dur * 2 + 3)) { u.t = Math.min(A.end + 0.4, B ? B.t - 0.3 : Infinity); u.t = Math.max(u.t, A.t); continue; }
-    if (A && B) u.t = A.t + (B.t - A.t) * span(a, ui) / span(a, b);
-    else if (A) u.t = A.t + span(a, ui);
-    else u.t = Math.max(0, B.t - span(ui, b));
+  // 行の後ろのほうしか合わなかったまとまり（「…I am most grateful」の grateful だけなど）は、そこから頭を逆算すると
+  // 歌や間のあるところで大きくずれるので、始まりは前後から見積もる。逆算した時刻はそれより遅くしない上限にだけ使う
+  // 上限は、前の見つかったまとまりより後の候補のうちいちばん早いもの（長い歌詞の途中の語が先に合っていればそこから）
+  let lastT = -Infinity;
+  for (const u of units) {
+    if (!u.hit) continue;
+    const c = u.cand.find((x) => x.t === u.t);
+    if (c && c.lead > 8) {
+      u.ub = Math.min(...u.cand.filter((x) => x.t >= lastT - 2 && x.t <= u.t).map((x) => x.t));
+      u.t = null; u.end = null; u.hit = false;
+    } else lastT = u.t;
   }
+  const span = (from, to) => { let d = 0; for (let k = from; k < to; k++) d += units[k].dur + 0.4; return d; };
+  // 上限のあるまとまりを先に置き、それも決まった点として残りを置く
+  const fill = (only) => {
+    for (let ui = 0; ui < units.length; ui++) {
+      const u = units[ui];
+      if (u.t != null || (only && u.ub == null)) continue;
+      let a = ui - 1; while (a >= 0 && units[a].t == null) a--;
+      let b = ui + 1; while (b < units.length && !units[b].hit && !units[b].fix) b++;
+      const A = units[a], B = units[b];
+      if (!A && !B) continue;
+      if (u.ub == null && A && A.end != null && a === ui - 1 && A.lang !== u.lang && (!B || B.t - A.end <= u.dur * 2 + 3)) { u.t = Math.min(A.end + 0.4, B ? B.t - 0.3 : Infinity); u.t = Math.max(u.t, A.t); continue; }
+      if (A && B) u.t = A.t + (B.t - A.t) * span(a, ui) / span(a, b);
+      else if (A) u.t = A.t + span(a, ui);
+      else u.t = Math.max(0, B.t - span(ui, b));
+      if (u.ub != null) { u.t = Math.min(u.t, u.ub); u.fix = true; }
+    }
+  };
+  fill(true);
+  fill(false);
   // 時刻が戻らないように
   for (let ui = 1; ui < units.length; ui++) if (units[ui].t != null && units[ui - 1].t != null && units[ui].t < units[ui - 1].t) units[ui].t = units[ui - 1].t;
   return units;
