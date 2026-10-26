@@ -98,12 +98,26 @@ export function matchTimes(text, heard, offs) {
 }
 
 // 音声を 16kHz・モノラルにする（Whisper の入力）
-export async function toMono16k(blob) {
-  const buf = await blob.arrayBuffer();
-  const ctx = new OfflineAudioContext(1, 1, 16000);
-  const ab = await ctx.decodeAudioData(buf);
+// 長い MP3（1話まるごとなど）は、一度に読むとメモリが足りなくなるので、4MB ずつ読んでつなげる（MP3 は途中からでも読める）
+async function decode(buf) {
+  const ab = await new OfflineAudioContext(1, 1, 16000).decodeAudioData(buf);
   if (ab.numberOfChannels === 1) return ab.getChannelData(0);
   const out = new Float32Array(ab.length);
   for (let c = 0; c < ab.numberOfChannels; c++) { const d = ab.getChannelData(c); for (let i = 0; i < d.length; i++) out[i] += d[i] / ab.numberOfChannels; }
   return out;
+}
+const STEP = 4 * 1024 * 1024;
+export async function toMono16k(blob, name = '') {
+  const mp3 = /mpeg|mp3/.test(blob.type) || /\.mp3$/i.test(name);
+  if (!mp3 || blob.size <= STEP * 3) return decode(await blob.arrayBuffer());
+  try {
+    const parts = [];
+    for (let o = 0; o < blob.size; o += STEP) parts.push(await decode(await blob.slice(o, o + STEP).arrayBuffer()));
+    const out = new Float32Array(parts.reduce((a, x) => a + x.length, 0));
+    let k = 0;
+    for (const x of parts) { out.set(x, k); k += x.length; }
+    return out;
+  } catch (e) {
+    return decode(await blob.arrayBuffer());
+  }
 }

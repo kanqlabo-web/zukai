@@ -2,7 +2,9 @@
 // ベータ版の機能（beta.js）。オンにした端末だけに出す。
 //
 // データ：
-//   tracks/{t}.audio = { id, name, type, size, dur（秒）, parts（分けた数。デモモードでは 0）, by, ts }
+//   tracks/{t}.audio = { id, name, type, size, dur（秒）, parts（分けた数。デモモードでは 0）, by, ts, shared（話のトラックで共有） }
+//     1話まるごとの音源は、話のトラックすべてに同じ audio（同じ id）を付ける。時刻は話の音声の中の位置で、トラックをまたいで流れる
+//   works/{w}/audio/{id}_heard = { langs, out }（自動で合わせるときに聞き取った文字。トラックごとに聞き取り直さないように）
 //   works/{w}/audio/{id}_{n} = { aid, n, data }（音声の中身を 700KB ずつ base64 にしたもの。Firestore の1件は 1MB まで）
 //   blocks/{b}.sec = そのタイミングが始まる、音声の中の位置（秒）。稿を複製するとそのまま付いていく
 // 一度読んだ音声は、この端末の IndexedDB（zukai-audio）に置き、次からはサーバーから読まない。
@@ -19,7 +21,7 @@ import { sortBlocks } from './script.js';
 import { langsOf, matchTimes, toMono16k } from './autosync.js';
 
 const PART = 700 * 1024;
-const MAX = 20 * 1024 * 1024;
+const MAX = 80 * 1024 * 1024; // 1話まるごとの音源も入るように
 
 // ---------- この端末の控え（IndexedDB） ----------
 let dbp = null;
@@ -78,13 +80,28 @@ async function importAudio(w, track) {
   const file = await pickFile('audio/*,.mp3,.m4a,.aac,.wav,.ogg,.opus,.webm,.flac');
   if (!file) return;
   if (file.size > MAX) {
-    toast(`音声が大きすぎます（${(file.size / 1048576).toFixed(1)}MB）。20MB までにしてください。WAV は MP3 や M4A に変えると小さくなります。`, 'error', 7000);
+    toast(`音声が大きすぎます（${(file.size / 1048576).toFixed(1)}MB）。80MB までにしてください。WAV は MP3 や M4A に、長い音源は 64kbps くらいの MP3 にすると小さくなります。`, 'error', 8000);
     return;
   }
   const dur = await probe(file);
   if (dur < 0) { toast('この形式の音声は、このブラウザでは再生できません。MP3 か M4A にしてください。', 'error', 6000); return; }
+  // 同じ話のほかのトラックでも使うか（1話まるごとの音源）
+  let tracks = [track];
+  const sibs = track.episodeId ? (await db.list(P.col(w, 'tracks'), ['episodeId', track.episodeId])).filter((x) => x.id !== track.id) : [];
+  if (sibs.length) {
+    const one = ['one', 'このトラックだけ'], all = ['all', `この話のトラックすべて（${sibs.length + 1}トラック）`];
+    const r = await ask({
+      title: '音声を読み込む',
+      message: `「${file.name}」（${fmtShort(dur)}）を、どのトラックで使いますか？`,
+      detail: '1話まるごとの音源なら「この話のトラックすべて」を選びます。タイミングの時刻は話の音声の中の位置になり、話の閲覧モードではトラックをまたいで流れます。',
+      fields: [],
+      choices: dur > 12 * 60 ? [one, all] : [all, one], // 長い音声なら「すべて」をおすすめ（最後のボタンが主）
+    });
+    if (!r) return;
+    if (r.choice === 'all') tracks = [track, ...sibs];
+  }
   const id = newId();
-  const old = track.audio;
+  const olds = tracks.map((x) => x.audio).filter(Boolean);
   const local = mode !== 'firebase';
   const parts = local ? 0 : Math.ceil(file.size / PART);
   A.saving = { name: file.name, done: 0, of: parts };
@@ -98,11 +115,11 @@ async function importAudio(w, track) {
       A.saving.done = n + 1;
       rerender();
     }
-    const meta = { id, name: file.name, type: file.type || '', size: file.size, dur, parts, by: (S.user && S.user.name) || '', ts: Date.now() };
-    await db.updateQuiet(P.doc(w, 'tracks', track.id), { audio: meta });
-    track.audio = meta;
-    if (old) dropParts(w, old);
-    toast(local ? '音声を読み込みました（デモモードでは、この端末だけに保存します）' : '音声を読み込みました');
+    const meta = { id, name: file.name, type: file.type || '', size: file.size, dur, parts, by: (S.user && S.user.name) || '', ts: Date.now(), shared: tracks.length > 1 };
+    for (const x of tracks) await db.updateQuiet(P.doc(w, 'tracks', x.id), { audio: meta });
+    setLocalMeta(tracks.map((x) => x.id), meta);
+    for (const o of olds) dropIfUnused(w, o);
+    toast((tracks.length > 1 ? `${tracks.length}トラックで使う音声を読み込みました` : '音声を読み込みました') + (local ? '（デモモードでは、この端末だけに保存します）' : ''));
   } catch (e) {
     console.error(e);
     toast('音声を保存できませんでした：' + (e.message || e), 'error', 6000);
@@ -113,19 +130,41 @@ async function importAudio(w, track) {
   }
 }
 
+// 閲覧モードが持っているトラックにも反映する
+function setLocalMeta(ids, meta) {
+  const data = S.d.print;
+  if (data) for (const t of data.targets) if (t.track && ids.includes(t.track.id)) t.track.audio = meta;
+}
+// どのトラックも使わなくなった音声の中身を消す
+async function dropIfUnused(w, meta) {
+  const all = await db.list(P.col(w, 'tracks'));
+  if (all.some((x) => x.audio && x.audio.id === meta.id)) return;
+  dropParts(w, meta);
+}
+
 function dropParts(w, meta) {
   for (let n = 0; n < (meta.parts || 0); n++) db.removeQuiet(partPath(w, meta.id, n)).catch(() => {});
+  db.removeQuiet(P.doc(w, 'audio', meta.id + '_heard')).catch(() => {});
   cacheDel(meta.id);
+  cacheDel(meta.id + '_heard');
 }
 
 async function removeAudio(w, track) {
   const meta = track.audio;
   if (!meta) return;
-  if (!(await confirmBox(`このトラックの音声「${meta.name}」を外しますか？`, { title: '音声を外す', ok: '外す', danger: true, detail: 'タイミングに付けた時刻は残ります。同じ音声を読み込み直せば、そのまま使えます。' }))) return;
-  await db.updateQuiet(P.doc(w, 'tracks', track.id), { audio: DEL });
-  track.audio = null;
-  if (A.aid === meta.id) unload();
-  dropParts(w, meta);
+  const users = (await db.list(P.col(w, 'tracks'))).filter((x) => x.audio && x.audio.id === meta.id);
+  const detail = 'タイミングに付けた時刻は残ります。同じ音声を読み込み直せば、そのまま使えます。';
+  let tracks = [track];
+  if (users.length > 1) {
+    const r = await ask({ title: '音声を外す', message: `音声「${meta.name}」は ${users.length}トラックで使っています。`, detail, fields: [],
+      choices: [['one', 'このトラックだけ外す'], ['all', `${users.length}トラックすべてから外す`]] });
+    if (!r) return;
+    if (r.choice === 'all') tracks = users;
+  } else if (!(await confirmBox(`このトラックの音声「${meta.name}」を外しますか？`, { title: '音声を外す', ok: '外す', danger: true, detail }))) return;
+  for (const x of tracks) await db.updateQuiet(P.doc(w, 'tracks', x.id), { audio: DEL });
+  setLocalMeta(tracks.map((x) => x.id), null);
+  if (A.aid === meta.id && tracks.length === users.length) unload();
+  dropIfUnused(w, meta);
   rerender();
 }
 
@@ -192,12 +231,18 @@ const fmt = (t) => {
 };
 const fmtShort = (t) => fmt(t).replace(/\.\d$/, '');
 
-// 閲覧モードの並び（show.js）から、このトラックの、時刻のあるタイミングの最初の1枚
+// そのトラックの音声の id（1話まるごとの音源なら、話のトラックで同じ）
+function aidOf(ti) {
+  const t = S.d.print && S.d.print.targets[ti];
+  return t && t.track && t.track.audio ? t.track.audio.id : '';
+}
+// 閲覧モードの並び（show.js）から、同じ音声を使うトラックの、時刻のあるタイミングの最初の1枚
 function timedSteps(ti) {
   const out = [];
   const seen = new Set();
+  const aid = aidOf(ti);
   A.show.steps().forEach((s, i) => {
-    if (s.ti !== ti || !s.b || seen.has(s.b.id)) return;
+    if (!s.b || seen.has(s.b.id) || (s.ti !== ti && (!aid || aidOf(s.ti) !== aid))) return;
     seen.add(s.b.id);
     if (s.b.sec != null) out.push({ i, b: s.b, sec: s.b.sec });
   });
@@ -220,6 +265,7 @@ function loop() {
       const x = targetAt(A.ti, A.el.currentTime);
       if (x && x.b.id !== A.lastAuto) {
         A.lastAuto = x.b.id;
+        A.ti = A.show.steps()[x.i].ti; // 1話まるごとの音源では、次のトラックに移る
         const cur = A.show.steps()[A.show.cur()];
         if (!cur || cur.b !== x.b) A.show.goTo(x.i, true);
       }
@@ -245,7 +291,8 @@ async function onEnded() {
   A.playing = false;
   const data = S.d.print;
   if (!data || A.sync || !A.show) { rerender(); return; }
-  const ti = A.ti + 1;
+  let ti = A.ti + 1;
+  while (data.targets[ti] && aidOf(ti) === A.aid) ti++; // 同じ音声のトラックはもう流れた
   const t = data.targets[ti];
   if (!t || !(t.track && t.track.audio)) { rerender(); return; }
   const i = A.show.steps().findIndex((s) => s.ti === ti);
@@ -272,6 +319,7 @@ export function audioOnNav(s) {
   if (!betaOn() || !A.el || !A.aid || !s) return;
   const data = S.d.print;
   if (!data) return;
+  if (s.ti !== A.ti && aidOf(s.ti) === A.aid) A.ti = s.ti;
   if (s.ti !== A.ti) {
     const was = A.playing;
     const meta = data.targets[s.ti] && data.targets[s.ti].track && data.targets[s.ti].track.audio;
@@ -304,8 +352,8 @@ function markNow(data, s) {
   setSec(data, s.b, A.el.currentTime);
   const list = A.show.steps();
   for (let i = A.show.cur() + 1; i < list.length; i++) {
-    if (list[i].ti !== s.ti) break;
-    if (list[i].b && list[i].b !== s.b) { A.show.goTo(i, true); return; }
+    if (list[i].ti !== s.ti && aidOf(list[i].ti) !== A.aid) break;
+    if (list[i].b && list[i].b !== s.b) { A.show.goTo(i, true); A.ti = list[i].ti; return; }
   }
 }
 export const audioSyncing = () => betaOn() && A.sync;
@@ -388,54 +436,58 @@ export function ShowAudioBar(data, t, s, show) {
 
 // ---------- 時刻を自動で合わせる（asr-worker.js で聞き取り、autosync.js で照らし合わせる） ----------
 async function autoSync(data, ti) {
-  const t = data.targets[ti];
-  const meta = t && t.track && t.track.audio;
-  const text = (t && t.draft.script) || '';
-  if (!meta || !text) { toast('テマ友と音声の両方があるときに使えます', 'error'); return; }
-  const sorted = sortBlocks(text, t.blocks || []);
-  if (!sorted.length) { toast('タイミングがありません', 'error'); return; }
-  const has = sorted.filter(({ b }) => b.sec != null).length;
+  const meta = aidOf(ti) && data.targets[ti].track.audio;
+  // 1話まるごとの音源なら、閲覧モードにある同じ音声のトラックをまとめて
+  const group = data.targets.map((t, k) => ({ t, k })).filter(({ k }) => aidOf(k) === (meta && meta.id))
+    .map(({ t }) => ({ t, text: t.draft.script || '', sorted: sortBlocks(t.draft.script || '', t.blocks || []) }))
+    .filter((g) => g.text && g.sorted.length);
+  if (!meta || !group.length) { toast('テマ友・タイミング・音声がそろっているときに使えます', 'error'); return; }
+  const all = group.reduce((a, g) => a + g.sorted.length, 0);
+  const has = group.reduce((a, g) => a + g.sorted.filter(({ b }) => b.sec != null).length, 0);
+  const langs = langsOf(group.map((g) => g.text).join('\n'));
+  const hkey = meta.id + '_heard';
+  let heard = null;
+  const c = await cacheGet(hkey);
+  if (c && c.langs === langs.join(',')) heard = c.out;
+  if (!heard && meta.parts) {
+    const d = await db.getQuiet(P.doc(data.w, 'audio', hkey));
+    if (d && d.langs === langs.join(',')) { heard = d.out; cachePut(hkey, d); }
+  }
   const r = await ask({
     title: '時刻を自動で合わせる（ためし）',
-    message: '音声をこの端末で聞き取って文字にし、テマ友と照らし合わせて、タイミングに時刻を付けます。',
-    detail: '初めてのときは聞き取りのしくみ（約80MB）を読み込みます（次からはいりません）。聞き取りには、音声の長さと同じくらいかそれ以上かかることがあります。パソコンでの利用をおすすめします。付けたあと、ずれているところは「時刻を合わせる」で直してください。',
+    message: '音声をこの端末で聞き取って文字にし、テマ友と照らし合わせて、タイミングに時刻を付けます。' + (group.length > 1 ? `（${group.length}トラック）` : ''),
+    detail: heard ? 'この音声はもう聞き取ってあるので、すぐに終わります。付けたあと、ずれているところは「時刻を合わせる」で直してください。'
+      : '初めてのときは聞き取りのしくみ（約80MB）を読み込みます（次からはいりません）。聞き取りには、音声の長さと同じくらいかそれ以上かかることがあります（1話まるごとの音源なら1時間以上）。パソコンでの利用をおすすめします。聞き取った文字は保存するので、同じ音声のほかのトラックはすぐに終わります。付けたあと、ずれているところは「時刻を合わせる」で直してください。',
     fields: [],
-    choices: has ? [['missing', `時刻のないタイミングだけ（${sorted.length - has}件）`], ['all', `すべて付け直す（${sorted.length}件）`]] : [['all', '始める']],
+    choices: has ? [['missing', `時刻のないタイミングだけ（${all - has}件）`], ['all', `すべて付け直す（${all}件）`]] : [['all', '始める']],
   });
   if (!r) return;
   const only = r.choice === 'missing';
   if (A.playing) A.el.pause();
-  const langs = langsOf(text);
   A.auto = { phase: 'prep', p: 0, done: 0, of: 0, worker: null };
   rerender();
   try {
-    const audio = await toMono16k(await loadBlob(data.w, meta));
-    if (!A.auto) return;
-    const heard = await new Promise((res, rej) => {
-      const wk = new Worker(new URL('./asr-worker.js', import.meta.url), { type: 'module' });
-      A.auto.worker = wk;
-      A.auto.reject = rej;
-      wk.onmessage = (e) => {
-        const m = e.data;
-        if (!A.auto) return;
-        if (m.type === 'load') { A.auto.phase = 'load'; A.auto.p = m.p; rerender(); }
-        else if (m.type === 'step') { A.auto.phase = 'listen'; A.auto.done = m.done; A.auto.of = m.of; rerender(); }
-        else if (m.type === 'done') { wk.terminate(); res(m.out); }
-        else if (m.type === 'error') { wk.terminate(); rej(new Error(m.msg)); }
-      };
-      wk.onerror = (e) => { wk.terminate(); rej(new Error(e.message || '聞き取りを始められませんでした')); };
-      const cfg = window.ZUKAI_ASR || {};
-      wk.postMessage({ audio, langs, model: cfg.model, tjs: cfg.tjs, local: cfg.local }, [audio.buffer]);
-    });
+    if (!heard) {
+      const audio = await toMono16k(await loadBlob(data.w, meta), meta.name);
+      if (!A.auto) return;
+      heard = await listen(audio, langs);
+      const rec = { langs: langs.join(','), out: heard };
+      cachePut(hkey, rec);
+      if (meta.parts && JSON.stringify(rec).length < 900000) db.setQuiet(P.doc(data.w, 'audio', hkey), rec).catch(() => {});
+    }
     A.auto.phase = 'match'; rerender();
     window.__zukaiHeard = heard; // 調べるとき用（コンソールで見られる）
-    const { secs, found } = matchTimes(text, heard, sorted.map(({ r: x }) => x.offset));
     const ops = [];
-    sorted.forEach(({ b }, k) => {
-      if (secs[k] == null || (only && b.sec != null)) return;
-      b.sec = Math.max(0, Math.round(secs[k] * 10) / 10);
-      ops.push({ op: 'update', path: P.doc(data.w, 'blocks', b.id), data: { sec: b.sec } });
-    });
+    let found = 0;
+    for (const g of group) {
+      const m = matchTimes(g.text, heard, g.sorted.map(({ r: x }) => x.offset));
+      found += m.found;
+      g.sorted.forEach(({ b }, k) => {
+        if (m.secs[k] == null || (only && b.sec != null)) return;
+        b.sec = Math.max(0, Math.round(m.secs[k] * 10) / 10);
+        ops.push({ op: 'update', path: P.doc(data.w, 'blocks', b.id), data: { sec: b.sec } });
+      });
+    }
     if (!ops.length) { toast('聞き取った文字がテマ友と合わず、時刻を付けられませんでした', 'error', 6000); return; }
     await db.batch(ops);
     toast(`${ops.length}件のタイミングに時刻を付けました（${found}件はテマ友の文字で見つけ、残りは前後から見積もりました）。流してずれていたら「時刻を合わせる」で直してください。`, 'info', 9000);
@@ -445,6 +497,25 @@ async function autoSync(data, ti) {
     A.auto = null;
     rerender();
   }
+}
+// asr-worker.js で聞き取る
+function listen(audio, langs) {
+  return new Promise((res, rej) => {
+    const wk = new Worker(new URL('./asr-worker.js', import.meta.url), { type: 'module' });
+    A.auto.worker = wk;
+    A.auto.reject = rej;
+    wk.onmessage = (e) => {
+      const m = e.data;
+      if (!A.auto) return;
+      if (m.type === 'load') { A.auto.phase = 'load'; A.auto.p = m.p; rerender(); }
+      else if (m.type === 'step') { if (A.auto.phase !== 'listen') A.auto.t0 = Date.now(); A.auto.phase = 'listen'; A.auto.done = m.done; A.auto.of = m.of; rerender(); }
+      else if (m.type === 'done') { wk.terminate(); res(m.out); }
+      else if (m.type === 'error') { wk.terminate(); rej(new Error(m.msg)); }
+    };
+    wk.onerror = (e) => { wk.terminate(); rej(new Error(e.message || '聞き取りを始められませんでした')); };
+    const cfg = window.ZUKAI_ASR || {};
+    wk.postMessage({ audio, langs, model: cfg.model, tjs: cfg.tjs, local: cfg.local }, [audio.buffer]);
+  });
 }
 function cancelAuto() {
   if (!A.auto) return;
@@ -456,9 +527,10 @@ function cancelAuto() {
 }
 function AutoRow() {
   const a = A.auto;
+  const left = a.phase === 'listen' && a.of && a.done ? Math.round((Date.now() - a.t0) / a.done * (a.of - a.done) / 60000) : null;
   const msg = a.phase === 'prep' ? '音声を準備しています…'
     : a.phase === 'load' ? `聞き取りのしくみを読み込んでいます… ${Math.round(a.p * 100)}%`
-      : a.phase === 'listen' ? `聞き取っています… ${a.done} / ${a.of}`
+      : a.phase === 'listen' ? `聞き取っています… ${a.done} / ${a.of}` + (left != null ? `（あと${left < 1 ? '1分以内' : `約${left}分`}）` : '')
         : 'テマ友と照らし合わせています…';
   const p = a.phase === 'load' ? a.p : a.phase === 'listen' && a.of ? a.done / a.of : a.phase === 'match' ? 1 : 0;
   return h('div', { class: 'au-row' },
