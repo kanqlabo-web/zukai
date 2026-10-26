@@ -306,6 +306,15 @@ export async function convertDrawing(page, fig, { chars = '', frame = null, word
     const d = size(p), c = ctr(p);
     if (d < 6 || d > 40) continue;
     if (persons.some((x) => Math.hypot(x.c[0] - c[0], x.c[1] - c[1]) < x.d * 0.25)) continue;
+    // 丸付き数字が円の中に1つだけ（真ん中からずれていても）：その人のまわりの黒い円。別の人にはしない
+    const within = persons.filter((x) => !x.circle && !x.plain && Math.hypot(x.c[0] - c[0], x.c[1] - c[1]) + x.d * 0.25 <= d / 2);
+    if (within.length === 1 && d / within[0].d > 1.15 && d / within[0].d < 2.4 && gray(p.sc) < 0.6) {
+      within[0].ring = true;
+      used.add(p);
+      const tw = vis.find((q) => q !== p && !used.has(q) && q.fill && isCircle(q) && Math.abs(size(q) - d) < 1.5 && Math.hypot(ctr(q)[0] - c[0], ctr(q)[1] - c[1]) < 1.5);
+      if (tw) used.add(tw);
+      continue;
+    }
     used.add(p);
     const twin = vis.find((q) => q !== p && !used.has(q) && q.fill && isCircle(q) && Math.abs(size(q) - d) < 1.5 && Math.hypot(ctr(q)[0] - c[0], ctr(q)[1] - c[1]) < 1.5);
     let fill = 'white';
