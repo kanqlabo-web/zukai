@@ -1,5 +1,6 @@
 // 稿の編集画面：テーマ活動の友＋《タイミング》＋動き・図・写真
 import { h } from './vdom.js';
+import { Select } from './select.js';
 import { icon } from './icons.js';
 import { db, DEL, newId } from './db.js';
 import { S, rerender, toast, fmtTime, saveLater, takePending, flushAll, compressImage, pickFile, go } from './state.js';
@@ -1195,7 +1196,7 @@ export const isEmptyDraft = (d) => !d.script && !d.figs;
 // 稿を選ぶプルダウン。いちばん下の「＋ 新しい稿を作る」で稿を増やす（ライブラリーのページとトラックのページで共通）
 export function DraftPicker({ drafts, cur, edit, onPick, onNew, canNew = true }) {
   const value = cur || (drafts[0] && drafts[0].id);
-  return h('select', {
+  return Select({
     class: 'draft-picker', value, 'aria-label': '稿を選ぶ・新しい稿を作る', title: '稿を選ぶ・新しい稿を作る',
     onchange: (e) => {
       const v = e.target.value;

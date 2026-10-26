@@ -1,5 +1,6 @@
 // 図の編集画面（パソコン・スマホ・タブレット対応、同時編集は図形ごとに反映）
 import { h, render } from './vdom.js';
+import { Select } from './select.js';
 import { db, DEL, newId } from './db.js';
 import { S, rerender, toast, pickFile, go } from './state.js';
 import { P, createImage, thumbOf } from './model.js';
@@ -12,7 +13,7 @@ import { workIndex, roleListOf, personCast, personNo, personRole, roleShort, rol
 import { isDialogOpen } from './dialog.js';
 import { UndoButtons, undoAll, redoAll } from './undo.js';
 import { icon } from './icons.js';
-import { MenuBar, ContextMenu, openContextMenu, closeMenus, menuOpen, openMenu, MOD } from './menubar.js';
+import { MenuBar, openContextMenu, closeMenus, menuOpen, openMenu, MOD } from './menubar.js';
 import { ask } from './dialog.js';
 import { previousShapes, minCostAssign, diagramSequence } from './assign.js';
 import { neighborDrafts, loadNeighbor, edgeDiagram } from './neighbors.js';
@@ -485,7 +486,7 @@ function placeRole(shapes, ix, rid, x, y) {
   const s = { id, t: 'person', rid, x, y, fill: E.personFill, r: 20, z: zFor('person'), ...(E.personRing ? { ring: true } : {}) };
   commit({ [id]: s });
   E.personRid = nextRid({ ...shapes, [id]: s }, rid);
-  if (!E.personRid) { E.personCid = null; toast('役の一覧の役をすべて配置しました。次はメンバーを置きます。'); }
+  if (!E.personRid) { E.personCid = null; toast(E.tool === 'role' ? '役の一覧の役をすべて配置しました。' : '役の一覧の役をすべて配置しました。次はメンバーを置きます。'); }
 }
 // 選んだ人の役を変える。同じ役の人がほかにいれば、その人と入れ替える
 function setPersonRole(one, rid) {
@@ -510,6 +511,12 @@ function placePerson(p) {
   const ix = idx();
   const cid = E.personCid != null ? E.personCid : nextCid(shapes);
   const x = Math.round(p[0]), y = Math.round(p[1]);
+  if (E.tool === 'role') {
+    const rid = E.personRid || nextRid(shapes);
+    if (rid) placeRole(shapes, ix, rid, x, y);
+    else toast(ix.roles.length ? '役をすべて配置しました。役を選ぶと、タップした場所へ動かせます' : '役の一覧が空です。メンバー一覧のページで役を入れてください', 'info', 5000);
+    return;
+  }
   if (E.personRid) { placeRole(shapes, ix, E.personRid, x, y); return; }
   if (cid) {
     const existing = findPersonOf(shapes, cid, ix);
@@ -947,6 +954,7 @@ function showShortcuts() {
     title: 'キーボード ショートカット', ok: '閉じる', cancel: false, fields: [],
     message: SHORTCUTS.map(([a, k]) => `${a}　${MOD}${k}`).join('\n')
       + '\n\nBlender と同じ操作\n' + BLENDER_KEYS.map(([a, k]) => `${a}　${k}`).join('\n')
+      + '\n\n道具を切り替える　数字キー 1〜9（' + BAR.map((t, i) => `${i + 1} ${Array.isArray(t) ? '線と矢印' : TOOL_LABEL[t]}`).join('・') + '）。線と矢印は数字キーでプルダウンが開き、続けて数字で選びます'
       + '\n\nそのほか\n削除　Delete / Backspace\n少し動かす　矢印キー（Shift で大きく）\n次・前の図形を選ぶ　Tab / Shift+Tab\n名前・文字を書く　Enter / ダブルクリック\n選ぶのをやめる　Esc\n前・次の図へ　PageUp / PageDown\n図の編集を終える　' + MOD + 'Enter\nメニューを開く　Alt+E（編集）・V（表示）・I（挿入）・O（配置）・H（ヘルプ）',
   });
 }
@@ -1018,6 +1026,7 @@ function onKey(e) {
     else if (k === 'g' || k === 'r' || k === 's') { e.preventDefault(); const ids = Object.keys(E.xf.orig); endXf(false); E.sel = new Set(ids); startXf(k); }
     return;
   }
+  if (!menuOpen() || E.lineMenu) { if (toolKey(e)) return; }
   if (blenderKey(e, mod)) return;
   if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redoAll() : undoAll(); return; }
   if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redoAll(); return; }
@@ -1198,7 +1207,7 @@ function down(e) {
       if (!additive) E.sel = new Set();
       E.drag = { type: 'marquee', p0: p, p1: p, base: new Set(E.sel) };
     }
-  } else if (t === 'person') {
+  } else if (t === 'person' || t === 'role') {
     placePerson(p);
   } else if (t === 'ellipse' || t === 'rect') {
     const nid = newId(8);
@@ -1533,6 +1542,7 @@ const ICONS = {
   select: () => h('path', { d: 'M6 3l0 16 4.2-4.1 2.9 6.3 2.4-1.1-2.9-6.2 5.9 0z', fill: 'currentColor' }),
   pan: () => h('path', { d: 'M12 2l3 3h-2v5h5V8l3 3-3 3v-2h-5v5h2l-3 3-3-3h2v-5H6v2l-3-3 3-3v2h5V5H9z', fill: 'currentColor' }),
   person: () => [h('circle', { cx: 12, cy: 12, r: 8, fill: 'none', stroke: '#e60012', 'stroke-width': 1.6 }), h('text', { x: 12, y: 16, 'text-anchor': 'middle', 'font-size': 11, 'font-weight': 700, fill: '#e60012' }, '1')],
+  role: () => [h('circle', { cx: 12, cy: 12, r: 8.5, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.8 }), h('text', { x: 12, y: 16, 'text-anchor': 'middle', 'font-size': 10.5, 'font-weight': 700, fill: 'currentColor' }, '役')],
   ellipse: () => h('ellipse', { cx: 12, cy: 12, rx: 9.5, ry: 6, fill: 'none', stroke: 'currentColor', 'stroke-width': 2 }),
   rect: () => h('rect', { x: 3, y: 6, width: 18, height: 12, rx: 3, fill: 'none', stroke: 'currentColor', 'stroke-width': 2 }),
   blob: () => h('path', { d: 'M4 13c0-5 5-8 9-6s7 1 7 5-4 3-6 5-10 2-10-4z', fill: 'none', stroke: 'currentColor', 'stroke-width': 2 }),
@@ -1546,12 +1556,49 @@ const ICONS = {
   text: () => h('text', { x: 12, y: 17.5, 'text-anchor': 'middle', 'font-size': 15, 'font-weight': 700, fill: 'currentColor' }, 'あ'),
 };
 const TOOLS = [
-  ['select', '選択'], ['person', '人'], ['ellipse', '楕円'], ['rect', '四角'], ['blob', '手書き囲み'],
+  ['select', '選択'], ['person', 'メンバーで置く'], ['role', 'キャラクターで置く'], ['ellipse', '楕円'], ['rect', '四角'], ['blob', '手書き囲み'],
   ['line', '直線'], ['curve', '曲線'], ['freeline', '手書き線'], ['arrow', '矢印'], ['carrow', '曲線矢印'], ['block', '太矢印'], ['cblock', '太い曲線矢印'], ['text', '文字'], ['pan', 'スクロール'],
 ];
+const TOOL_LABEL = Object.fromEntries(TOOLS);
+// 線と矢印は1つのボタンにまとめ、押すとプルダウンで選ぶ
+const LINE_TOOLS = ['line', 'curve', 'freeline', 'arrow', 'carrow', 'block', 'cblock'];
+// 道具バーの並び。数字キー（1〜9）で切り替える。まとめたボタンは、数字キーでプルダウンが開き、続けて数字で選ぶ
+const BAR = ['select', 'person', 'role', 'ellipse', 'rect', 'blob', LINE_TOOLS, 'text', 'pan'];
+function useTool(t) {
+  E.lineMenu = false;
+  if (E.poly) finishPoly();
+  E.tool = t;
+  if (LINE_TOOLS.includes(t)) E.lineTool = t;
+  if (t === 'person') E.personRid = null;
+  if (t === 'role') { E.personCid = null; if (!E.personRid) E.personRid = nextRid(merged()); }
+  if (t !== 'select') E.sel = new Set();
+  draw();
+}
+function openLineMenu(el) {
+  const btn = el || document.querySelector('.ed-tools .tool-group');
+  if (!btn) return;
+  const r = btn.getBoundingClientRect();
+  E.lineMenu = true;
+  openContextMenu(r.left, r.bottom + 4, LINE_TOOLS.map((t, i) => ({ label: TOOL_LABEL[t], kbd: String(i + 1), checked: E.tool === t, onclick: () => useTool(t) })), draw, { hi: TOOL_LABEL[E.tool] || null });
+}
+function toolKey(e) {
+  if (e.ctrlKey || e.metaKey || e.altKey || !/^Digit[0-9]$|^Numpad[0-9]$/.test(e.code || '')) return false;
+  const n = Number(e.code.slice(-1));
+  if (E.lineMenu && menuOpen()) {
+    const t = LINE_TOOLS[n - 1];
+    if (t) { e.preventDefault(); closeMenus(); E.lineMenu = false; useTool(t); }
+    return true;
+  }
+  const slot = BAR[n - 1];
+  if (!slot) return false;
+  e.preventDefault();
+  if (Array.isArray(slot)) openLineMenu(); else useTool(slot);
+  return true;
+}
 const HINTS = {
   select: '図形をドラッグで移動。空いている所をドラッグすると範囲選択。図形や人をダブルクリック（ダブルタップ）すると名前や役名を書けます。',
   person: '舞台をタップすると、右の一覧で選んだ番号の人を置きます。続けてタップすると次の番号になります。',
+  role: '舞台をタップすると、右の一覧で選んだ役（キャラクター）の人を置きます。役者が決まっていなくても置けます。',
   ellipse: 'ドラッグして楕円を描きます（タップだけなら標準の大きさ）。',
   rect: 'ドラッグして四角を描きます。あとで回転もできます。',
   blob: '指やマウスで囲みたい形をなぞってください。自動で閉じた線になります。',
@@ -1581,14 +1628,10 @@ function RulesNote() {
 function PersonPanel(shapes) {
   const ix = idx();
   const placed = placedCids(shapes, ix);
-  const nextRole = E.personRid ? ix.roleById[E.personRid] : null;
-  const nextUp = nextRole ? null : E.personCid != null ? E.personCid : nextCid(shapes);
+  const nextUp = E.personCid != null ? E.personCid : nextCid(shapes);
   const nm = nextUp ? ix.byId[nextUp] : null;
-  const nextA = nextRole ? ix.byRid[nextRole.id] : null;
   return h('div', null,
-    nextRole
-      ? h('div', { class: 'panel-title' }, '次に置く：役 ', h('b', null, nextRole.name || nextRole.label), nextA ? `（${nextA.c.no} ${nextA.c.name}）` : '（役者未定）')
-      : h('div', { class: 'panel-title' }, '次に置く：', h('b', null, nm ? nm.no : '番号なし'), nm ? ` ${nm.name}` : ''),
+    h('div', { class: 'panel-title' }, '次に置く：', h('b', null, nm ? nm.no : '番号なし'), nm ? ` ${nm.name}` : ''),
     h('div', { class: 'prop' }, h('span', null, '塗り'), Seg([['white', '白'], ['gray', '灰'], ['black', '黒']], E.personFill, (v) => { E.personFill = v; draw(); })),
     h('div', { class: 'prop' }, h('span', null, '黒い円'), Seg([[false, 'なし'], [true, 'あり']], E.personRing, (v) => { E.personRing = v; draw(); })),
     h('p', { class: 'muted small tight' }, '黒い円で囲むのは、役や人として扱うとき・一人ひとりとして見るときです。ふだんの立ち位置は赤の丸付き数字だけにします。'),
@@ -1597,10 +1640,24 @@ function PersonPanel(shapes) {
       title: roleText(m) + (placed.has(m.id) ? '（配置済み：タップした場所へ移動します）' : ''), onclick: () => { E.personCid = m.id; E.personRid = null; draw(); },
     }, h('b', null, m.no), ' ', m.name, rolesOf(m).some((r) => r.label) ? h('small', null, ' ' + rolesOf(m).map((r) => r.label).filter(Boolean).join('・')) : null))) : h('p', { class: 'muted small' }, 'メンバー一覧が空です。ライブラリーページの「メンバー一覧」で入力すると番号を選べます。'),
     h('p', { class: 'muted small' }, '線を引いた名前は配置済みです。選んでタップすると、その人をタップした場所へ動かします。'),
-    RoleChips(shapes, ix),
     h('div', { class: 'panel-actions' },
       h('button', { class: 'btn tiny', onclick: () => { E.personCid = ''; E.personRid = null; draw(); } }, '番号なしの人'),
       h('button', { class: 'btn tiny', onclick: lineUpRest }, '未配置の全員を並べる')),
+    RulesNote());
+}
+
+// キャラクター（役）で置く：役の一覧から選んで置く
+function RolePanel(shapes) {
+  const ix = idx();
+  const nextRole = E.personRid ? ix.roleById[E.personRid] : null;
+  const nextA = nextRole ? ix.byRid[nextRole.id] : null;
+  return h('div', null,
+    nextRole
+      ? h('div', { class: 'panel-title' }, '次に置く：役 ', h('b', null, nextRole.name || nextRole.label), nextA ? `（${nextA.c.no} ${nextA.c.name}）` : '（役者未定）')
+      : h('div', { class: 'panel-title' }, ix.roles.length ? '役をすべて配置しました' : '役の一覧が空です'),
+    h('div', { class: 'prop' }, h('span', null, '塗り'), Seg([['white', '白'], ['gray', '灰'], ['black', '黒']], E.personFill, (v) => { E.personFill = v; draw(); })),
+    h('div', { class: 'prop' }, h('span', null, '黒い円'), Seg([[false, 'なし'], [true, 'あり']], E.personRing, (v) => { E.personRing = v; draw(); })),
+    ix.roles.length ? RoleChips(shapes, ix) : h('p', { class: 'muted small' }, 'メンバー一覧のページで役（キャラクター）を入れると、ここから置けます。'),
     RulesNote());
 }
 
@@ -1608,7 +1665,7 @@ function PersonPanel(shapes) {
 function RoleChips(shapes, ix) {
   if (!ix.roles.length) return h('div', { class: 'role-chips-empty' });
   return h('div', { class: 'role-chips' },
-    h('div', { class: 'role-box-title' }, '役で置く'),
+    h('div', { class: 'role-box-title' }, '役（キャラクター）'),
     h('div', { class: 'chips' }, ix.roles.map((r) => {
       const a = ix.byRid[r.id];
       const placed = !!findPersonOfRole(shapes, ix, r.id);
@@ -1809,7 +1866,7 @@ function SelPanel() {
     const pr = personRole(one, ix);
     if (ix.roles.length || one.rid) {
       parts.push(h('label', { class: 'prop' }, h('span', null, '役'),
-        h('select', { value: one.rid && !one.cid ? one.rid : '', onchange: (e) => setPersonRole(one, e.target.value) },
+        Select({ redraw: draw, value: one.rid && !one.cid ? one.rid : '', onchange: (e) => setPersonRole(one, e.target.value) },
           h('option', { value: '' }, '（役で置かない）'),
           ix.roles.map((r) => h('option', { key: r.id, value: r.id }, (r.name || r.label) + (ix.byRid[r.id] ? '' : '（未定）'))))));
       if (pr) parts.push(h('p', { class: 'muted small tight' }, pr.c
@@ -2252,7 +2309,7 @@ function editorMenus(setTool, zoomIn, zoomOut) {
       { label: 'スクロール（手のひら）', checked: E.tool === 'pan', onclick: () => setTool('pan') },
     ] },
     { label: '挿入', items: [
-      tool('person', '人'), tool('text', '文字'),
+      tool('person', 'メンバーで置く'), tool('role', 'キャラクターで置く'), tool('text', '文字'),
       '-', tool('ellipse', '楕円'), tool('rect', '四角'), tool('blob', '手書き囲み'),
       '-', tool('line', '直線'), tool('curve', '曲線'), tool('freeline', '手書き線'),
       '-', tool('arrow', '矢印'), tool('carrow', '曲線矢印'), tool('block', '太矢印'), tool('cblock', '太い曲線矢印'),
@@ -2297,6 +2354,7 @@ function onContext(e) {
     '-',
     { label: E.trace ? '下絵の写真を変える' : '写真を下絵にする', onclick: pickTrace },
   ];
+  E.lineMenu = false;
   openContextMenu(e.clientX, e.clientY, items, draw);
 }
 
@@ -2440,7 +2498,7 @@ export function EditorView() {
     const x = Math.min(d.p0[0], d.p1[0]), y = Math.min(d.p0[1], d.p1[1]);
     marquee = h('rect', { x, y, width: Math.abs(d.p1[0] - d.p0[0]), height: Math.abs(d.p1[1] - d.p0[1]), class: 'marquee', 'stroke-width': 1.5 / upx });
   }
-  const setTool = (t) => { if (E.poly) finishPoly(); E.tool = t; if (t !== 'select') E.sel = new Set(); draw(); };
+  const setTool = useTool;
   const zoomOut = [...ZOOMS].reverse().find((z) => z < E.zoom - 0.01);
   const zoomIn = ZOOMS.find((z) => z > E.zoom + 0.01);
   const seq = diagramSequence().filter((id) => (S.d.diagrams || []).some((g) => g.id === id));
@@ -2470,9 +2528,22 @@ export function EditorView() {
         h('button', { class: 'icon-btn', 'data-tip': '拡大', 'aria-label': '拡大', disabled: !zoomIn, onclick: () => { E.zoom = zoomIn; draw(); } }, icon('plus', 18)),
         h('span', { class: 'sep' })),
       h('nav', { class: 'ed-tools', 'aria-label': '道具' },
-        TOOLS.map(([t, label]) => h('button', {
-          key: t, class: 'tool' + (E.tool === t ? ' on' : ''), onclick: () => setTool(t), 'data-tip': label, 'aria-label': label, 'aria-pressed': E.tool === t ? 'true' : 'false',
-        }, h('svg', { viewBox: '0 0 24 24', width: 24, height: 24, 'aria-hidden': 'true' }, ICONS[t]()), h('span', null, label))),
+        BAR.map((t, i) => {
+          const n = i + 1;
+          if (Array.isArray(t)) {
+            const lt = LINE_TOOLS.includes(E.tool) ? E.tool : (E.lineTool || 'line');
+            const on = LINE_TOOLS.includes(E.tool);
+            return h('button', {
+              key: 'lines', class: 'tool tool-group' + (on ? ' on' : ''), onclick: (e) => openLineMenu(e.currentTarget), 'data-tip': `線と矢印（${n}）`, 'aria-label': '線と矢印', 'aria-haspopup': 'menu', 'aria-pressed': on ? 'true' : 'false',
+            }, h('svg', { viewBox: '0 0 24 24', width: 24, height: 24, 'aria-hidden': 'true' }, ICONS[lt]()),
+            h('svg', { class: 'tool-caret', viewBox: '0 0 10 10', width: 8, height: 8, 'aria-hidden': 'true' }, h('path', { d: 'M1.5 3.5L5 7l3.5-3.5', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.6 })),
+            h('span', null, '線と矢印'));
+          }
+          const label = TOOL_LABEL[t];
+          return h('button', {
+            key: t, class: 'tool' + (E.tool === t ? ' on' : ''), onclick: () => setTool(t), 'data-tip': `${label}（${n}）`, 'aria-label': label, 'aria-pressed': E.tool === t ? 'true' : 'false',
+          }, h('svg', { viewBox: '0 0 24 24', width: 24, height: 24, 'aria-hidden': 'true' }, ICONS[t]()), h('span', null, label));
+        }),
         h('button', { class: 'tool' + (E.multi ? ' on' : ''), onclick: () => { E.multi = !E.multi; draw(); }, 'data-tip': '複数選択（タップで1つずつ追加）', 'aria-label': '複数選択', 'aria-pressed': E.multi ? 'true' : 'false' },
           h('svg', { viewBox: '0 0 24 24', width: 24, height: 24, 'aria-hidden': 'true' },
             h('rect', { x: 3, y: 3, width: 9, height: 9, fill: 'none', stroke: 'currentColor', 'stroke-width': 2 }),
@@ -2538,9 +2609,8 @@ export function EditorView() {
         h('div', { class: 'rotate-hint' }, '2本指で広げると拡大、2本指で動かすとスクロールします。横向きにすると大きく編集できます。'),
         EditorMovesSection(E.w, E.id, shapes, ix, applyMoves),
         ClashSection(clashes, shapes, ix, (ids) => { E.tool = 'select'; E.sel = new Set(ids.filter((id) => E.shapes[id])); draw(); }),
-        E.hmode ? HeightPanel() : E.tool === 'person' ? PersonPanel(shapes) : ['line', 'curve', 'carrow', 'cblock'].includes(E.tool) ? PolyPanel() : E.tool === 'block' ? BlockToolPanel() : SelPanel())),
+        E.hmode ? HeightPanel() : E.tool === 'person' ? PersonPanel(shapes) : E.tool === 'role' ? RolePanel(shapes) : ['line', 'curve', 'carrow', 'cblock'].includes(E.tool) ? PolyPanel() : E.tool === 'block' ? BlockToolPanel() : SelPanel())),
     E.xf ? XfHint() : null,
-    ContextMenu(),
     E.traceChoose ? TraceChooser(E.traceChoose, { onPick: pickTraceSrc, onFile: pickTraceFile, onCancel: () => { E.traceChoose = null; draw(); } }) : null,
     E.tracePick ? TracePicker(E.tracePick, { onDone: finishTrace, onCancel: () => { E.tracePick = null; draw(); }, redraw: draw }) : null);
 }

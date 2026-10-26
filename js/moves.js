@@ -10,6 +10,7 @@
 // ベータ版の機能（beta.js）。オンにした端末だけに、ボタン・知らせ・図の編集の欄が出る。
 // 閲覧者も送れるように、firestore.rules で moves だけは参加者全員が作れる。元に戻すの履歴には入れない。
 import { h } from './vdom.js';
+import { Select } from './select.js';
 import { db, newId } from './db.js';
 import { S, rerender, toast, fmtTime, go, adminMsg } from './state.js';
 import { P } from './model.js';
@@ -157,7 +158,7 @@ export function ShowFigure(data, t, s, ix, prevShapes = null) {
 export function ShowMeSelect(data) {
   if (!betaOn()) return null;
   const me = meOf(data.w);
-  return h('select', { class: 'show-me', title: '自分を選ぶと、自分以外を薄くして、前の図からの自分の動きを点線で出します', value: me, onchange: (e) => { setMe(data.w, e.target.value); rerender(); } },
+  return Select({ class: 'show-me', title: '自分を選ぶと、自分以外を薄くして、前の図からの自分の動きを点線で出します', value: me, onchange: (e) => { setMe(data.w, e.target.value); rerender(); } },
     h('option', { value: '' }, '自分目線：なし'),
     workIndex(data.work).list.filter((c) => c.id && !c.tag).map((c) => h('option', { key: c.id, value: c.id }, `自分目線：${c.no} ${c.name}`)));
 }
@@ -211,7 +212,7 @@ export function MoveSheet(data, t, s, ix) {
       : h('p', { class: 'small mv-hint' }, '動いた人を指でつまんで、新しい位置に動かしてください。何人でも動かせます。',
         s.carried ? '（このタイミングには図がないので、前の図をもとにします。図解部がこのタイミングの図を作ります）' : ''),
     h('label', { class: 'mv-me-row small' }, h('span', null, 'あなた'),
-      h('select', { value: me, onchange: (e) => { setMe(data.w, e.target.value); rerender(); } },
+      Select({ value: me, onchange: (e) => { setMe(data.w, e.target.value); rerender(); } },
         h('option', { value: '' }, '（選ぶと図で自分に印が付きます）'),
         workIndex(data.work).list.filter((c) => c.id).map((c) => h('option', { key: c.id, value: c.id }, `${c.no} ${c.name}`)))),
     moved.length ? h('ul', { class: 'mv-list small' }, moved.map((id) => h('li', { key: id },

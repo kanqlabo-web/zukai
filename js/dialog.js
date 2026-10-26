@@ -1,5 +1,6 @@
 // サイト内の入力・確認ダイアログ（ブラウザの prompt / confirm は使わない）
 import { h } from './vdom.js';
+import { Select } from './select.js';
 import { rerender } from './state.js';
 
 let cur = null;
@@ -76,7 +77,7 @@ export function DialogView() {
         f.type === 'textarea'
           ? h('textarea', { rows: f.rows || 4, value: values[f.key], placeholder: f.placeholder || '', oninput: (e) => { values[f.key] = e.target.value; }, ref: i === 0 ? (el) => el.focus() : null })
           : f.type === 'select'
-            ? h('select', { value: values[f.key], onchange: (e) => { values[f.key] = e.target.value; } }, f.options.map(([v, l]) => h('option', { value: v }, l)))
+            ? Select({ value: values[f.key], onchange: (e) => { values[f.key] = e.target.value; rerender(); } }, f.options.map(([v, l]) => h('option', { value: v }, l)))
             : h('input', {
               value: values[f.key], placeholder: f.placeholder || '', autocomplete: 'off',
               oninput: (e) => { values[f.key] = e.target.value; if (cur.error) { cur.error = ''; rerender(); } },

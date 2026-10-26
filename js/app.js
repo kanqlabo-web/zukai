@@ -1,5 +1,6 @@
 // 起動・ログイン・画面の切り替え
 import { h, render } from './vdom.js';
+import { Select } from './select.js';
 import { db, auth, initDB, mode, onDBError, history } from './db.js';
 import { UndoButtons, undoAll, redoAll } from './undo.js';
 import { S, rerender, setRenderers, toast, go, adminMsg } from './state.js';
@@ -14,7 +15,6 @@ import { saveMyProfile, handleGroupResult } from './access.js';
 import { setPresence, PresenceBar, paintCarets, paintPointers } from './presence.js';
 import { ShowView, afterShow } from './show.js';
 import { CommentsPanel, paintCommentMarks, WorkCommentsPanel } from './comments.js';
-import { ContextMenu } from './menubar.js';
 import { canEdit as canEditWork } from './access.js';
 import { betaOn, setBeta } from './beta.js';
 import { versionLabel, CHANGELOG_URL, watchForUpdate, reloadToLatest } from './version.js';
@@ -212,16 +212,15 @@ function DraftCrumbs({ w, d }) {
   const sep = () => h('span', { class: 'crumb-sep' }, '/');
   const out = [];
   if (ep) out.push(sep(), h('a', { href: `#/w/${w}`, class: 'crumb crumb-ep' }, ep.title || '無題の話'));
-  out.push(sep(), h('label', { class: 'crumb crumb-pick', title: 'トラックを切り替える' },
-    h('span', { class: 'crumb-pick-name' }, track.title || '無題のトラック'),
-    h('svg', { viewBox: '0 0 24 24', width: 16, height: 16, 'aria-hidden': 'true' }, h('path', { d: 'M7 10l5 5 5-5', fill: 'none', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })),
-    h('select', {
-      'aria-label': 'トラック',
-      onchange: (e) => { const x = latest(e.target.value); if (x && x.id !== d) go(`#/w/${w}/d/${x.id}`); },
-    }, eps.map((e) => {
-      const ts = tracks.filter((t) => t.episodeId === e.id && latest(t.id)).sort(byOrder);
-      return ts.length ? h('optgroup', { key: e.id, label: e.title || '無題の話' }, ts.map((t) => h('option', { key: t.id, value: t.id, selected: t.id === track.id }, t.title || '無題のトラック'))) : null;
-    }))));
+  out.push(sep(), Select({
+    plain: true, caret: false, class: 'crumb crumb-pick', title: 'トラックを切り替える', 'aria-label': 'トラック', value: track.id,
+    display: [h('span', { class: 'crumb-pick-name' }, track.title || '無題のトラック'),
+      h('svg', { viewBox: '0 0 24 24', width: 16, height: 16, 'aria-hidden': 'true' }, h('path', { d: 'M7 10l5 5 5-5', fill: 'none', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }))],
+    onchange: (e) => { const x = latest(e.target.value); if (x && x.id !== d) go(`#/w/${w}/d/${x.id}`); },
+  }, eps.map((e) => {
+    const ts = tracks.filter((t) => t.episodeId === e.id && latest(t.id)).sort(byOrder);
+    return ts.length ? h('optgroup', { key: e.id, label: e.title || '無題の話' }, ts.map((t) => h('option', { key: t.id, value: t.id }, t.title || '無題のトラック'))) : null;
+  })));
   return out;
 }
 
@@ -263,7 +262,7 @@ function PageView() {
   else if (r.name === 'cast') page = CastView();
   else if (r.name === 'people') page = ShareView();
   else if (r.name === 'draft') page = DraftView();
-  return [Header(), page, r.name === 'draft' ? SelectionBar() : null, r.name === 'draft' ? CommentsPanel() : null, r.name === 'draft' && !S.ui.editDiagram ? ContextMenu() : null, r.name === 'work' ? WorkCommentsPanel(!!(S.d.work && canEditWork(S.d.work))) : null];
+  return [Header(), page, r.name === 'draft' ? SelectionBar() : null, r.name === 'draft' ? CommentsPanel() : null, r.name === 'work' ? WorkCommentsPanel(!!(S.d.work && canEditWork(S.d.work))) : null];
 }
 
 function renderPage() {

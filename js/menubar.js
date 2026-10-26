@@ -1,12 +1,13 @@
 // Googleドキュメント・スライドのような、上のメニューバー（ファイル・編集・表示…）と右クリックのメニュー
-import { h } from './vdom.js';
+import { h, render } from './vdom.js';
 
 // menus: [{ label, items: [{ label, kbd, onclick, disabled, checked, hint } | '-'] }]
 // 開いているメニューは1つだけ。メニューが開いている間は、ほかの見出しにマウスを乗せるだけで切り替わる。
 let open = null; // { bar, idx, hi }（hi：キーボードで選んでいる行）
 const bars = {}; // 最後に描いたメニュー（Alt+文字・矢印キーで使う）
 let redrawFn = () => {};
-const close = () => { if (open || ctx) { open = null; ctx = null; redrawFn(); } };
+const redrawAll = () => { redrawFn(); paintCtx(); };
+const close = () => { if (open || ctx) { open = null; ctx = null; redrawAll(); } };
 
 export function MenuBar(id, menus, redraw) {
   redrawFn = redraw;
@@ -16,7 +17,7 @@ export function MenuBar(id, menus, redraw) {
     h('button', {
       class: 'mb-btn', role: 'menuitem', 'aria-haspopup': 'true', 'aria-expanded': isOpen(i) ? 'true' : 'false',
       onmousedown: (e) => e.preventDefault(),
-      onpointerdown: (e) => { e.preventDefault(); open = isOpen(i) ? null : { bar: id, idx: i }; ctx = null; redraw(); },
+      onpointerdown: (e) => { e.preventDefault(); open = isOpen(i) ? null : { bar: id, idx: i }; ctx = null; redraw(); paintCtx(); },
       onpointerenter: () => { if (open && open.bar === id && open.idx !== i) { open = { bar: id, idx: i }; redraw(); } },
       onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') { e.preventDefault(); open = { bar: id, idx: i }; redraw(); } },
     }, m.label),
@@ -27,28 +28,36 @@ function MenuList(items, cls, style, hi) {
   return h('div', { class: 'menu-pop ' + cls, role: 'menu', style, onpointerdown: (e) => e.stopPropagation(), onmousedown: (e) => e.preventDefault() },
     items.filter(Boolean).map((it, k) => it === '-'
       ? h('div', { key: 's' + k, class: 'mp-sep', role: 'separator' })
+      : it.head ? h('div', { key: 'h' + k, class: 'mp-head' }, it.head)
       : h('button', {
         key: it.label, class: 'mp-row' + (hi && hi === it.label ? ' hi' : ''), role: 'menuitem', disabled: !!it.disabled, title: it.hint || null,
-        onclick: () => { open = null; ctx = null; redrawFn(); if (!it.disabled && it.onclick) it.onclick(); },
+        onclick: () => { open = null; ctx = null; redrawAll(); if (!it.disabled && it.onclick) it.onclick(); },
       },
         h('span', { class: 'mp-check' }, it.checked ? h('svg', { viewBox: '0 0 24 24', width: 16, height: 16, 'aria-hidden': 'true' }, h('path', { d: 'M5 12l5 5 9-10', fill: 'none', stroke: 'currentColor', 'stroke-width': 2.2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })) : null),
         h('span', { class: 'mp-label' }, it.label),
         it.kbd ? h('span', { class: 'mp-kbd' }, it.kbd) : null)));
 }
 
-// 右クリックのメニュー（x, y は画面の位置）
-let ctx = null; // { x, y, items }
-export function openContextMenu(x, y, items, redraw) {
+// 右クリックのメニュー・プルダウンの中身（x, y は画面の位置）。どの画面の上にも出るよう、専用の層に描く
+// opts：{ hi（最初に選んでおく行の名前）, minWidth（プルダウンのボタンの幅にそろえる） }
+let ctx = null; // { x, y, items, hi, minWidth }
+let layer = null;
+function paintCtx() {
+  if (!layer) { layer = document.createElement('div'); layer.className = 'menu-layer'; document.body.appendChild(layer); }
+  render(layer, CtxView());
+}
+export function openContextMenu(x, y, items, redraw, opts = {}) {
   redrawFn = redraw;
   open = null;
-  ctx = { x, y, items };
-  redraw();
+  ctx = { x, y, items, hi: opts.hi || null, minWidth: opts.minWidth || 0 };
+  redrawAll();
 }
-export function ContextMenu() {
+function CtxView() {
   if (!ctx) return null;
-  // 画面の端からはみ出さないように
-  const x = Math.min(ctx.x, window.innerWidth - 260), y = Math.min(ctx.y, window.innerHeight - 40 - ctx.items.length * 30);
-  return MenuList(ctx.items, 'ctx-menu', { left: Math.max(4, x) + 'px', top: Math.max(4, y) + 'px' }, ctx.hi);
+  // 画面の端からはみ出さないように（下に入らなければ上に寄せる）
+  const n = ctx.items.filter(Boolean).length;
+  const x = Math.min(ctx.x, window.innerWidth - Math.max(260, ctx.minWidth) - 4), y = Math.min(ctx.y, window.innerHeight - 20 - n * 32);
+  return MenuList(ctx.items, 'ctx-menu', { left: Math.max(4, x) + 'px', top: Math.max(4, y) + 'px', minWidth: ctx.minWidth ? ctx.minWidth + 'px' : null }, ctx.hi);
 }
 export const menuOpen = () => !!(open || ctx);
 // キーから見出しの名前でメニューを開く（Blender の Shift+A など）
@@ -57,6 +66,7 @@ export function openMenu(id, label) {
   const idx = bar ? bar.menus.findIndex((m) => m.label === label) : -1;
   if (idx < 0) return;
   open = { bar: id, idx, hi: null }; ctx = null; redrawFn = bar.redraw;
+  paintCtx();
   moveHi(1);
 }
 export const closeMenus = close;
@@ -68,7 +78,7 @@ document.addEventListener('pointerdown', (e) => {
 // キーボード：Alt+文字でメニューを開く（Googleドキュメントと同じ文字）。開いている間は ↑↓ で行、←→ でとなりのメニュー、Enter で決定
 const ALT_KEYS = { f: 'ファイル', e: '編集', v: '表示', i: '挿入', o: ['表示形式', '配置'], h: 'ヘルプ' };
 const activeBar = () => (document.querySelector('.ed-root') ? 'editor' : document.querySelector('.draft-head .menubar') ? 'doc' : null);
-function rows() { return (ctx ? ctx.items : bars[open.bar].menus[open.idx].items).filter((it) => it && it !== '-' && !it.disabled); }
+function rows() { return (ctx ? ctx.items : bars[open.bar].menus[open.idx].items).filter((it) => it && it !== '-' && !it.head && !it.disabled); }
 function moveHi(dir) {
   const list = rows();
   const holder = ctx || open;
@@ -76,7 +86,8 @@ function moveHi(dir) {
     const i = list.findIndex((it) => it.label === holder.hi);
     holder.hi = list[i < 0 ? (dir > 0 ? 0 : list.length - 1) : (i + dir + list.length) % list.length].label;
   }
-  redrawFn();
+  redrawAll();
+  if (ctx && layer) { const el = layer.querySelector('.mp-row.hi'); if (el) el.scrollIntoView({ block: 'nearest' }); }
 }
 document.addEventListener('keydown', (e) => {
   if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {

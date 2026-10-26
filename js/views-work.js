@@ -2,6 +2,7 @@
 import { WorkCommentsButton, TrackCommentChip } from './comments.js';
 import { TrackMoveChip } from './moves.js';
 import { h } from './vdom.js';
+import { Select } from './select.js';
 import { icon } from './icons.js';
 import { db, auth } from './db.js';
 import { S, rerender, toast, fmtTime, saveLater, go, pickFile } from './state.js';
@@ -746,7 +747,7 @@ export function ShareView() {
           oninput: (e) => { S.ui.shareInput = e.target.value; if (S.ui.shareError) { S.ui.shareError = ''; rerender(); } },
         }),
         h('div', { class: 'share-add-row' },
-          h('select', { value: S.ui.shareRole || 'editor', onchange: (e) => { S.ui.shareRole = e.target.value; } },
+          Select({ value: S.ui.shareRole || 'editor', onchange: (e) => { S.ui.shareRole = e.target.value; } },
             h('option', { value: 'editor' }, '編集者'), h('option', { value: 'viewer' }, '閲覧者'), h('option', { value: 'owner' }, 'オーナー')),
           S.ui.shareBusy ? h('button', { class: 'btn ghost', onclick: cancelGroupWait }, 'やめる') : null,
           h('button', { class: 'btn primary', disabled: !!S.ui.shareBusy, onclick: () => addPeople(w, work) }, S.ui.shareBusy ? 'グループを確認中…' : '追加'))),
@@ -760,7 +761,7 @@ export function ShareView() {
         h('div', { class: 'grow' },
           h('div', null, nameOf(e) || e, e === me ? h('span', { class: 'muted small' }, '（あなた）') : null),
           nameOf(e) ? h('div', { class: 'muted small' }, e) : null),
-        owner ? h('select', {
+        owner ? Select({
           value: roles[e], 'aria-label': '権限',
           onchange: async (ev) => {
             const v = ev.target.value;
@@ -779,14 +780,14 @@ export function ShareView() {
       h('div', { class: 'link-row' },
         h('span', { class: 'link-ico' + (link === 'off' ? '' : ' on') }, icon(link === 'off' ? 'lock' : 'globe', 20)),
         h('div', { class: 'grow' },
-          owner ? h('select', {
+          owner ? Select({
             value: link === 'off' ? 'off' : 'link',
             onchange: (e) => db.update(P.work(w), { linkRole: e.target.value === 'off' ? 'off' : 'viewer', updatedAt: Date.now() }),
           }, h('option', { value: 'off' }, '制限付き'), h('option', { value: 'link' }, 'リンクを知っている全員')) : h('b', null, link === 'off' ? '制限付き' : 'リンクを知っている全員'),
           h('div', { class: 'muted small' }, link === 'off'
             ? '追加されたユーザーだけが開けます。'
             : 'このリンクを開いてGoogleでログインした人は、だれでもこのライブラリーに参加できます。')),
-        link !== 'off' ? (owner ? h('select', {
+        link !== 'off' ? (owner ? Select({
           value: link, 'aria-label': 'リンクの権限',
           onchange: (e) => db.update(P.work(w), { linkRole: e.target.value, updatedAt: Date.now() }),
         }, h('option', { value: 'viewer' }, '閲覧者'), h('option', { value: 'editor' }, '編集者')) : h('span', { class: 'badge' }, ROLE_LABEL[link])) : null),

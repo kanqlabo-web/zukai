@@ -32,6 +32,13 @@ input, select, textarea {
 }
 input:focus, select:focus, textarea:focus { border-color: var(--accent-2); box-shadow: 0 0 0 3px var(--accent-soft); }
 select { width: auto; padding-right: 26px; }
+/* アプリのプルダウン（select.js）。見た目は前の select と同じ枠 */
+.sel-btn { position: relative; display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-height: 36px; border: 1px solid var(--line-2); border-radius: 8px; background: #fff; padding: 7px 26px 7px 10px; text-align: left; cursor: pointer; outline: none; transition: border-color .15s, box-shadow .15s; }
+.sel-btn:focus-visible, .sel-btn[aria-expanded="true"] { border-color: var(--accent-2); box-shadow: 0 0 0 3px var(--accent-soft); }
+.sel-btn:disabled { opacity: .55; cursor: default; }
+.sel-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sel-caret { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+.field .sel-btn { width: 100%; }
 textarea { resize: vertical; line-height: 1.55; }
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
@@ -85,12 +92,11 @@ textarea { resize: vertical; line-height: 1.55; }
 .crumb, .brand { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-decoration: none; color: var(--ink); }
 .crumb { font-size: 14px; color: var(--ink-2); }
 .crumb-sep { color: var(--line-2); }
-.crumb-pick { position: relative; display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0; max-width: 45vw; cursor: pointer; border-radius: 6px; padding: 2px 2px 2px 6px; margin-left: -6px; }
+.crumb-pick { border: 0; background: none; font: inherit; position: relative; display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0; max-width: 45vw; cursor: pointer; border-radius: 6px; padding: 2px 2px 2px 6px; margin-left: -6px; }
 .crumb-pick:hover, .crumb-pick:focus-within { background: var(--bg); }
 .crumb-pick-name { overflow: hidden; text-overflow: ellipsis; }
 .crumb-ep { flex-shrink: 0; max-width: 30vw; }
 .crumb-pick svg { flex-shrink: 0; }
-.crumb-pick select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 16px; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; flex-shrink: 0; }
 .brand-mark, .gate-mark {
   display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 8px;
@@ -155,7 +161,7 @@ textarea { resize: vertical; line-height: 1.55; }
 .track-main:hover .track-title { color: var(--accent-2); }
 .track-title { font-weight: 600; }
 .track-actions { display: flex; gap: 6px; align-items: center; }
-.track-actions select { font-size: 13px; padding: 5px 24px 5px 8px; }
+.track-actions select, .track-actions .sel-btn { font-size: 13px; padding: 5px 24px 5px 8px; }
 
 /* キャスト編集 */
 .cast-edit { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
@@ -319,7 +325,7 @@ textarea { resize: vertical; line-height: 1.55; }
 .ed-canvas-wrap { overflow: auto; padding: 16px; display: block; -webkit-overflow-scrolling: touch; }
 .ed-svg { display: block; margin: 0 auto; background: #fff; box-shadow: 0 4px 18px rgba(30, 25, 60, .1); touch-action: none; user-select: none; -webkit-user-select: none; max-width: none; }
 .panning .ed-svg { touch-action: pan-x pan-y; cursor: grab; }
-.ed-svg.tool-person, .ed-svg.tool-ellipse, .ed-svg.tool-rect, .ed-svg.tool-arrow, .ed-svg.tool-block, .ed-svg.tool-text { cursor: crosshair; }
+.ed-svg.tool-person, .ed-svg.tool-role, .ed-svg.tool-ellipse, .ed-svg.tool-rect, .ed-svg.tool-arrow, .ed-svg.tool-block, .ed-svg.tool-text { cursor: crosshair; }
 .ed-svg.tool-blob { cursor: crosshair; }
 .ed-svg.tool-select .shape { cursor: move; }
 .sel-ring { stroke: var(--sel); stroke-width: 2.5; stroke-dasharray: 7 5; fill: none; pointer-events: none; }
@@ -449,7 +455,7 @@ textarea { resize: vertical; line-height: 1.55; }
 .share-add-row { display: flex; gap: 8px; justify-content: flex-end; }
 .dlg-err.pre { white-space: pre-line; }
 .link-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
-.link-row select { font-weight: 600; }
+.link-row select, .link-row .sel-btn { font-weight: 600; }
 .link-ico { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; background: #f1f1f4; font-size: 17px; flex-shrink: 0; }
 .link-ico.on { background: #e9f3ea; }
 

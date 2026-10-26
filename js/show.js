@@ -2,6 +2,7 @@
 // 図を1枚ずつ表示し、横（縦長の画面では下）に、そのタイミングの説明とテーマ活動の友を出す。
 // ←→キー・図の左右・テーマ活動の友の行をクリックで移動する。
 import { h } from './vdom.js';
+import { Select } from './select.js';
 import { S, rerender, go } from './state.js';
 import { draftTitle } from './model.js';
 import { workIndex } from './cast.js';
@@ -142,7 +143,7 @@ export function ShowView() {
         h('button', { class: 'btn', disabled: V.i === 0, onclick: prev, title: '前へ（←）' }, '◀'),
         h('span', { class: 'show-count' }, `${V.i + 1} / ${list.length}`),
         h('button', { class: 'btn', disabled: V.i >= list.length - 1, onclick: next, title: '次へ（→）' }, '▶')),
-      h('select', {
+      Select({
         class: 'show-side', title: '説明とテーマ活動の友の位置', value: side,
         onchange: (e) => { V.side = e.target.value === 'auto' ? null : e.target.value; try { localStorage.setItem('zukai.showSide', V.side || ''); } catch (er) { /* noop */ } V.scrolled = -1; rerender(); },
       }, h('option', { value: 'auto' }, '説明の位置：自動'), h('option', { value: 'right' }, '説明の位置：右'), h('option', { value: 'bottom' }, '説明の位置：下')),

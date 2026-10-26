@@ -1,5 +1,6 @@
 // ライブラリー一覧
 import { h } from './vdom.js';
+import { Select } from './select.js';
 import { icon } from './icons.js';
 import { versionLabel, CHANGELOG_URL } from './version.js';
 import { db, mode } from './db.js';
@@ -122,7 +123,7 @@ export function HomeView() {
     hasWorks ? h('div', { class: 'home-tools' },
       h('label', { class: 'home-search' }, icon('search', 18),
         h('input', { type: 'search', value: S.ui.homeQuery || '', placeholder: 'ライブラリーを検索', 'aria-label': 'ライブラリーを検索', oninput: (e) => { S.ui.homeQuery = e.target.value; rerender(); } })),
-      h('select', { class: 'home-sort', 'aria-label': '並べ替え', value: sortBy, onchange: (e) => setHomePref({ sort: e.target.value }) },
+      Select({ class: 'home-sort', 'aria-label': '並べ替え', value: sortBy, onchange: (e) => setHomePref({ sort: e.target.value }) },
         h('option', { value: 'updated' }, '更新が新しい順'), h('option', { value: 'title' }, '名前順')),
       h('div', { class: 'seg view-seg', role: 'group', 'aria-label': '表示' },
         h('button', { class: 'seg-btn' + (listView ? '' : ' on'), title: 'カードで表示', 'aria-label': 'カードで表示', 'aria-pressed': listView ? 'false' : 'true', onclick: () => setHomePref({ view: 'grid' }) }, icon('grid', 16)),

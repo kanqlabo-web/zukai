@@ -13,7 +13,7 @@ import { S, rerender, toast, pickFile } from './state.js';
 import { P } from './model.js';
 import { canEdit } from './access.js';
 import { betaOn } from './beta.js';
-import { openContextMenu, ContextMenu } from './menubar.js';
+import { openContextMenu } from './menubar.js';
 import { confirmBox, ask } from './dialog.js';
 import { sortBlocks } from './script.js';
 import { langsOf, matchTimes, toMono16k } from './autosync.js';
@@ -383,8 +383,7 @@ export function ShowAudioBar(data, t, s, show) {
     !A.sync && missing && !A.err ? h('div', { class: 'au-msg muted' }, editor
       ? 'タイミングに時刻がまだありません。「音声」から「時刻を合わせる」で付けると、流したときに図が自動で進みます。'
       : 'タイミングに時刻がまだ付いていません。流すことはできますが、図は自動では進みません。') : null,
-    A.sync && editor ? SyncRow(data, s) : null,
-    ContextMenu());
+    A.sync && editor ? SyncRow(data, s) : null);
 }
 
 // ---------- 時刻を自動で合わせる（asr-worker.js で聞き取り、autosync.js で照らし合わせる） ----------
