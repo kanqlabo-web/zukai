@@ -653,7 +653,7 @@ function listenLid(audio, segs, partial, onWin) {
     const out = partial && partial.out && partial.out.lid ? partial.out.lid.slice() : [];
     let next = out.length, busy = 0, saved = out.length;
     const n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
-    A.auto.phase = 'load';
+    A.auto.phase = 'load'; A.auto.lid = true;
     const step = () => {
       let k = 0; while (out[k]) k++;
       if (A.auto.phase !== 'listen') { A.auto.t0 = Date.now(); A.auto.d0 = k; }
@@ -718,7 +718,7 @@ function AutoRow() {
   const left = a.phase === 'listen' && a.of && a.done > a.d0 ? Math.round((Date.now() - a.t0) / (a.done - a.d0) * (a.of - a.done) / 60000) : null;
   const msg = a.phase === 'prep' ? '音声を準備しています…'
     : a.phase === 'load' ? `聞き取りのしくみを読み込んでいます… ${Math.round(a.p * 100)}%`
-      : a.phase === 'listen' ? `聞き取っています… ${a.done} / ${a.of}` + (left != null ? `（あと${left < 1 ? '1分以内' : `約${left}分`}）` : '')
+      : a.phase === 'listen' ? (a.lid ? `英語か日本語かを判定しています… ${a.done} / ${a.of} か所` : `聞き取っています… 30秒ごとの ${a.done} / ${a.of}`) + (left != null ? `（あと${left < 1 ? '1分以内' : `約${left}分`}）` : '')
         : 'テマ友と照らし合わせています…';
   const p = a.phase === 'load' ? a.p : a.phase === 'listen' && a.of ? a.done / a.of : a.phase === 'match' ? 1 : 0;
   return h('div', { class: 'au-row' },
