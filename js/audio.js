@@ -406,7 +406,12 @@ function lineTimes(t, ti, starts) {
     while (j < pts.length && pts[j].off <= o) j++;
     const p0 = pts[j - 1], p1 = pts[j];
     if (h0 != null) {
-      if (p0 && p1 && p0.h != null && p1.h != null && p1.h > p0.h) return p0.t + (p1.t - p0.t) * Math.min(1, Math.max(0, (h0 - p0.h) / (p1.h - p0.h)));
+      // 前後のタイミングのうち近いほう（テマ友の位置で）の「タイミングの時刻 − 聞き取りの時刻」だけずらす（2.48.7〜）。
+      // 前は前後のタイミングのあいだを引き伸ばしていたが、どちらかのタイミングの時刻がずれていると、あいだの行がみなずれたため
+      if (p0 && p1 && p0.h != null && p1.h != null && p1.h > p0.h) {
+        const near = o - p0.off <= p1.off - o ? p0 : p1;
+        return Math.min(p1.t, Math.max(p0.t, h0 + (near.t - near.h)));
+      }
       if (p0 && !p1 && p0.h != null) return p0.t + Math.max(0, h0 - p0.h);
       if (!p0 && p1 && p1.h != null) return Math.max(0, p1.t - Math.max(0, p1.h - h0));
     }
