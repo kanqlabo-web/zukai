@@ -1,7 +1,7 @@
 // 取り込んだ図形描画（PDFのベクター）を、図解メーカーの図（diagram）として保存する形にする
 import { newId } from './db.js';
 import { LAYER, insideShape, shapeArea, textBox, isRegion, shapeCenter } from './stage.js';
-import { numberCast } from './cast.js';
+import { numberCast, roleLink } from './cast.js';
 import { convertDrawing, frameOf, svgToPage } from './drawconv.js';
 
 // 図の中の文字を読み違えたとき、近い名前に直すための言葉（メンバーの名前・役名・役の表記）
@@ -75,11 +75,18 @@ async function toDiagram(list, { cast = [], roleList = [] } = {}) {
   const shown = new Set();
   let k = 0;
   const base = Date.now();
+  // その人の役の表記。メンバーの役に表記がなければ、役の一覧の表記（図に出るキャラ名と同じ）
+  const labelOf = (c) => {
+    const r = c && c.roles && c.roles[0];
+    if (!r) return '';
+    const hit = r.label ? null : roleLink(r, roleList);
+    return r.label || (hit && hit.label) || '';
+  };
   // キャラ名（人のそばの、その人の役の表記と同じ文字）は、図の文字ではなく「キャラ名を表示」にする
   for (const s of list) {
     if (s.t !== 'text' || !s.nearNo) continue;
     const c = byNo[s.nearNo];
-    const label = c && c.roles && c.roles[0] && c.roles[0].label;
+    const label = labelOf(c);
     if (label && label.replace(/\s/g, '') === s.text.replace(/\s/g, '')) { shown.add(c.id); s.drop = true; }
   }
   // 図形の中に書いてある文字は、その図形の名前にする（いちばん小さい、文字がすっぽり入る図形）
@@ -113,7 +120,7 @@ async function toDiagram(list, { cast = [], roleList = [] } = {}) {
   for (const s of Object.values(shapes)) {
     if (s.t !== 'person' || !s.cid) continue;
     const c = nums.find((x) => x.id === s.cid);
-    if (c && c.roles && c.roles[0] && c.roles[0].label) roleVis[`${c.id}_0`] = shown.has(c.id);
+    if (labelOf(c)) roleVis[`${c.id}_0`] = shown.has(c.id);
   }
   return { shapes, roleVis };
 }
