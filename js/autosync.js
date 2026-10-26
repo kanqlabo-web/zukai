@@ -124,6 +124,7 @@ function candidates(u, H, on) {
 //    すぐ前のまとまりが別の言語で、その終わりから次の見つかったまとまりまでが短ければ、その終わりのすぐあと。
 //    そうでなければ、前後のあいだを読む長さ（言語ごとの速さ×文字数）の割合で割り振る
 function alignUnits(text, heard) {
+  if (heard.lid) return lidUnits(text, heard.lid);
   const units = unitsOf(text);
   const H = { en: heard.en ? heardChars(heard.en, EN) : [], ja: heard.ja ? heardChars(heard.ja, JA) : [] };
   for (const l in H) {
@@ -201,8 +202,8 @@ function snapToOnsets(units, on) {
   }
 }
 
-// 音声（16kHz・モノラル）から、声の出だしを探す：まわり3秒の大きめの音より12dB以上小さい間が0.2秒以上続いたあと、音が戻った時刻
-export function onsetsOf(audio) {
+// 音声（16kHz・モノラル）から、声の間を探す：まわり3秒の大きめの音より12dB以上小さいところが0.2秒以上続くところ。返す：[[始まり, 終わり]（秒）]
+export function pausesOf(audio) {
   const F = 160, n = Math.floor(audio.length / F), db = new Float32Array(n), sm = new Float32Array(n);
   for (let i = 0; i < n; i++) { let s = 0; for (let k = 0; k < F; k++) { const x = audio[i * F + k]; s += x * x; } db[i] = 10 * Math.log10(s / F + 1e-10); }
   for (let i = 0; i < n; i++) { let s = 0, c = 0; for (let k = Math.max(0, i - 2); k <= Math.min(n - 1, i + 2); k++) { s += db[k]; c++; } sm[i] = s / c; }
@@ -210,9 +211,92 @@ export function onsetsOf(audio) {
   let thr = -Infinity;
   for (let i = 0; i < n; i++) {
     if (i % 50 === 0) { const w = Array.from(sm.subarray(Math.max(0, i - 150), i + 150)).sort((x, y) => x - y); thr = w[Math.floor(w.length * 0.8)] - 12; }
-    if (sm[i] < thr) { let j = i; while (j < n && sm[j] < thr) j++; if (j - i >= 20 && j < n) out.push(Math.round(j) / 100); i = j; }
+    if (sm[i] < thr) { let j = i; while (j < n && sm[j] < thr) j++; if (j - i >= 20 && j < n) out.push([i / 100, j / 100]); i = j; }
   }
   return out;
+}
+// 声の出だし（間のあとに声が始まる時刻）
+export const onsetsOf = (audio) => pausesOf(audio).map((p) => p[1]);
+
+// 言語を判定する区切り：間と間のあいだ。6秒より長いところは3秒ずつに分ける（途中で英日が切り替わることがあるので）
+export function segmentsOf(pauses, len) {
+  const out = [];
+  const add = (s, e) => {
+    if (e - s < 0.3) return;
+    if (e - s <= 6) { out.push({ s, e }); return; }
+    const k = Math.round((e - s) / 3);
+    for (let i = 0; i < k; i++) out.push({ s: s + (e - s) * i / k, e: s + (e - s) * (i + 1) / k, cut: i > 0 });
+  };
+  let t = 0;
+  for (const [a, b] of pauses) { add(t, a); t = b; }
+  add(t, len);
+  return out;
+}
+
+// 言語の判定だけで合わせる（英日のテマ友用。Whisper で文字にしない）
+// lid：[{ s, e, d }]（d = 英語らしさ − 日本語らしさ。2.5より大きければ英語、-2.5より小さければ日本語（曲や効果音はそのあいだになりやすい）、あいだは分からない）
+// テマ友の「同じ言語が続く行のまとまり」と、音声の「同じ言語が続くところ」を、順番どおり・長さが近くなるように対応させ、
+// まとまりの最初の行をそこの始まりに、残りの行を文字数の割合で、近い声の出だしに置く
+function lidUnits(text, lid) {
+  const units = unitsOf(text).filter((u) => u.cs.length >= 2);
+  units.forEach((u) => { u.dur = u.cs.length * RATE[u.lang]; });
+  const runs = [];
+  for (const u of units) { const r = runs[runs.length - 1]; if (r && r.lang === u.lang) { r.units.push(u); r.dur += u.dur; } else runs.push({ lang: u.lang, units: [u], dur: u.dur }); }
+  const lab = (d) => (d > 2.5 ? 'en' : d < -2.5 ? 'ja' : '?');
+  const blocks = [];
+  for (const g of lid) {
+    const l = lab(g.d), b = blocks[blocks.length - 1];
+    if (b && b.lang === l && g.s - b.e < 1.5) { b.e = g.e; b.segs.push(g); b.sp += g.e - g.s; } else blocks.push({ lang: l, s: g.s, e: g.e, segs: [g], sp: g.e - g.s });
+  }
+  const totSp = blocks.filter((b) => b.lang !== '?').reduce((a, b) => a + b.sp, 0), totDur = runs.reduce((a, r) => a + r.dur, 0);
+  const k = totSp / Math.max(1, totDur); // 読む速さ（文字数からの見積もりに対する実際の長さ）
+  const p = runs.length, q = blocks.length, INF = 1e9, SPAN = 4;
+  const D = Array.from({ length: p + 1 }, () => new Float64Array(q + 1).fill(INF)), BK = Array.from({ length: p + 1 }, () => new Array(q + 1));
+  D[0][0] = 0;
+  for (let i = 0; i <= p; i++) for (let j = 0; j <= q; j++) {
+    const v = D[i][j];
+    if (v >= INF) continue;
+    // 音声のところを飛ばす（曲・効果音・テマ友にないところ）
+    if (j < q) { const c = v + (blocks[j].lang === '?' ? 0.2 : 1) + 0.1 * blocks[j].sp; if (c < D[i][j + 1]) { D[i][j + 1] = c; BK[i][j + 1] = [i, j, 0]; } }
+    // テマ友のまとまりを飛ばす（読まれていない）
+    if (i < p) { const c = v + 3 + runs[i].dur * 0.3; if (c < D[i + 1][j]) { D[i + 1][j] = c; BK[i + 1][j] = [i, j, 0]; } }
+    // まとまり i を、音声の j から続くいくつかのところに対応させる（言語が違うところはまたがない）
+    if (i < p) {
+      let sp = 0, conf = 0;
+      for (let j2 = j; j2 < Math.min(q, j + SPAN); j2++) {
+        const b = blocks[j2];
+        if (b.lang !== '?' && b.lang !== runs[i].lang) break;
+        sp += b.sp; if (b.lang !== '?') conf++;
+        if (!conf) continue;
+        const c = v + 2 * Math.abs(Math.log((sp + 0.3) / (runs[i].dur * k + 0.3))) + (j2 - j) * 0.3;
+        if (c < D[i + 1][j2 + 1]) { D[i + 1][j2 + 1] = c; BK[i + 1][j2 + 1] = [i, j, 1]; }
+      }
+    }
+  }
+  for (let i = p, j = q; i || j;) {
+    const [pi, pj, m] = BK[i][j];
+    if (m) {
+      const r = runs[pi], segs = blocks.slice(pj, j).flatMap((b) => b.segs), s0 = segs[0].s, e0 = segs[segs.length - 1].e;
+      let cum = 0;
+      for (const u of r.units) {
+        const want = s0 + (e0 - s0) * cum / r.dur;
+        cum += u.dur;
+        let best = s0;
+        for (const g of segs) if (!g.cut && Math.abs(g.s - want) < Math.abs(best - want)) best = g.s;
+        if (u === r.units[0]) { u.t = s0; u.hit = true; } else u.t = Math.abs(best - want) < 2 ? best : want;
+      }
+    }
+    i = pi; j = pj;
+  }
+  // 対応しなかったまとまりは前後から
+  for (let ui = 0; ui < units.length; ui++) {
+    const u = units[ui];
+    if (u.t != null) continue;
+    const A = units.slice(0, ui).reverse().find((x) => x.t != null), B = units.slice(ui + 1).find((x) => x.t != null);
+    u.t = A && B ? (A.t + B.t) / 2 : A ? A.t + A.dur : B ? Math.max(0, B.t - u.dur) : null;
+  }
+  for (let ui = 1; ui < units.length; ui++) if (units[ui].t != null && units[ui - 1].t != null && units[ui].t < units[ui - 1].t) units[ui].t = units[ui - 1].t;
+  return units;
 }
 
 // 同じテマ友・同じ聞き取りなら照らし合わせは1回で済ませる（歌詞の表示で何度も呼ばれる）

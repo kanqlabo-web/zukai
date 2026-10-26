@@ -1,9 +1,10 @@
 // 音声の聞き取り（audio.js の「時刻を自動で合わせる」用。画面が固まらないように Worker で動かす）
-// Whisper（transformers.js、2.45.0〜 small）をブラウザの中で動かす。モデルは初回だけ Hugging Face から読み、ブラウザに控えが残る。
-// 受け取る：{ audio: Float32Array（16kHz・モノラル）, langs: ['en', 'ja'], model, tjs, local, from（続きから始める30秒の番号）, prev（それまでに聞き取った分） }
+// Whisper（transformers.js）をブラウザの中で動かす。モデルは初回だけ Hugging Face から読み、ブラウザに控えが残る。
+// 受け取る：{ audio: Float32Array（16kHz・モノラル）, langs: ['en', 'ja'], segs, model, tjs, local, from（続きから始める30秒の番号／区切りの番号）, prev（それまでの分） }
+// batch があれば（英日のとき）、文字にせず、区切りごとに英語か日本語かだけを判定する（2.47.0〜。Whisper tiny。最初の1語の言語の見込みを比べる。lidBatch）
 // 返す：{ type: 'load', p } 読み込みの進み（0〜1） / { type: 'step', done, of } / { type: 'win', upto, out }（30秒ごと。途中までの分を保存して、止まっても続きから） / { type: 'done', out: { en: [{ text, s, e }], ja: […] } } / { type: 'error', msg }
 const TJS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.1/dist/transformers.min.js';
-const MODEL = 'Xenova/whisper-small';
+const MODEL = 'Xenova/whisper-base';
 const SR = 16000, WIN = 30; // 30秒ずつ（Whisper が一度に聞ける長さ）
 let pipe = null;
 
@@ -28,6 +29,21 @@ async function hear(seg, lang, len) {
   return (r.chunks || []).filter((c) => c.timestamp && c.timestamp[0] != null).map((c) => ({ text: c.text, s: c.timestamp[0], e: clip(c.timestamp[1], len) }));
 }
 
+// 区切りごとに英語か日本語かを判定する。batch：[{ s, e, pcm（その区切りの音） }]。返す：{ type: 'lid', out: [{ s, e, d }] }
+// 同じ Worker に続けて送れる（モデルは1回だけ読む）。速くするため、audio.js は Worker をいくつか並べて分けて送る
+async function lidBatch(T, batch, post) {
+  const id = (t) => pipe.tokenizer.model.tokens_to_ids.get(t);
+  const SOT = id('<|startoftranscript|>'), EN = id('<|en|>'), JA = id('<|ja|>');
+  const start = new T.Tensor('int64', BigInt64Array.from([BigInt(SOT)]), [1, 1]);
+  const out = [];
+  for (const g of batch) {
+    const { input_features } = await pipe.processor(g.pcm);
+    const r = await pipe.model({ input_features, decoder_input_ids: start });
+    const L = r.logits.data;
+    out.push({ s: g.s, e: g.e, cut: g.cut, d: Math.round((L[EN] - L[JA]) * 100) / 100 });
+  }
+  post({ type: 'lid', out });
+}
 self.onmessage = async (e) => {
   const { audio, langs, model, tjs, local, from = 0, prev = null } = e.data;
   const post = (m) => self.postMessage(m);
@@ -52,6 +68,7 @@ self.onmessage = async (e) => {
         },
       });
     }
+    if (e.data.batch) return await lidBatch(T, e.data.batch, post);
     const n = Math.ceil(audio.length / (WIN * SR));
     const out = Object.fromEntries(langs.map((l) => [l, (prev && prev[l]) || []]));
     let done = from * langs.length;
