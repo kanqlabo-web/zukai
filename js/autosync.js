@@ -87,7 +87,7 @@ function local(A, H, lo, hi, cap) {
 }
 
 // まとまりが読まれていそうなところの候補（3文字の並びが同じところを種にして、そのまわりを並べ合わせる）
-function candidates(u, H) {
+function candidates(u, H, on) {
   const L = Math.min(u.cs.length, 60);
   if (L < 3) return [];
   const A = u.cs.slice(0, L);
@@ -100,6 +100,13 @@ function candidates(u, H) {
   for (const [b] of [...votes].sort((x, y) => y[1] - x[1]).slice(0, 40)) {
     const at = b * 8 + 4;
     const r = local(A, H, Math.max(0, at - 14), Math.min(H.length, at + L + 14), u.lang === 'ja' ? 12 : 24);
+    // 頭の数文字だけが長い切れ目の前にあるとき（「There｜is rustling…」）は、その数文字の時刻が外れていることが多いので、切れ目のあとから逆算する。
+    // ただし声の出だしが分かっていて、切れ目のあとに新しく声が始まっていなければ（言いかけて間をあけただけ）、そのまま
+    if (r) for (let x = r.j; x < Math.min(r.endj, r.j + 7); x++) if (H[x].c === '|') {
+      const t1 = H[x + 1].t;
+      if (!on || on.some((o) => Math.abs(o - t1) < 0.6)) { r.i += x - r.j; r.j = x + 1; }
+      break;
+    }
     if (r && r.sc >= 0.3 && !out.some((o) => o.j === r.j)) {
       out.push({ j: r.j, sc: r.sc, lead: r.i, t: Math.max(0, H[r.j].t - r.i * RATE[u.lang]), end: H[r.endj].e + Math.max(0, u.cs.length - 1 - r.endi) * RATE[u.lang] });
     }
@@ -125,7 +132,7 @@ function alignUnits(text, heard) {
     for (let j = 0; j + 2 < cs.length; j++) { const g = cs[j].c + cs[j + 1].c + cs[j + 2].c; const a = tri.get(g); if (a) a.push(j); else tri.set(g, [j]); }
     cs.tri = tri;
   }
-  units.forEach((u) => { u.cand = H[u.lang].length ? candidates(u, H[u.lang]) : []; u.dur = u.cs.length * RATE[u.lang]; });
+  units.forEach((u) => { u.cand = H[u.lang].length ? candidates(u, H[u.lang], heard.on) : []; u.dur = u.cs.length * RATE[u.lang]; });
   const states = [];
   for (let ui = 0; ui < units.length; ui++) {
     const u = units[ui], add = [];
@@ -170,9 +177,42 @@ function alignUnits(text, heard) {
   };
   fill(true);
   fill(false);
+  if (heard.on && heard.on.length) snapToOnsets(units, heard.on);
   // 時刻が戻らないように
   for (let ui = 1; ui < units.length; ui++) if (units[ui].t != null && units[ui - 1].t != null && units[ui].t < units[ui - 1].t) units[ui].t = units[ui - 1].t;
   return units;
+}
+
+// 文字で見つからなかったまとまりを、声の出だし（onsetsOf で見つけた、間のあとに声が始まる時刻）に寄せる。
+// 前後の見つかったまとまりのあいだにある出だしを、テマ友の順に、見積もりにいちばん近いもの（3秒以内）に当てる
+function snapToOnsets(units, on) {
+  let last = -Infinity, k = 0;
+  for (const u of units) {
+    if (u.t == null) continue;
+    if (u.hit) { last = u.t; continue; }
+    let b = units.indexOf(u) + 1; while (b < units.length && !units[b].hit) b++;
+    const hi = b < units.length ? units[b].t - 0.3 : Infinity;
+    while (k < on.length && on[k] <= last + 0.3) k++;
+    let best = null;
+    for (let j = k; j < on.length && on[j] < hi; j++) if (Math.abs(on[j] - u.t) <= 3 && (best == null || Math.abs(on[j] - u.t) < Math.abs(on[best] - u.t))) best = j;
+    if (best != null) { u.t = on[best]; u.snap = true; k = best + 1; }
+    u.t = Math.max(u.t, last);
+    last = u.t;
+  }
+}
+
+// 音声（16kHz・モノラル）から、声の出だしを探す：まわり3秒の大きめの音より12dB以上小さい間が0.2秒以上続いたあと、音が戻った時刻
+export function onsetsOf(audio) {
+  const F = 160, n = Math.floor(audio.length / F), db = new Float32Array(n), sm = new Float32Array(n);
+  for (let i = 0; i < n; i++) { let s = 0; for (let k = 0; k < F; k++) { const x = audio[i * F + k]; s += x * x; } db[i] = 10 * Math.log10(s / F + 1e-10); }
+  for (let i = 0; i < n; i++) { let s = 0, c = 0; for (let k = Math.max(0, i - 2); k <= Math.min(n - 1, i + 2); k++) { s += db[k]; c++; } sm[i] = s / c; }
+  const out = [];
+  let thr = -Infinity;
+  for (let i = 0; i < n; i++) {
+    if (i % 50 === 0) { const w = Array.from(sm.subarray(Math.max(0, i - 150), i + 150)).sort((x, y) => x - y); thr = w[Math.floor(w.length * 0.8)] - 12; }
+    if (sm[i] < thr) { let j = i; while (j < n && sm[j] < thr) j++; if (j - i >= 20 && j < n) out.push(Math.round(j) / 100); i = j; }
+  }
+  return out;
 }
 
 // 同じテマ友・同じ聞き取りなら照らし合わせは1回で済ませる（歌詞の表示で何度も呼ばれる）

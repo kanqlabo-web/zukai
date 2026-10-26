@@ -19,7 +19,7 @@ import { betaOn } from './beta.js';
 import { openContextMenu } from './menubar.js';
 import { confirmBox, ask } from './dialog.js';
 import { sortBlocks, resolveAnchor } from './script.js';
-import { langsOf, matchTimes, toMono16k } from './autosync.js';
+import { langsOf, matchTimes, onsetsOf, toMono16k } from './autosync.js';
 
 const PART = 700 * 1024;
 const MAX = 80 * 1024 * 1024; // 1話まるごとの音源も入るように
@@ -590,7 +590,9 @@ async function autoSync(data, ti) {
     if (!heard) {
       const audio = await toMono16k(await loadBlob(data.w, meta), meta.name);
       if (!A.auto) return;
+      const on = onsetsOf(audio); // 声の出だし（聞き取りに渡すと audio が使えなくなるので先に）
       heard = await listen(audio, langs, partial, (upto, out) => cachePut(pkey, { v: HEARD_V, model: asrModel(), langs: langs.join(','), upto, out }));
+      heard = { ...heard, on };
       const rec = { v: HEARD_V, model: asrModel(), langs: langs.join(','), out: heard };
       cachePut(hkey, rec);
       cacheDel(pkey);
