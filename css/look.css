@@ -409,4 +409,6 @@
 .img-toolbar .tb-btn { width: 32px; height: 32px; border-radius: 6px; }
 .img-toolbar .tb-btn.on { background: var(--accent-soft); color: var(--accent); }
 .img-toolbar .tb-sep { width: 1px; height: 20px; background: var(--line); margin: 0 3px; }
-.img-toolbar .tb-btn.tb-text { width: auto; padding: 0 10px 0 8px; gap: 6px; font-size: 13px; font-weight: 600; color: var(--accent); }
+.photo-conv { position: absolute; right: 6px; top: 6px; z-index: 2; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; padding: 4px 10px 4px 8px; font-size: 13px; font-weight: 600; color: var(--accent); background: var(--paper); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.15); cursor: pointer; }
+.photo-conv:hover { background: var(--accent-soft); }
+.photo-box.has-conv .photo-pct { top: 40px; }

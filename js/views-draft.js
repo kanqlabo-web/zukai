@@ -924,10 +924,6 @@ function ItemView(w, d, b, it, i, items, rows) {
     if (sel) checkDiagramLike(im);
     const canDiagram = !!(im && diagramLike[im.id] === true);
     const toolbar = sel ? h('div', { class: 'img-toolbar', role: 'toolbar', 'aria-label': '写真の操作' },
-      canDiagram ? [
-        h('button', { class: 'icon-btn tb-btn tb-text', type: 'button', title: 'この写真を下絵にした図解を作り、写真は消します', onmousedown: (e) => e.preventDefault(), onclick: () => photoToDiagram(w, d, b, it, im) }, icon('stage', 18), '図解にする'),
-        h('span', { class: 'tb-sep' }),
-      ] : null,
       prevImg ? [
         tb('inline', '1枚で置く', () => { if (it.beside) setBeside(w, d, b, it, items0[i - 1], false); }, !it.beside),
         tb('beside', '前の写真の横に並べる', () => { if (!it.beside) setBeside(w, d, b, it, items0[i - 1], true); }, !!it.beside),
@@ -940,7 +936,9 @@ function ItemView(w, d, b, it, i, items, rows) {
         class: 'caption' + (it.caption ? '' : ' is-empty'), value: it.caption || '', placeholder: '写真の見出し（任意）例：＜木のイメージ＞', 'data-pkey': 'cap:' + it.id,
         oninput: (e) => { e.target.classList.toggle('is-empty', !e.target.value); saveLater(blockPath(w, b), { [`items.${it.id}.caption`]: e.target.value }); touch(w, d); },
       }),
-      h('div', { class: 'photo-box', style: { width: inRow ? '100%' : pw + '%' } },
+      h('div', { class: 'photo-box' + (sel && canDiagram ? ' has-conv' : ''), style: { width: inRow ? '100%' : pw + '%' } },
+        // 図解っぽい写真は、写真の右上に「図解にする」
+        sel && canDiagram ? h('button', { class: 'photo-conv', type: 'button', title: 'この写真を下絵にした図解を作り、写真は消します', onmousedown: (e) => e.preventDefault(), onclick: () => photoToDiagram(w, d, b, it, im) }, icon('stage', 16), '図解にする') : null,
         im ? h('img', { class: 'photo', src: im.data, alt: it.caption || '参考写真', onpointerdown: (e) => selectItem(it, e.target), draggable: 'false' }) : h('div', { class: 'muted small pad' }, '読み込み中…'),
         h('span', {
           class: 'photo-resize', title: 'ドラッグして大きさを変える', 'aria-label': '写真の大きさを変える（左右の矢印キーでも変えられます）', tabindex: '0', role: 'slider',
