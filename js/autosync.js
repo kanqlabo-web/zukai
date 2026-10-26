@@ -315,9 +315,9 @@ function lidUnits(text, lid) {
       for (const u of r.units) {
         const want = s0 + (e0 - s0) * cum / r.dur;
         cum += u.dur;
-        let best = s0;
-        for (const g of segs) if (!g.cut && Math.abs(g.s - want) < Math.abs(best - want)) best = g.s;
-        if (u === r.units[0]) { u.t = s0; u.hit = true; } else u.t = Math.abs(best - want) < 2 ? best : want;
+        // 2行目からは、そこの長さを行の文字数の割合で分けたところ（2.48.2〜。同じ長さの2行なら半々）。
+        // 近い声の出だしに寄せると、1行目の途中の息つぎに寄って、すぐ次の行に移ってしまうため
+        if (u === r.units[0]) { u.t = s0; u.hit = true; } else u.t = want;
       }
     }
     i = pi; j = pj;
