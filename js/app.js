@@ -174,6 +174,7 @@ function Header() {
     crumbs.push(h('span', { class: 'crumb-sep' }, '/'));
     crumbs.push(h('a', { href: `#/w/${r.params.w}`, class: 'crumb' }, work.title || '無題のライブラリー'));
   }
+  if (r.name === 'draft') crumbs.push(...DraftCrumbs(r.params));
   if (r.name === 'cast') { crumbs.push(h('span', { class: 'crumb-sep' }, '/')); crumbs.push(h('span', { class: 'crumb' }, 'メンバー一覧')); }
   if (r.name === 'people') { crumbs.push(h('span', { class: 'crumb-sep' }, '/')); crumbs.push(h('span', { class: 'crumb' }, '共有')); }
   history.setScope(r.params.w || null);
@@ -196,6 +197,32 @@ function Header() {
           VersionLink('menu-version'),
         )) : null,
     ));
+}
+
+// 稿のページ：ライブラリー名 / 話 / トラック。トラックはプルダウンで、ほかのトラックの最新の稿に移る
+const byOrder = (a, b) => (a.order || 0) - (b.order || 0) || (a.createdAt || 0) - (b.createdAt || 0);
+function DraftCrumbs({ w, d }) {
+  const drafts = S.d.drafts || [], tracks = S.d.tracks || [];
+  const draft = drafts.find((x) => x.id === d);
+  const track = draft && tracks.find((t) => t.id === draft.trackId);
+  const ep = track && (S.d.episodes || []).find((e) => e.id === track.episodeId);
+  if (!track) return [];
+  const latest = (tid) => drafts.filter((x) => x.trackId === tid).sort((a, b) => (b.no || 0) - (a.no || 0))[0];
+  const eps = (S.d.episodes || []).slice().sort(byOrder);
+  const sep = () => h('span', { class: 'crumb-sep' }, '/');
+  const out = [];
+  if (ep) out.push(sep(), h('a', { href: `#/w/${w}`, class: 'crumb crumb-ep' }, ep.title || '無題の話'));
+  out.push(sep(), h('label', { class: 'crumb crumb-pick', title: 'トラックを切り替える' },
+    h('span', { class: 'crumb-pick-name' }, track.title || '無題のトラック'),
+    h('svg', { viewBox: '0 0 24 24', width: 16, height: 16, 'aria-hidden': 'true' }, h('path', { d: 'M7 10l5 5 5-5', fill: 'none', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })),
+    h('select', {
+      'aria-label': 'トラック',
+      onchange: (e) => { const x = latest(e.target.value); if (x && x.id !== d) go(`#/w/${w}/d/${x.id}`); },
+    }, eps.map((e) => {
+      const ts = tracks.filter((t) => t.episodeId === e.id && latest(t.id)).sort(byOrder);
+      return ts.length ? h('optgroup', { key: e.id, label: e.title || '無題の話' }, ts.map((t) => h('option', { key: t.id, value: t.id, selected: t.id === track.id }, t.title || '無題のトラック'))) : null;
+    }))));
+  return out;
 }
 
 // バージョンと更新履歴へのリンク
