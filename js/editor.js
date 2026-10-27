@@ -1496,6 +1496,16 @@ function WidthControl(value, onLive, onSet) {
     h('span', { class: 'small width-num' }, String(value)),
     Seg([[24, '細'], [40, '普通'], [64, '太'], [96, '特太']], value, onSet));
 }
+// 裏返る太矢印：元の側が裏（濃い灰）になり、途中でねじれて表になる。位置は元から何割のところか
+function FlipControl(one) {
+  const pos = Math.round((one.flip || 0.45) * 100);
+  const live = (v) => { E.temp[one.id] = { ...E.shapes[one.id], flip: v / 100 }; draw(); };
+  return [
+    h('div', { class: 'prop' }, h('span', null, '裏返る'), Seg([[false, 'なし'], [true, 'あり']], !!one.flip, (v) => setProps({ flip: v ? 0.45 : 0 }))),
+    one.flip ? h('div', { class: 'prop width-ctl' }, h('span', null, '裏返る位置'),
+      h('input', { type: 'range', min: 10, max: 90, step: 1, value: pos, class: 'grow', 'aria-label': '裏返る位置（元から何割）', oninput: (e) => live(+e.target.value), onchange: (e) => setProps({ flip: +e.target.value / 100 }) })) : null,
+  ];
+}
 function setWidthLive(list, v) {
   for (const x of list) E.temp[x.id] = { ...E.shapes[x.id], width: v };
   draw();
@@ -2009,7 +2019,7 @@ function SelPanel() {
     parts.push(h('div', { class: 'prop' }, h('span', null, '矢印'), Seg([['none', 'なし'], ['end', '片側'], ['both', '両側']], one.head || 'none', (v) => setProps({ head: v }))));
     if (one.head && one.head !== 'none') {
       parts.push(h('div', { class: 'prop' }, h('span', null, '形'), Seg([['line', '線'], ['block', '太矢印']], one.style || 'line', (v) => setProps({ style: v, width: one.width || 40 }))));
-      if (one.style === 'block') parts.push(WidthControl(one.width || 40, (v) => setWidthLive([one], v), (v) => { E.blockW = v; setProps({ width: v }); }));
+      if (one.style === 'block') parts.push(WidthControl(one.width || 40, (v) => setWidthLive([one], v), (v) => { E.blockW = v; setProps({ width: v }); }), ...FlipControl(one));
     }
     parts.push(h('p', { class: 'muted small tight' }, '丸い点をドラッグすると形を直せます。'));
   }
@@ -2029,7 +2039,7 @@ function SelPanel() {
       parts.push(h('div', { class: 'prop' }, h('span', null, '先端'), Seg([['end', '片側'], ['both', '両側'], ['none', 'なし']], one.head || 'end', (v) => setProps({ head: v }))));
       parts.push(h('div', { class: 'prop' }, h('span', null, '線'), Seg([[false, '実線'], [true, '点線']], !!one.dashed, (v) => setProps({ dashed: v }))));
     } else {
-      parts.push(WidthControl(one.width || 46, (v) => setWidthLive([one], v), (v) => { E.blockW = v; setProps({ width: v }); }));
+      parts.push(WidthControl(one.width || 46, (v) => setWidthLive([one], v), (v) => { E.blockW = v; setProps({ width: v }); }), ...FlipControl(one));
     }
   }
   if (one && one.t === 'text') {

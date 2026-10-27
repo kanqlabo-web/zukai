@@ -781,7 +781,46 @@ function bentArrowFor(p, sibs, M) {
     return { pts, closed: x.closed || near || p.fill };
   });
   const regions = [...lines.filter((l) => l.closed).map((l) => l.pts), ...sibs.flatMap((f) => subpaths(f.path, 8).map((x) => dedupe(x.pts.map(M))))].filter((q) => q.length >= 3);
-  return bentArrowOf(lines, regions);
+  const a = bentArrowOf(lines, regions);
+  if (a) { const flip = flipOf(a, sibs, M); if (flip) a.flip = flip; }
+  return a;
+}
+// 曲がり矢印の裏側（ほかより濃い塗りの部分）：元の端から、裏側が見えている（あとから塗った薄い部分に隠れていない）ところまでの割合。なければ 0
+function flipOf(a, sibs, M) {
+  if (sibs.length < 2) return 0;
+  const g = (f) => gray(f.fc || [1, 1, 1]);
+  const dark = sibs.reduce((x, y) => (g(y) < g(x) ? y : x));
+  const lighter = sibs.filter((f) => f !== dark && g(f) > g(dark) + 0.05);
+  if (!lighter.length) return 0;
+  const polys = (f) => subpaths(f.path, 8).map((x) => x.pts.map(M)).filter((q) => q.length >= 3);
+  const inPoly = (q, poly) => {
+    let c = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const u = poly[i], v = poly[j];
+      if ((u[1] > q[1]) !== (v[1] > q[1]) && q[0] < ((v[0] - u[0]) * (q[1] - u[1])) / (v[1] - u[1]) + u[0]) c = !c;
+    }
+    return c;
+  };
+  const darkP = polys(dark), cover = lighter.filter((f) => f.seq > dark.seq).flatMap(polys);
+  const backAt = (q) => darkP.some((r) => inPoly(q, r)) && !cover.some((r) => inPoly(q, r));
+  // 中心線を元から少しずつたどる
+  const P = a.pts, segL = [];
+  let L = 0;
+  for (let i = 1; i < P.length; i++) { const l = Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1]); segL.push(l); L += l; }
+  const at = (d) => {
+    for (let i = 0; i < segL.length; i++) {
+      if (d <= segL[i] || i === segL.length - 1) { const t = segL[i] ? Math.min(1, d / segL[i]) : 0; return [P[i][0] + (P[i + 1][0] - P[i][0]) * t, P[i][1] + (P[i + 1][1] - P[i][1]) * t]; }
+      d -= segL[i];
+    }
+    return P[0];
+  };
+  const step = 2;
+  let start = null, end = 0;
+  for (let d = 0; d <= L; d += step) {
+    if (backAt(at(d))) { if (start === null) start = d; end = d; } else if (start !== null && d - end > a.width * 0.5) break;
+  }
+  if (start === null || start > a.width || end < a.width) return 0;
+  return Math.round((end / L) * 100) / 100;
 }
 // lines：外形の線（{ pts, closed } の並び）、regions：矢印の中の範囲（多角形の並び。どれかの中なら矢印の中）
 // 矢の先（首・返し・先・返し・首）を見つけ、首の真ん中から元のほうへ、矢印の中の幅の真ん中をたどって中心線を作る

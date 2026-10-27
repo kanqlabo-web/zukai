@@ -178,6 +178,44 @@ export function lineArrowShape(s) {
   return { kind: 'line', pts: slicePts(P, d0, Math.max(d0 + 1, d1)), heads };
 }
 
+// 裏返る太矢印（flip：元から何割のところで裏返るか。0 ＝裏返らない）
+// 元の側が裏（濃い灰）、先の側が表。裏返るところで帯がねじれて細くなる。返り値 { back, front }（多角形）か null
+export function flipArrowShape(s) {
+  if (!s.flip || s.style !== 'block') return null;
+  const straight = s.t === 'arrow';
+  const P = straight ? [[s.x1, s.y1], [s.x2, s.y2]] : linePoints(s);
+  const L = polyLength(P);
+  const head = straight ? 'end' : s.head || 'none';
+  const atEnd = head === 'end' || head === 'both', atStart = head === 'both' || head === 'start';
+  const w = s.width || (straight ? 46 : 40), hl = straight ? Math.min(L * 0.55, w * 1.3) : Math.min(L * 0.45, w * 1.2);
+  const d0 = atStart ? hl : 0, d1 = atEnd ? L - hl : L;
+  if (d1 - d0 < w * 1.6) return null;
+  const f = Math.max(d0 + w * 0.8, Math.min(d1 - w * 0.8, s.flip * L));
+  // 帯の半分の幅：裏返るところの前後で細くなる
+  const half = (d) => { const t = Math.min(1, Math.abs(d - f) / (w * 0.8)); return (w / 2) * (0.1 + 0.9 * t * t * (3 - 2 * t)); };
+  const at = (d) => pointAt(P, d);
+  const off = (d, r) => { const q = at(d); return [q.x - q.uy * r, q.y + q.ux * r]; };
+  const seg = (a, b, headA, headB) => {
+    const ds = [];
+    for (let d = a; d < b; d += 3) ds.push(d);
+    ds.push(b);
+    const left = ds.map((d) => off(d, half(d))), right = ds.map((d) => off(d, -half(d))).reverse();
+    const out = left.slice();
+    if (headB) out.push(off(b, w), P[P.length - 1], off(b, -w));
+    out.push(...right);
+    if (headA) out.push(off(a, -w), P[0], off(a, w));
+    return out;
+  };
+  return { back: seg(d0, f, atStart, false), front: seg(f, d1, false, atEnd) };
+}
+function flipArrowNodes(F) {
+  const f = (q) => `${q[0].toFixed(1)},${q[1].toFixed(1)}`;
+  return [
+    h('polygon', { key: 'fb', points: F.back.map(f).join(' '), fill: '#bdbdbd', stroke: INK, 'stroke-width': 2.4, 'stroke-linejoin': 'round' }),
+    h('polygon', { key: 'ff', points: F.front.map(f).join(' '), fill: '#f2f2f2', stroke: INK, 'stroke-width': 2.4, 'stroke-linejoin': 'round' }),
+  ];
+}
+
 function arrowHead(x1, y1, x2, y2, size) {
   const a = Math.atan2(y2 - y1, x2 - x1);
   const l = [x2 - size * Math.cos(a - 0.45), y2 - size * Math.sin(a - 0.45)];
@@ -303,7 +341,8 @@ export function shapeNode(s, { selected = false, interactive = false, idx = null
     const f = (q) => `${q[0].toFixed(1)},${q[1].toFixed(1)}`;
     const join = s.mode === 'smooth' || s.mode === 'free' ? 'round' : 'miter';
     const bw = 2.4;
-    const shape = A.kind === 'block'
+    const F = flipArrowShape(s);
+    const shape = F ? flipArrowNodes(F) : A.kind === 'block'
       ? [
         // 外側の黒い線 → 三角 → 内側の白（灰）で、ひとつながりの白抜き矢印にする
         h('path', { key: 'bo', d: 'M' + A.core.map(f).join('L'), fill: 'none', stroke: INK, 'stroke-width': A.w + bw * 2, 'stroke-linejoin': join, 'stroke-miterlimit': 3, 'stroke-linecap': 'butt' }),
@@ -327,8 +366,9 @@ export function shapeNode(s, { selected = false, interactive = false, idx = null
     const { x1, y1, x2, y2 } = s;
     if (s.style === 'block') {
       const pts = blockArrowPoints(s);
+      const F = flipArrowShape(s);
       return h('g', { ...common },
-        h('polygon', { points: pts, fill: '#f2f2f2', stroke: INK, 'stroke-width': 2.4, 'stroke-linejoin': 'round' }),
+        F ? flipArrowNodes(F) : h('polygon', { points: pts, fill: '#f2f2f2', stroke: INK, 'stroke-width': 2.4, 'stroke-linejoin': 'round' }),
         interactive ? h('polygon', { points: pts, ...HIT, fill: 'transparent', 'pointer-events': 'all' }) : null,
         selected ? h('polygon', { points: pts, fill: 'none', class: 'sel-ring' }) : null);
     }
