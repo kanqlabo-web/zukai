@@ -22,8 +22,8 @@ const KIND = { 8: 'ellipse', 6: 'rect', 7: 'round', 98: 'tri', 108: 'text', 153:
 const ARROWS = {
   72: { pts: [[0, 0.5], [1, 0.5]], w: 0.5 },
   45: { pts: [[1, 0.5], [0, 0.5]], w: 0.3 },
-  102: { pts: [[0.17, 1], [0.17, 0.4], [0.3, 0.12], [0.5, 0.05], [0.7, 0.12], [0.8, 0.4], [0.8, 0.9]], w: 0.25, smooth: true },
-  24: { pts: [[0.95, 0.1], [0.45, 0.08], [0.1, 0.25], [0.08, 0.5], [0.3, 0.75], [0.6, 0.8], [0.95, 0.75]], w: 0.18, smooth: true },
+  102: { pts: [[0.17, 1], [0.17, 0.4], [0.3, 0.12], [0.5, 0.05], [0.7, 0.12], [0.8, 0.4], [0.8, 0.9]], w: 0.25, smooth: true, preset: 'uturnArrow' },
+  24: { pts: [[0.95, 0.1], [0.45, 0.08], [0.1, 0.25], [0.08, 0.5], [0.3, 0.75], [0.6, 0.8], [0.95, 0.75]], w: 0.18, smooth: true, preset: 'curvedRightArrow' },
 };
 const PT = 12700 / 25; // 1pt（25 EMU 単位）
 
@@ -96,6 +96,7 @@ export function parseSlidesClip(raw) {
       head: hs && he ? 'both' : he ? 'end' : hs ? 'start' : 'none',
       w: BASE * Math.hypot(m[0], m[1]), h: BASE * Math.hypot(m[2], m[3]),
       rot: (Math.atan2(m[1], m[0]) * 180) / Math.PI,
+      det: m[0] * m[3] - m[1] * m[2],
       fill: s.props[15] != null && s.props[14] !== 0 ? rgb(s.props[15]) : null,
       line: s.props[19] != null ? rgb(s.props[19]) : null,
     });
@@ -138,6 +139,13 @@ export function slidesToShapes(list, at) {
     const kind = KIND[s.kind];
     if (kind === 'text') {
       if (t) out.push({ t: 'text', text: t, x: Math.round(X(s.cx)), y: Math.round(Y(s.cy)), size: Math.max(10, Math.round((s.pt || 14) * PT * k)), rot: 0, seq: seq++ });
+      continue;
+    }
+    // スライドと同じ形の図形がある矢印（U ターン矢印・カーブ矢印）は、その図形として置く（元と同じ式で描く）。行列が裏返しなら左右反転
+    if (kind === 'arrow' && s.arrow.preset) {
+      // 裏返しの行列 ＝ 回転 ×（左右反転）。最初の列が -（cos, sin）になるので、角は 180° ずれる
+      const fh = s.det < 0, rot = fh ? s.rot + 180 : s.rot;
+      out.push({ t: 'preset', preset: s.arrow.preset, x: X(s.cx), y: Y(s.cy), w: Math.round(Math.abs(s.w) * k * 10) / 10, h: Math.round(Math.abs(s.h) * k * 10) / 10, rot: Math.round((((rot % 360) + 360) % 360) * 10) / 10, ...(fh ? { fh: true } : {}), seq: seq++ });
       continue;
     }
     if (kind === 'arrow' && s.pts) {

@@ -8,6 +8,7 @@ import { loadPhoto, loadPhotoSrc, warpToStage, TracePicker, TraceChooser, initia
 import { textInRegion } from './drawimport.js';
 import { shapesFromClipboard, MARK } from './clippaste.js';
 import { W, H, stageFrame, StageSVG, shapeNode, sortShapes, moveShape, shapeCenter, shapeBBox, simplify, LAYER, layoutLabels, isRegion, isFillable, canName, insideShape, linePoints } from './stage.js';
+import { PRESET_NAMES } from './preset.js';
 import { fillWeight, pointsFor } from './fill.js';
 import { workIndex, roleListOf, personCast, personNo, personRole, roleShort, rolesOf, roleText, roleVisible, roleKey } from './cast.js';
 import { isDialogOpen } from './dialog.js';
@@ -844,7 +845,7 @@ document.addEventListener('paste', (e) => {
 }, true);
 function paste() { if (clipboard.length) duplicateList(clipboard, 20, 20); }
 // ---------- Blender と同じ操作：G 移動・R 回転・S 拡大縮小（マウスで動かし、クリックか Enter で決定、Esc か右クリックで取り消し） ----------
-const ROT_TYPES = new Set(['ellipse', 'rect', 'text']);
+const ROT_TYPES = new Set(['ellipse', 'rect', 'text', 'preset']);
 function mapPoints(s, f) {
   const n = { ...s };
   if (s.t === 'arrow') { [n.x1, n.y1] = f(s.x1, s.y1); [n.x2, n.y2] = f(s.x2, s.y2); }
@@ -906,7 +907,7 @@ function applyXf() {
       const n = mapPoints(o, (px, py) => [R2(cx + (px - cx) * kx), R2(cy + (py - cy) * ky)]);
       if (o.t === 'person') n.r = Math.round(Math.max(10, Math.min(48, (o.r || 20) * km)));
       if (o.t === 'ellipse') { n.rx = Math.max(8, Math.round(o.rx * kx)); n.ry = Math.max(8, Math.round(o.ry * ky)); }
-      if (o.t === 'rect' || o.t === 'image') { n.w = Math.max(12, Math.round(o.w * kx)); n.h = Math.max(12, Math.round(o.h * ky)); }
+      if (o.t === 'rect' || o.t === 'image' || o.t === 'preset') { n.w = Math.max(12, Math.round(o.w * kx)); n.h = Math.max(12, Math.round(o.h * ky)); }
       if (o.t === 'text') n.size = Math.max(8, Math.round((o.size || 24) * km));
       t[id] = n;
     }
@@ -1242,11 +1243,12 @@ function down(e) {
     }
   } else if (t === 'person' || t === 'role') {
     placePerson(p);
-  } else if (t === 'ellipse' || t === 'rect') {
+  } else if (t === 'ellipse' || t === 'rect' || t === 'preset') {
     const nid = newId(8);
     E.temp[nid] = t === 'ellipse'
       ? { id: nid, t, x: p[0], y: p[1], rx: 4, ry: 4, rot: 0, z: zFor(t) }
-      : { id: nid, t, x: p[0], y: p[1], w: 8, h: 8, rot: 0, round: true, z: zFor(t) };
+      : t === 'preset' ? { id: nid, t, preset: E.presetKind || 'curvedUpArrow', x: p[0], y: p[1], w: 8, h: 8, rot: 0, z: zFor(t) }
+        : { id: nid, t, x: p[0], y: p[1], w: 8, h: 8, rot: 0, round: true, z: zFor(t) };
     E.drag = { type: 'create', id: nid, p0: p };
   } else if (t === 'arrow' || t === 'block') {
     const nid = newId(8);
@@ -1350,7 +1352,7 @@ function move(e) {
     } else if (d.kind === 'resize') {
       const [lx, ly] = rot(p[0] - o.x, p[1] - o.y, -(o.rot || 0));
       if (o.t === 'ellipse') { s.rx = Math.round(Math.max(8, Math.abs(lx))); s.ry = Math.round(Math.max(8, Math.abs(ly))); }
-      else if (o.t === 'rect') { s.w = Math.round(Math.max(16, Math.abs(lx) * 2)); s.h = Math.round(Math.max(16, Math.abs(ly) * 2)); }
+      else if (o.t === 'rect' || o.t === 'preset') { s.w = Math.round(Math.max(16, Math.abs(lx) * 2)); s.h = Math.round(Math.max(16, Math.abs(ly) * 2)); }
       else if (o.t === 'image') {
         // 画像は縦横の比を変えない（Shift を押すと自由に）
         if (d.shift) { s.w = Math.round(Math.max(12, Math.abs(lx) * 2)); s.h = Math.round(Math.max(12, Math.abs(ly) * 2)); }
@@ -1412,7 +1414,7 @@ function up(e) {
       if (s.rx < 14 && s.ry < 14) { s.rx = 110; s.ry = 60; }
       s.x = Math.round(s.x); s.y = Math.round(s.y); s.rx = Math.round(s.rx); s.ry = Math.round(s.ry);
     } else {
-      if (s.w < 28 && s.h < 28) { s.w = 180; s.h = 90; }
+      if (s.w < 28 && s.h < 28) { s.w = s.t === 'preset' ? 120 : 180; s.h = s.t === 'preset' ? 100 : 90; }
       s.x = Math.round(s.x); s.y = Math.round(s.y); s.w = Math.round(s.w); s.h = Math.round(s.h);
     }
     commit({ [d.id]: s });
@@ -1496,21 +1498,19 @@ function WidthControl(value, onLive, onSet) {
     h('span', { class: 'small width-num' }, String(value)),
     Seg([[24, '細'], [40, '普通'], [64, '太'], [96, '特太']], value, onSet));
 }
-// 裏返る太矢印：元の側が裏（濃い灰）になり、途中でねじれて表になる。位置は元から何割のところか
-function FlipControl(one) {
-  const pos = Math.round((one.flip || 0.45) * 100);
-  const live = (v) => { E.temp[one.id] = { ...E.shapes[one.id], flip: v / 100 }; draw(); };
-  return [
-    h('div', { class: 'prop' }, h('span', null, '裏返る'), Seg([[false, 'なし'], [true, 'あり']], !!one.flip, (v) => setProps({ flip: v ? 0.45 : 0 }))),
-    one.flip ? h('div', { class: 'prop width-ctl' }, h('span', null, '裏返る位置'),
-      h('input', { type: 'range', min: 10, max: 90, step: 1, value: pos, class: 'grow', 'aria-label': '裏返る位置（元から何割）', oninput: (e) => live(+e.target.value), onchange: (e) => setProps({ flip: +e.target.value / 100 }) })) : null,
-  ];
-}
 function setWidthLive(list, v) {
   for (const x of list) E.temp[x.id] = { ...E.shapes[x.id], width: v };
   draw();
 }
 
+// カーブ矢印など（スライドと同じ形の図形）の種類
+const PRESET_KINDS = Object.entries(PRESET_NAMES);
+function PresetToolPanel() {
+  return h('div', null,
+    h('div', { class: 'panel-title' }, 'カーブ矢印を置く'),
+    h('p', { class: 'small' }, 'ドラッグした四角の大きさで置きます（クリックだけなら決まった大きさ）。形は Googleスライドの図形と同じです。'),
+    h('div', { class: 'prop' }, h('span', null, '種類'), Seg(PRESET_KINDS, E.presetKind || 'curvedUpArrow', (v) => { E.presetKind = v; draw(); })));
+}
 function BlockToolPanel() {
   return h('div', null,
     h('div', { class: 'panel-title' }, '太矢印を引く'),
@@ -1538,7 +1538,7 @@ function handlesFor(s, upx) {
   const hs = [];
   const H1 = (kind, x, y, cls = '') => h('circle', { key: kind, 'data-h': `${kind}:${s.id}`, cx: x, cy: y, r, class: 'handle ' + cls, 'stroke-width': 2 / upx });
   const local = (x, y) => { const [a, b] = rot(x, y, s.rot || 0); return [s.x + a, s.y + b]; };
-  if (s.t === 'ellipse' || s.t === 'rect' || s.t === 'image') {
+  if (s.t === 'ellipse' || s.t === 'rect' || s.t === 'image' || s.t === 'preset') {
     const hw = s.t === 'ellipse' ? s.rx : s.w / 2, hh = s.t === 'ellipse' ? s.ry : s.h / 2;
     const [rx, ry] = local(hw, hh);
     const [ox, oy] = local(0, -hh - 18 / upx - 10);
@@ -1589,19 +1589,20 @@ const ICONS = {
   line: () => h('line', { x1: 3, y1: 19, x2: 21, y2: 5, stroke: 'currentColor', 'stroke-width': 2.2, 'stroke-linecap': 'round' }),
   curve: () => [h('path', { d: 'M3 19C6 5 16 21 21 5', fill: 'none', stroke: 'currentColor', 'stroke-width': 2.2, 'stroke-linecap': 'round' })],
   carrow: () => [h('path', { d: 'M3 19C5 8 13 5 18 7', fill: 'none', stroke: 'currentColor', 'stroke-width': 2.2, 'stroke-linecap': 'round' }), h('path', { d: 'M21 8.5l-6.5 2.6 1.2-7z', fill: 'currentColor' })],
+  preset: () => h('path', { d: 'M4 4c0 9 3 15 7 15s6-6 6.5-11H14l5-5 4.5 5h-3c-.5 7-4 13.5-9.5 13.5S4 13 4 4z', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.6, 'stroke-linejoin': 'round', transform: 'translate(-1.5 0)' }),
   cblock: () => h('path', { d: 'M3 20C3 11 8 7 14 7V3.5l7 6-7 6V11c-4 0-7 3-7 9z', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.7, 'stroke-linejoin': 'round' }),
   freeline: () => h('path', { d: 'M3 15c3-6 5 4 8-2s4-6 6-2 3 3 4 0', fill: 'none', stroke: 'currentColor', 'stroke-width': 2.2, 'stroke-linecap': 'round' }),
   text: () => h('text', { x: 12, y: 17.5, 'text-anchor': 'middle', 'font-size': 15, 'font-weight': 700, fill: 'currentColor' }, 'あ'),
 };
 const TOOLS = [
   ['select', '選択'], ['person', 'メンバーで置く'], ['role', 'キャラクターで置く'], ['ellipse', '楕円'], ['rect', '四角'], ['blob', '手書き囲み'],
-  ['line', '直線'], ['curve', '曲線'], ['freeline', '手書き線'], ['arrow', '矢印'], ['carrow', '曲線矢印'], ['block', '太矢印'], ['cblock', '太い曲線矢印'], ['text', '文字'], ['pan', 'スクロール'],
+  ['line', '直線'], ['curve', '曲線'], ['freeline', '手書き線'], ['arrow', '矢印'], ['carrow', '曲線矢印'], ['block', '太矢印'], ['cblock', '太い曲線矢印'], ['preset', 'カーブ矢印'], ['text', '文字'], ['pan', 'スクロール'],
 ];
 const TOOL_LABEL = Object.fromEntries(TOOLS);
 // 線・矢印は、それぞれ1つのボタンにまとめ、押すとプルダウンで選ぶ
 const GROUPS = [
   { id: 'lines', label: '線', tools: ['line', 'curve', 'freeline'] },
-  { id: 'arrows', label: '矢印', tools: ['arrow', 'carrow', 'block', 'cblock'] },
+  { id: 'arrows', label: '矢印', tools: ['arrow', 'carrow', 'block', 'cblock', 'preset'] },
 ];
 const groupOf = (t) => GROUPS.find((g) => g.tools.includes(t)) || null;
 // 道具バーの並び。数字キー（1〜9・0）で切り替える。まとめたボタンは、数字キーでプルダウンが開き、続けて数字で選ぶ
@@ -1904,7 +1905,7 @@ function SelPanel() {
   const fillables = list.filter(isFillable);
   const parts = [];
   parts.push(FilterBar());
-  parts.push(h('div', { class: 'panel-title' }, one ? ({ person: '人', ellipse: '楕円', rect: '四角', blob: '囲み', line: '線', arrow: '矢印', text: '文字' })[one.t] : `${list.length}個を選択中`));
+  parts.push(h('div', { class: 'panel-title' }, one ? ({ person: '人', ellipse: '楕円', rect: '四角', blob: '囲み', line: '線', arrow: '矢印', preset: PRESET_NAMES[one.preset] || '図形', text: '文字' })[one.t] : `${list.length}個を選択中`));
   if (one && one.t === 'person') {
     const ix = idx();
     const m = personCast(one, ix);
@@ -2019,7 +2020,7 @@ function SelPanel() {
     parts.push(h('div', { class: 'prop' }, h('span', null, '矢印'), Seg([['none', 'なし'], ['end', '片側'], ['both', '両側']], one.head || 'none', (v) => setProps({ head: v }))));
     if (one.head && one.head !== 'none') {
       parts.push(h('div', { class: 'prop' }, h('span', null, '形'), Seg([['line', '線'], ['block', '太矢印']], one.style || 'line', (v) => setProps({ style: v, width: one.width || 40 }))));
-      if (one.style === 'block') parts.push(WidthControl(one.width || 40, (v) => setWidthLive([one], v), (v) => { E.blockW = v; setProps({ width: v }); }), ...FlipControl(one));
+      if (one.style === 'block') parts.push(WidthControl(one.width || 40, (v) => setWidthLive([one], v), (v) => { E.blockW = v; setProps({ width: v }); }));
     }
     parts.push(h('p', { class: 'muted small tight' }, '丸い点をドラッグすると形を直せます。'));
   }
@@ -2033,13 +2034,17 @@ function SelPanel() {
     parts.push(h('div', { class: 'prop' }, h('span', null, '塗り'), Seg([['none', 'なし'], ['light', '薄い灰'], ['white', '白']], g.fill || 'none', (v) => setProps({ fill: v }, (x) => regions.includes(x)))));
     if (one && one.t === 'rect') parts.push(h('div', { class: 'prop' }, h('span', null, '角'), Seg([[true, '丸い'], [false, '四角']], !!one.round, (v) => setProps({ round: v }))));
   }
+  if (one && one.t === 'preset') {
+    parts.push(h('div', { class: 'prop' }, h('span', null, '種類'), Seg(PRESET_KINDS, one.preset, (v) => { E.presetKind = v; setProps({ preset: v, adj: null }); })));
+    parts.push(h('div', { class: 'prop' }, h('span', null, '左右'), Seg([[false, 'そのまま'], [true, '反転']], !!one.fh, (v) => setProps({ fh: v }))));
+  }
   if (one && one.t === 'arrow') {
     parts.push(h('div', { class: 'prop' }, h('span', null, '種類'), Seg([['line', '線'], ['block', '太矢印']], one.style || 'line', (v) => setProps({ style: v }))));
     if ((one.style || 'line') === 'line') {
       parts.push(h('div', { class: 'prop' }, h('span', null, '先端'), Seg([['end', '片側'], ['both', '両側'], ['none', 'なし']], one.head || 'end', (v) => setProps({ head: v }))));
       parts.push(h('div', { class: 'prop' }, h('span', null, '線'), Seg([[false, '実線'], [true, '点線']], !!one.dashed, (v) => setProps({ dashed: v }))));
     } else {
-      parts.push(WidthControl(one.width || 46, (v) => setWidthLive([one], v), (v) => { E.blockW = v; setProps({ width: v }); }), ...FlipControl(one));
+      parts.push(WidthControl(one.width || 46, (v) => setWidthLive([one], v), (v) => { E.blockW = v; setProps({ width: v }); }));
     }
   }
   if (one && one.t === 'text') {
@@ -2357,7 +2362,7 @@ function editorMenus(setTool, zoomIn, zoomOut) {
       tool('person', 'メンバーで置く'), tool('role', 'キャラクターで置く'), tool('text', '文字'),
       '-', tool('ellipse', '楕円'), tool('rect', '四角'), tool('blob', '手書き囲み'),
       '-', tool('line', '直線'), tool('curve', '曲線'), tool('freeline', '手書き線'),
-      '-', tool('arrow', '矢印'), tool('carrow', '曲線矢印'), tool('block', '太矢印'), tool('cblock', '太い曲線矢印'),
+      '-', tool('arrow', '矢印'), tool('carrow', '曲線矢印'), tool('block', '太矢印'), tool('cblock', '太い曲線矢印'), tool('preset', 'カーブ矢印'),
       '-', { label: E.trace ? '下絵の写真を変える' : '写真を下絵にする', onclick: pickTrace },
     ] },
     { label: '配置', items: [
@@ -2655,7 +2660,7 @@ export function EditorView() {
         h('div', { class: 'rotate-hint' }, '2本指で広げると拡大、2本指で動かすとスクロールします。横向きにすると大きく編集できます。'),
         EditorMovesSection(E.w, E.id, shapes, ix, applyMoves),
         ClashSection(clashes, shapes, ix, (ids) => { E.tool = 'select'; E.sel = new Set(ids.filter((id) => E.shapes[id])); draw(); }),
-        E.hmode ? HeightPanel() : E.tool === 'person' ? PersonPanel(shapes) : E.tool === 'role' ? RolePanel(shapes) : ['line', 'curve', 'carrow', 'cblock'].includes(E.tool) ? PolyPanel() : E.tool === 'block' ? BlockToolPanel() : SelPanel())),
+        E.hmode ? HeightPanel() : E.tool === 'person' ? PersonPanel(shapes) : E.tool === 'role' ? RolePanel(shapes) : ['line', 'curve', 'carrow', 'cblock'].includes(E.tool) ? PolyPanel() : E.tool === 'block' ? BlockToolPanel() : E.tool === 'preset' ? PresetToolPanel() : SelPanel())),
     E.xf ? XfHint() : null,
     E.traceChoose ? TraceChooser(E.traceChoose, { onPick: pickTraceSrc, onFile: pickTraceFile, onCancel: () => { E.traceChoose = null; draw(); } }) : null,
     E.tracePick ? TracePicker(E.tracePick, { onDone: finishTrace, onCancel: () => { E.tracePick = null; draw(); }, redraw: draw }) : null);

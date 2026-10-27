@@ -1,5 +1,6 @@
 // 図の描画（編集画面・一覧・PDFで共通）
 import { h } from './vdom.js';
+import { presetPaths, presetPolys } from './preset.js';
 import { personCast, personNo, personRole, roleShort, rolesOf, roleVisible } from './cast.js';
 
 export const W = 1000;
@@ -26,7 +27,7 @@ export function personOutline(kind, r, attrs) {
   if (kind === 'tri') { const a = r * 1.75; return h('polygon', { points: `0,${(-a).toFixed(1)} ${(a * 0.92).toFixed(1)},${(a * 0.62).toFixed(1)} ${(-a * 0.92).toFixed(1)},${(a * 0.62).toFixed(1)}`, ...attrs }); }
   return h('circle', { r, ...attrs });
 }
-export const LAYER = { image: 0, blob: 0, ellipse: 0, rect: 0, line: 1, arrow: 1, person: 2, text: 3 };
+export const LAYER = { image: 0, blob: 0, ellipse: 0, rect: 0, line: 1, arrow: 1, preset: 1, person: 2, text: 3 };
 
 export function stageFrame() {
   const t = 5;
@@ -322,6 +323,16 @@ export function shapeNode(s, { selected = false, interactive = false, idx = null
         ? h('ellipse', { rx: s.rx + 8, ry: s.ry + 8, fill: 'none', class: 'sel-ring' })
         : h('rect', { x: -s.w / 2 - 8, y: -s.h / 2 - 8, width: s.w + 16, height: s.h + 16, fill: 'none', class: 'sel-ring' })) : null);
   }
+  if (s.t === 'preset') {
+    // スライド・図形描画の図形（曲がり矢印など）を、元と同じ式で描く。fh：左右反転
+    const tr = `translate(${s.x},${s.y}) rotate(${s.rot || 0}) scale(${s.fh ? -1 : 1},1) translate(${-s.w / 2},${-s.h / 2})`;
+    const P = presetPaths(s.preset, s.w, s.h, s.adj);
+    const FILL = { norm: '#f2f2f2', darkenLess: '#bdbdbd', darken: '#9e9e9e', lightenLess: '#f8f8f8', lighten: '#fff' };
+    return h('g', { ...common, transform: tr },
+      ...P.map((p, i) => h('path', { key: 'p' + i, d: p.d, fill: p.fill === 'none' ? 'none' : FILL[p.fill] || FILL.norm, stroke: p.stroke ? INK : 'none', 'stroke-width': 2.4, 'stroke-linejoin': 'round' })),
+      interactive ? P.filter((p) => p.fill !== 'none').map((p, i) => h('path', { key: 'h' + i, d: p.d, fill: 'transparent', stroke: 'transparent', 'stroke-width': 10, 'pointer-events': 'all' })) : null,
+      selected ? h('rect', { x: -6, y: -6, width: s.w + 12, height: s.h + 12, fill: 'none', class: 'sel-ring' }) : null);
+  }
   if (s.t === 'image') {
     // 貼り付けた画像（Googleドキュメントの図・写真など）
     // ink：下絵から取り込んだ黒い線（舞台いっぱい）。押しても選ばれない（空いている所の範囲選択のじゃまにならないように）
@@ -457,7 +468,7 @@ export function shapeBBox(s) {
     const xs = p.map((q) => q[0]), ys = p.map((q) => q[1]);
     return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
   }
-  if (s.t === 'ellipse' || s.t === 'rect' || s.t === 'image') {
+  if (s.t === 'ellipse' || s.t === 'rect' || s.t === 'image' || s.t === 'preset') {
     const hw = s.t === 'ellipse' ? s.rx : s.w / 2, hh = s.t === 'ellipse' ? s.ry : s.h / 2;
     const c = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([a, b]) => rotPt(a, b, s.rot || 0));
     const xs = c.map((q) => q[0] + s.x), ys = c.map((q) => q[1] + s.y);
@@ -519,6 +530,7 @@ function strokeSegs(list) {
     else if (sh.t === 'rect' && !sh.noline) poly([[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => rot(a * sh.w / 2, b * sh.h / 2, sh.x, sh.y, sh.rot)), true);
     else if (sh.t === 'blob' && !sh.noline) poly(sh.sharp ? sh.pts || [] : sampleOpen([...(sh.pts || []), (sh.pts || [])[0]].filter(Boolean)), true);
     else if (sh.t === 'line') { if (sh.style === 'block') { const A = lineArrowShape(sh); poly(A.pts, false); A.heads.forEach((t) => poly(t, true)); } else poly(linePoints(sh), false); }
+    else if (sh.t === 'preset') presetPolys(sh).forEach((q) => poly(q, true));
     else if (sh.t === 'arrow') { if (sh.style === 'block') poly(blockArrowPoints(sh).split(' ').map((q) => q.split(',').map(Number)), true); else poly([[sh.x1, sh.y1], [sh.x2, sh.y2]], false); }
   }
   return segs;
