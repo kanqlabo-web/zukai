@@ -179,7 +179,7 @@ export function lineArrowShape(s) {
 }
 
 // 裏返る太矢印（flip：元から何割のところで裏返るか。0 ＝裏返らない）
-// 元の側が裏（濃い灰）、先の側が表。裏返るところで帯がねじれて細くなる。返り値 { back, front }（多角形）か null
+// 元の側が裏（濃い灰）、先の側が表。裏返るところは帯を斜めに横切る折り目で分ける。返り値 { back, front }（多角形）か null
 export function flipArrowShape(s) {
   if (!s.flip || s.style !== 'block') return null;
   const straight = s.t === 'arrow';
@@ -191,22 +191,27 @@ export function flipArrowShape(s) {
   const d0 = atStart ? hl : 0, d1 = atEnd ? L - hl : L;
   if (d1 - d0 < w * 1.6) return null;
   const f = Math.max(d0 + w * 0.8, Math.min(d1 - w * 0.8, s.flip * L));
-  // 帯の半分の幅：裏返るところの前後で細くなる
-  const half = (d) => { const t = Math.min(1, Math.abs(d - f) / (w * 0.8)); return (w / 2) * (0.1 + 0.9 * t * t * (3 - 2 * t)); };
-  const at = (d) => pointAt(P, d);
-  const off = (d, r) => { const q = at(d); return [q.x - q.uy * r, q.y + q.ux * r]; };
-  const seg = (a, b, headA, headB) => {
-    const ds = [];
-    for (let d = a; d < b; d += 3) ds.push(d);
-    ds.push(b);
-    const left = ds.map((d) => off(d, half(d))), right = ds.map((d) => off(d, -half(d))).reverse();
-    const out = left.slice();
-    if (headB) out.push(off(b, w), P[P.length - 1], off(b, -w));
-    out.push(...right);
-    if (headA) out.push(off(a, -w), P[0], off(a, w));
-    return out;
+  // 裏と表の境目：帯を斜めに横切る折り目（帯の幅ぶんの長さで、片方の端からもう片方の端へ）
+  const S = w, fa = f - S / 2, fb = f + S / 2;
+  // 向きは前後の点から取る（折れ線の角で端ががたつかないように）
+  const off = (d, r) => {
+    const a = pointAt(P, Math.max(0, d - 4)), b = pointAt(P, Math.min(L, d + 4)), q = pointAt(P, d);
+    const l = Math.hypot(b.x - a.x, b.y - a.y);
+    const ux = l > 0.01 ? (b.x - a.x) / l : q.ux, uy = l > 0.01 ? (b.y - a.y) / l : q.uy;
+    return [q.x - uy * r, q.y + ux * r];
   };
-  return { back: seg(d0, f, atStart, false), front: seg(f, d1, false, atEnd) };
+  const edge = (a, b, r) => { const out = []; for (let d = a; d < b; d += 2) out.push(off(d, r)); out.push(off(b, r)); return out; };
+  // 折り目：fa の右の端から fb の左の端へ
+  const fold = [];
+  for (let i = 0; i <= 12; i++) { const t = i / 12; fold.push(off(fa + S * t, (w / 2) * (2 * t - 1))); }
+  // 裏：元の端 → 左の端を fb まで → 折り目を戻る → 右の端を元へ
+  const back = edge(d0, fb, w / 2).concat(fold.slice().reverse(), edge(d0, fa, -w / 2).reverse());
+  if (atStart) back.push(off(d0, -w), P[0], off(d0, w));
+  // 表：折り目 → 左の端を先へ → 先 → 右の端を fa まで戻る
+  const front = fold.concat(edge(fb, d1, w / 2));
+  if (atEnd) front.push(off(d1, w), P[P.length - 1], off(d1, -w));
+  front.push(...edge(fa, d1, -w / 2).reverse());
+  return { back, front };
 }
 function flipArrowNodes(F) {
   const f = (q) => `${q[0].toFixed(1)},${q[1].toFixed(1)}`;
