@@ -124,7 +124,7 @@ function candidates(u, H, on) {
 //    すぐ前のまとまりが別の言語で、その終わりから次の見つかったまとまりまでが短ければ、その終わりのすぐあと。
 //    そうでなければ、前後のあいだを読む長さ（言語ごとの速さ×文字数）の割合で割り振る
 function alignUnits(text, heard) {
-  if (heard.lid) return lidUnits(text, heard.lid);
+  if (heard.lid) return lidUnits(text, heard.lid, heard.moon);
   const units = unitsOf(text);
   const H = { en: heard.en ? heardChars(heard.en, EN) : [], ja: heard.ja ? heardChars(heard.ja, JA) : [] };
   for (const l in H) {
@@ -256,15 +256,8 @@ export function vadSegments(p) {
   return out;
 }
 
-// 言語の判定だけで合わせる（英日のテマ友用。文字にしない）
-// lid：[{ s, e, d }]（d = 英語らしさ − 日本語らしさ。2.0より大きければ英語、-2.0より小さければ日本語（2.48.2 までは 2.5）（曲や効果音はそのあいだになりやすい）、あいだは分からない）
-// テマ友の「同じ言語が続く行のまとまり」と、音声の「同じ言語が続くところ」を、順番どおり・長さが近くなるように対応させ、
-// まとまりの最初の行をそこの始まりに、残りの行を文字数の割合で、近い声の出だしに置く
-function lidUnits(text, lid) {
-  const units = unitsOf(text).filter((u) => u.cs.length >= 2);
-  units.forEach((u) => { u.dur = u.cs.length * RATE[u.lang]; });
-  const runs = [];
-  for (const u of units) { const r = runs[runs.length - 1]; if (r && r.lang === u.lang) { r.units.push(u); r.dur += u.dur; } else runs.push({ lang: u.lang, units: [u], dur: u.dur }); }
+// 判定の結果を「同じ言語が続くところ」にまとめる。英日が決まらないところが長く続くところは歌や音楽（m）
+function lidBlocks(lid) {
   // 2.0：VoxLingua107 で短い日本語（「みな静かになった。」の -2.4 など）も拾う（2.48.3〜。2.48.2 までは 2.5）
   const lab = (d) => (d > 2.0 ? 'en' : d < -2.0 ? 'ja' : '?');
   const blocks = [];
@@ -287,6 +280,22 @@ function lidUnits(text, lid) {
     const a = blocks[j - 1], b = blocks[j], c = blocks[j + 1];
     if (a.lang === 'm' && c.lang === 'm' && b.lang !== 'm' && b.e - b.s <= 3) { a.e = c.e; blocks.splice(j, 2); j--; }
   }
+  return blocks;
+}
+// 歌や音楽と見たところ（audio.js が、そこだけ Moonshine で文字にする。2.52.0〜）
+export const musicSpans = (lid) => lidBlocks(lid).filter((b) => b.lang === 'm').map((b) => ({ s: b.s, e: b.e }));
+
+// 言語の判定だけで合わせる（英日のテマ友用。文字にしない）
+// lid：[{ s, e, d }]（d = 英語らしさ − 日本語らしさ。2.0より大きければ英語、-2.0より小さければ日本語（2.48.2 までは 2.5）（曲や効果音はそのあいだになりやすい）、あいだは分からない）
+// テマ友の「同じ言語が続く行のまとまり」と、音声の「同じ言語が続くところ」を、順番どおり・長さが近くなるように対応させ、
+// まとまりの最初の行をそこの始まりに、残りの行を文字数の割合で、近い声の出だしに置く
+// moon：歌や音楽のところを Moonshine で文字にしたもの [{ text, s, e }]（2.52.0〜）。時刻の決まらなかった英語の行を、その文字で探す
+function lidUnits(text, lid, moon) {
+  const units = unitsOf(text).filter((u) => u.cs.length >= 2);
+  units.forEach((u) => { u.dur = u.cs.length * RATE[u.lang]; });
+  const runs = [];
+  for (const u of units) { const r = runs[runs.length - 1]; if (r && r.lang === u.lang) { r.units.push(u); r.dur += u.dur; } else runs.push({ lang: u.lang, units: [u], dur: u.dur }); }
+  const blocks = lidBlocks(lid);
   const totSp = blocks.filter((b) => b.lang !== '?').reduce((a, b) => a + b.sp, 0), totDur = runs.reduce((a, r) => a + r.dur, 0);
   const k = totSp / Math.max(1, totDur); // 読む速さ（文字数からの見積もりに対する実際の長さ）
   const p = runs.length, q = blocks.length, INF = 1e9, SPAN = 4;
@@ -329,6 +338,21 @@ function lidUnits(text, lid) {
     }
     i = pi; j = pj;
   }
+  // 歌や音楽のところで声と判定されなかった英語の行（効果音のかかった叫び、大勢の声など）を、Moonshine の文字で探す（2.52.0〜）。
+  // 前後の時刻の決まった行のあいだで、似ている度合いが 0.5 以上のところ。見つかった行は、あとの行を探すときの前の行になる
+  if (moon && moon.length) {
+    const H = heardChars(moon, EN), tri = new Map();
+    for (let j = 0; j + 2 < H.length; j++) { const g = H[j].c + H[j + 1].c + H[j + 2].c; const a = tri.get(g); if (a) a.push(j); else tri.set(g, [j]); }
+    H.tri = tri;
+    for (let ui = 0; ui < units.length; ui++) {
+      const u = units[ui];
+      if (u.t != null || u.lang !== 'en' || u.cs.length < 6) continue;
+      const A = units.slice(0, ui).reverse().find((x) => x.t != null), B = units.slice(ui + 1).find((x) => x.t != null && !x.moon);
+      const lo = A ? A.t + (A.lang === 'en' ? A.dur * 0.5 : 0) - 1 : -1, hi = B ? B.t + 1 : Infinity;
+      const c = candidates(u, H).find((x) => x.t >= lo && x.t <= hi && x.sc >= 0.5);
+      if (c) { u.t = Math.max(A ? A.t : 0, Math.min(c.t, B ? B.t : Infinity)); u.hit = true; u.moon = true; }
+    }
+  }
   // 対応しなかったまとまりは前後から。あいだに歌や音楽のところがあれば、その中に等分して並べる（2.48.6〜。それまでは読む長さの割合。歌は読む長さどおりに進まないため）
   for (let ui = 0; ui < units.length; ui++) {
     const u = units[ui];
@@ -337,7 +361,10 @@ function lidUnits(text, lid) {
     const m = blocks.find((b) => b.lang === 'm' && (!A || b.e > A.t) && (!B || b.s < B.t));
     if (m) {
       const gap = units.slice(ui, B ? units.indexOf(B) : units.length);
-      gap.forEach((x, n) => { x.t = m.s + (m.e - m.s) * n / gap.length; });
+      // 並べるのは、歌や音楽のところのうち前の行のあと・次の行の前（Moonshine で見つかった行が中にあるとき。2.52.0〜）
+      let a0 = Math.max(m.s, A ? A.t + A.dur : m.s), b0 = Math.min(m.e, B ? B.t : m.e);
+      if (b0 <= a0 + 0.5) { a0 = m.s; b0 = m.e; }
+      gap.forEach((x, n) => { x.t = a0 + (b0 - a0) * n / gap.length; });
       continue;
     }
     u.t = A && B ? (A.t + B.t) / 2 : A ? A.t + A.dur : B ? Math.max(0, B.t - u.dur) : null;

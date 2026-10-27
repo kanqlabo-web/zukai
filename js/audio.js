@@ -19,7 +19,7 @@ import { betaOn } from './beta.js';
 import { openContextMenu } from './menubar.js';
 import { confirmBox, ask } from './dialog.js';
 import { sortBlocks, resolveAnchor } from './script.js';
-import { langsOf, matchTimes, onsetsOf, vadSegments, toMono16k } from './autosync.js';
+import { langsOf, matchTimes, onsetsOf, vadSegments, musicSpans, toMono16k } from './autosync.js';
 
 const PART = 700 * 1024;
 const MAX = 80 * 1024 * 1024; // 1話まるごとの音源も入るように
@@ -366,6 +366,7 @@ const heardMem = {}; // 音声の id → 聞き取った文字（なければ nu
 const HEARD_V = 2;
 // 聞き取りのしかた。英日のテマ友は、声のまとまりごとに英語か日本語かだけを判定する（速い。2.47.0〜。
 // 2.48.0〜は Silero VAD で声のところを探し、VoxLingua107 で判定する。lid-worker.js。2.47 は Whisper tiny）。
+// 2.52.0〜は、声と判定されなかった歌や音楽のところだけ、Moonshine で英語を文字にする（moon-worker.js）。それより前の記録は、そこだけ聞き足す。
 // 1つの言語だけのテマ友は、Whisper base で文字にする。記録にはどのしかたかを残し、違うしかたの分は自動で合わせるときに聞き直す
 const ASR_MODEL = 'Xenova/whisper-base', LID_MODEL = 'voxlingua107-int8+silero-vad';
 const useLid = (langs) => langs.length > 1;
@@ -597,15 +598,18 @@ async function autoSync(data, ti) {
     const d = await db.getQuiet(P.doc(data.w, 'audio', hkey));
     if (heardOk(d, langs)) { heard = d.out; cachePut(hkey, d); }
   }
+  // 歌や音楽のところの英語がまだない記録（2.51 まで）は、そこだけ聞き足す
+  const addMoon = !!(heard && heard.lid && !heard.moon);
   const pkey = meta.id + '_partial';
   const p0 = heard ? null : await cacheGet(pkey);
   const partial = heardOk(p0, langs) ? p0 : null;
   const r = await ask({
     title: '時刻を自動で合わせる（ためし）',
     message: (useLid(langs) ? '音声をこの端末で聞き、テマ友と照らし合わせて、タイミングに時刻を付けます。' : '音声をこの端末で聞き取って文字にし、テマ友と照らし合わせて、タイミングに時刻を付けます。') + (group.length > 1 ? `（${group.length}トラック）` : ''),
-    detail: heard ? 'この音声はもう聞き取ってあるので、すぐに終わります。付けたあと、ずれているところは「時刻を合わせる」で直してください。'
+    detail: addMoon ? '歌や音楽のところの英語を聞き足してから合わせます（初めてのときは聞き取りのしくみ（約60MB）を読み込みます）。歌や音楽のところの長さの20分の1くらいかかります。付けたあと、ずれているところは「時刻を合わせる」で直してください。'
+      : heard ? 'この音声はもう聞き取ってあるので、すぐに終わります。付けたあと、ずれているところは「時刻を合わせる」で直してください。'
       : partial ? `前回の聞き取りの続き（${fmtShort(partial.at != null ? partial.at : partial.upto * 30)} まで済み）から始めます。この端末のこのページを開いたままにしてください（閉じても、次はまた続きから始めます）。`
-      : useLid(langs) ? '声のまとまりごとに英語か日本語かを判定し、テマ友の英語の行・日本語の行と順番に対応させます。初めてのときは判定のしくみ（約30MB）を読み込みます（次からはいりません）。判定には、音声の長さの10分の1くらいかかります。パソコンでの利用をおすすめします。判定した結果は保存するので、同じ音声のほかのトラックはすぐに終わります。付けたあと、ずれているところは「時刻を合わせる」で直してください。'
+      : useLid(langs) ? '声のまとまりごとに英語か日本語かを判定し、テマ友の英語の行・日本語の行と順番に対応させます。初めてのときは判定と聞き取りのしくみ（約90MB）を読み込みます（次からはいりません）。判定には、音声の長さの10分の1くらいかかります。パソコンでの利用をおすすめします。判定した結果は保存するので、同じ音声のほかのトラックはすぐに終わります。付けたあと、ずれているところは「時刻を合わせる」で直してください。'
       : '初めてのときは聞き取りのしくみ（約80MB）を読み込みます（次からはいりません）。聞き取りには、音声の長さと同じくらいかそれ以上かかることがあります（1話まるごとの音源なら1時間以上）。パソコンでの利用をおすすめします。聞き取った文字は保存するので、同じ音声のほかのトラックはすぐに終わります。付けたあと、ずれているところは「時刻を合わせる」で直してください。',
     fields: [],
     choices: has ? [['missing', `時刻のないタイミングだけ（${all - has}件）`], ['all', `すべて付け直す（${all}件）`]] : [['all', '始める']],
@@ -616,13 +620,16 @@ async function autoSync(data, ti) {
   A.auto = { phase: 'prep', p: 0, done: 0, of: 0, workers: [] };
   rerender();
   try {
-    if (!heard) {
+    if (!heard || addMoon) {
       const audio = await toMono16k(await loadBlob(data.w, meta), meta.name);
       if (!A.auto) return;
-      // 声の出だし（聞き取りに渡すと audio が使えなくなるので先に）
-      const on = onsetsOf(audio);
-      heard = await listen(audio, langs, partial, (upto, out, at) => cachePut(pkey, { v: HEARD_V, model: asrModel(langs), langs: langs.join(','), upto, at, out }));
-      heard = { ...heard, on };
+      if (addMoon) heard = { ...heard, moon: await listenMoon(audio, heard.lid) };
+      else {
+        // 声の出だし（聞き取りに渡すと audio が使えなくなるので先に）
+        const on = onsetsOf(audio);
+        heard = await listen(audio, langs, partial, (upto, out, at) => cachePut(pkey, { v: HEARD_V, model: asrModel(langs), langs: langs.join(','), upto, at, out }));
+        heard = { ...heard, on };
+      }
       const rec = { v: HEARD_V, model: asrModel(langs), langs: langs.join(','), out: heard };
       cachePut(hkey, rec);
       cacheDel(pkey);
@@ -671,8 +678,8 @@ function asrOpts(langs) {
   return { model: asrModel(langs), tjs: cfg.tjs, local: cfg.local };
 }
 // Worker をいくつか（端末のコア数に合わせて最大4つ）並べ、jobs を1つずつ配る。1つめの Worker でモデルを読み終えてから（ブラウザに控えができてから）残りを始める。
-// jobs：[() => ({ msg, transfer })]（音は配るときに切り出す。長い音源で手元の記憶を食わないように）。onOut(k, m)：k 番目の job の答え。onLoad(p)：モデルの読み込みの進み。wks：前の段の Worker（使い回す）
-function runPool(wks, jobs, onOut, onLoad, rej) {
+// file：Worker のファイル（lid-worker.js か moon-worker.js）。jobs：[() => ({ msg, transfer })]（音は配るときに切り出す。長い音源で手元の記憶を食わないように）。onOut(k, m)：k 番目の job の答え。onLoad(p)：モデルの読み込みの進み。wks：前の段の Worker（使い回す）
+function runPool(wks, jobs, onOut, onLoad, rej, file = './lid-worker.js') {
   return new Promise((res) => {
     const n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
     let next = 0, busy = 0;
@@ -692,12 +699,12 @@ function runPool(wks, jobs, onOut, onLoad, rej) {
         else {
           busy--; onOut(wk.job, m); give(wk);
           while (spare.length && next < jobs.length) hire(spare.shift());
-          while (wks.length < n && next < jobs.length) { const w2 = asrWorker(rej, './lid-worker.js'); wks.push(w2); hire(w2); }
+          while (wks.length < n && next < jobs.length) { const w2 = asrWorker(rej, file); wks.push(w2); hire(w2); }
         }
       };
       give(wk);
     };
-    if (!wks.length) wks.push(asrWorker(rej, './lid-worker.js'));
+    if (!wks.length) wks.push(asrWorker(rej, file));
     const spare = wks.slice(1);
     hire(wks[0]);
   });
@@ -738,7 +745,34 @@ async function listenLid(audio, partial, onWin) {
     if (d - saved >= 10 || (d === segs.length && d > saved)) { saved = d; onWin(d, { lid: out.slice(0, d) }, segs[d - 1].e); }
   }, (p) => { if (A.auto.phase === 'load') { A.auto.p = p; rerender(); } });
   stopWorkers();
-  return { lid: out };
+  return { lid: out, moon: await listenMoon(audio, out) };
+}
+// 歌や音楽と見たところ（英日の判定で声と判定されなかった長いところ）を3秒ずつ、Moonshine で英語にする（2.52.0〜。10か所ずつ）
+// 3秒より長く切ると、行の時刻が粗くなる（CD_004 で、10秒ずつでは目印の効き目が半分ほどに）
+async function listenMoon(audio, lid) {
+  const cfg = window.ZUKAI_ASR || {}, SR = 16000, W = 3, wks = [];
+  const clips = [];
+  for (const m of musicSpans(lid)) for (let s = m.s; s < m.e - 0.5; s += W) clips.push({ s, e: Math.min(m.e, s + W, audio.length / SR) });
+  if (!clips.length) return [];
+  let rej;
+  const failed = new Promise((_, r) => { rej = r; });
+  A.auto.phase = 'load'; A.auto.p = 0; rerender();
+  const froms = [];
+  for (let from = 0; from < clips.length; from += 10) froms.push(from);
+  const out = [];
+  const jobs = froms.map((from) => () => {
+    const batch = clips.slice(from, from + 10).map((g) => ({ ...g, pcm: audio.slice(Math.floor(g.s * SR), Math.floor(g.e * SR)) }));
+    return { msg: { batch, cfg }, transfer: batch.map((g) => g.pcm.buffer) };
+  });
+  let done = 0;
+  await Promise.race([runPool(wks, jobs, (k, m) => {
+    m.out.forEach((x, j) => { out[froms[k] + j] = x; });
+    done += m.out.length;
+    if (A.auto.phase !== 'listen') { A.auto.t0 = Date.now(); A.auto.d0 = done; }
+    A.auto.phase = 'listen'; A.auto.done = done; A.auto.of = clips.length; rerender();
+  }, (p) => { if (A.auto.phase === 'load') { A.auto.p = p; rerender(); } }, rej, './moon-worker.js'), failed]);
+  stopWorkers();
+  return out.filter((x) => x && x.text);
 }
 function listenText(audio, langs, partial, onWin) {
   return new Promise((res, rej) => {
